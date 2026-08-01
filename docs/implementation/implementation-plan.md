@@ -191,6 +191,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-204：用户承诺与纠正检测
 
 **依赖**：CKL-201、CKL-203  
+**状态**：已完成  
 **交付物**：`USER_ACCEPTED`、`USER_REJECTED`、`CORRECTION` 证据。  
 **验收条件**：
 

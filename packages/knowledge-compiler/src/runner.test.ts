@@ -14,13 +14,20 @@ import type {
 function extractionEpisode(): Episode {
   return {
     episodeId: "episode-1",
-    builderVersion: "episode-builder-v1",
+    builderVersion: "episode-builder-v2",
     sessionIds: ["session-1"],
     turnIds: ["turn-1"],
     projectContext: { projectId: "project-1", repositoryRoot: "/repo", portable: false },
     goal: "Use a model-independent extraction port",
     goalRef: "event-goal",
     subgoals: [],
+    userStatements: [{
+      turnId: "turn-1",
+      sourceEventId: "event-goal",
+      kind: "GOAL",
+      statement: "Use a model-independent extraction port",
+      occurredAt: "2026-08-01T08:00:00.000Z",
+    }],
     userCorrections: [],
     actions: [],
     artifacts: [],
@@ -79,7 +86,7 @@ describe("runKnowledgeExtraction", () => {
       status: "SUCCEEDED",
       attempts: 1,
       episodeId: "episode-1",
-      builderVersion: "episode-builder-v1",
+      builderVersion: "episode-builder-v2",
       compilerVersion: "compiler-v1",
       promptVersion: "prompt-v1",
     });

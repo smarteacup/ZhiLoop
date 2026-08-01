@@ -14,7 +14,7 @@ buildEpisodes(
 ): EpisodeBuildResult
 ```
 
-`builderVersion` 参与 `episodeId` 计算。规则升级后使用新版本即可并行重建，不会把不同构建语义写进同一身份。
+`builderVersion` 参与 `episodeId` 计算。CKL-204 增加全部用户原话投影后，默认版本已升为 `episode-builder-v2`；规则升级可并行重建，不会把不同构建语义写进同一身份。
 
 ## 2. 事实来源与重建约束
 
@@ -44,6 +44,8 @@ Episode 内事件使用 `(occurredAt, Ledger sequence, eventId)` 全序；`evide
 首版只在单 Session 内聚合连续 Turn。跨 Session 合并必须等后续具备显式 task/topic reference 后再开放，不能仅靠文本相似度自动串联并行任务。
 
 主目标通过 `goalRef` 明确指向其来源事件；后续提取器不需要在整段 `evidenceRefs` 中猜测哪条事件承载目标。
+
+每条 UserPrompt 还会进入 `userStatements`，保留 `turnId`、`sourceEventId`、分类、原文和时间。它覆盖主目标、继续、子目标和纠错，因此后续承诺检测不必从 eventId 反查或猜测“按这个做”“不要使用 X”的原文。
 
 ## 4. 纠错闭环
 

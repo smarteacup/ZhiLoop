@@ -1,4 +1,5 @@
 export * from "./adapter-error.js";
+export * from "./commitment-detector.js";
 export * from "./input.js";
 export * from "./mvp-compiler.js";
 export * from "./runner.js";

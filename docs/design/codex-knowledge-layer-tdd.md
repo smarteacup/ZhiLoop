@@ -328,6 +328,7 @@ interface Episode {
   goal: string;
   goalRef: string;
   subgoals: EpisodeSubgoal[];
+  userStatements: EpisodeUserStatement[];
   userCorrections: Correction[];
   actions: ActionRecord[];
   artifacts: ArtifactRef[];
@@ -337,7 +338,7 @@ interface Episode {
 }
 ```
 
-`Correction` 必须同时保存 `originalRef + originalStatement` 与 `correctedRef + correctedStatement`，不能用新内容覆盖被纠正内容。`builderVersion` 参与 Episode 身份计算，使聚合规则升级可以确定性重建和并行比对。
+`EpisodeUserStatement` 为每条用户原话保留 `turnId + sourceEventId + kind + statement + occurredAt`，供本地承诺检测使用。`Correction` 必须同时保存 `originalRef + originalStatement` 与 `correctedRef + correctedStatement`，不能用新内容覆盖被纠正内容。`builderVersion` 参与 Episode 身份计算，使聚合规则升级可以确定性重建和并行比对。
 
 首版 Episode 以单 Session 内的连续 Turn 为边界；只有当后续 Session 明确引用同一知识主题或任务标识时才跨 Session 合并。
 

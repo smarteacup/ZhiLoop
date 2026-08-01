@@ -7,7 +7,7 @@ import { toKnowledgeExtractionInput } from "./input.js";
 function episode(): Episode {
   return {
     episodeId: "episode-1",
-    builderVersion: "episode-builder-v1",
+    builderVersion: "episode-builder-v2",
     sessionIds: ["session-1"],
     turnIds: ["turn-1", "turn-2"],
     projectContext: {
@@ -25,6 +25,25 @@ function episode(): Episode {
       sourceEventId: "event-subgoal",
       statement: "补充重试策略",
       occurredAt: "2026-08-01T08:00:02.000Z",
+    }],
+    userStatements: [{
+      turnId: "turn-1",
+      sourceEventId: "event-goal",
+      kind: "GOAL",
+      statement: "设计知识提取端口",
+      occurredAt: "2026-08-01T08:00:00.000Z",
+    }, {
+      turnId: "turn-2",
+      sourceEventId: "event-subgoal",
+      kind: "SUBGOAL",
+      statement: "补充重试策略",
+      occurredAt: "2026-08-01T08:00:02.000Z",
+    }, {
+      turnId: "turn-2",
+      sourceEventId: "event-correction",
+      kind: "CORRECTION",
+      statement: "必须返回结构化结果",
+      occurredAt: "2026-08-01T08:00:03.000Z",
     }],
     userCorrections: [{
       correctionId: "correction-1",
@@ -72,7 +91,7 @@ describe("toKnowledgeExtractionInput", () => {
     expect(result).toMatchObject({
       schemaVersion: 1,
       episodeId: "episode-1",
-      builderVersion: "episode-builder-v1",
+      builderVersion: "episode-builder-v2",
       projectContext: {
         projectId: "project-1",
         repositoryRemote: "git@example.com/repo.git",

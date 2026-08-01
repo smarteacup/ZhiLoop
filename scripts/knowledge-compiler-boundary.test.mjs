@@ -3,16 +3,71 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  applyUserCommitments,
+  detectUserCommitments,
   MvpKnowledgeCompiler,
   runKnowledgeExtraction,
   toKnowledgeExtractionInput,
 } from "../packages/knowledge-compiler/dist/index.js";
 
 test("Knowledge Extraction Port has no model SDK, storage, filesystem, or process runtime dependency", async () => {
-  const source = `${await readFile("packages/knowledge-compiler/src/runner.ts", "utf8")}\n${await readFile("packages/knowledge-compiler/src/mvp-compiler.ts", "utf8")}`;
+  const source = `${await readFile("packages/knowledge-compiler/src/runner.ts", "utf8")}\n${await readFile("packages/knowledge-compiler/src/mvp-compiler.ts", "utf8")}\n${await readFile("packages/knowledge-compiler/src/commitment-detector.ts", "utf8")}`;
   assert.doesNotMatch(source, /openai|anthropic|gemini|node:sqlite|node:fs|child_process/i);
   assert.match(source, /from\s+["']@zhiloop\/domain["']/);
   assert.match(source, /from\s+["']@zhiloop\/schemas["']/);
+});
+
+test("CKL-204: explicit acceptance is traceably stamped without promoting Candidate status", () => {
+  const source = {
+    ...episode(),
+    userStatements: [{
+      turnId: "turn-1",
+      sourceEventId: "event-goal",
+      kind: "GOAL",
+      statement: "Build the extraction port",
+      occurredAt: "2026-08-01T08:00:00.000Z",
+    }, {
+      turnId: "turn-2",
+      sourceEventId: "event-accept",
+      kind: "CONTINUATION",
+      statement: "按这个做",
+      occurredAt: "2026-08-01T08:01:00.000Z",
+    }],
+    actions: [{
+      actionId: "action-1",
+      kind: "FILE_CHANGE",
+      summary: "Implemented the extraction port",
+      sourceEventIds: ["event-action"],
+      occurredAt: "2026-08-01T08:02:00.000Z",
+    }],
+    evidenceRefs: ["event-goal", "event-accept", "event-action"],
+  };
+  const candidate = {
+    schemaVersion: 1,
+    candidateId: "candidate-1",
+    compilerVersion: "compiler-v1",
+    status: "PROPOSED",
+    subjectKey: "design.knowledge.extraction-port",
+    kind: "DESIGN",
+    scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["BOUNDARY_TEST"] },
+    title: "Use an extraction port",
+    summary: "Keep model providers behind a port.",
+    body: "The port is the only model integration boundary.",
+    sourceEpisodes: ["boundary-episode"],
+    confidence: 0.9,
+    assertions: [],
+    evidenceHints: [{ type: "USER_STATEMENT", sourceRef: "event-goal", correlationId: "correlation-1" }],
+    createdAt: "2026-08-01T08:00:30.000Z",
+    correlationId: "correlation-1",
+  };
+
+  const detection = detectUserCommitments(source, [candidate]);
+  const enriched = applyUserCommitments([candidate], detection);
+
+  assert.equal(detection.signals[0].turnId, "turn-2");
+  assert.deepEqual(detection.signals[0].reasonCodes, ["SINGLE_PROPOSAL", "FOLLOWED_BY_IMPLEMENTATION"]);
+  assert.equal(enriched[0].status, "PROPOSED");
+  assert.deepEqual(enriched[0].assertions[0].parameters, { statementRef: "event-accept" });
 });
 
 test("CKL-203: the MVP compiler emits five independently proposed knowledge kinds", async () => {
@@ -51,13 +106,20 @@ test("CKL-203: the MVP compiler emits five independently proposed knowledge kind
 function episode() {
   return {
     episodeId: "boundary-episode",
-    builderVersion: "episode-builder-v1",
+    builderVersion: "episode-builder-v2",
     sessionIds: ["session-1"],
     turnIds: ["turn-1"],
     projectContext: { projectId: "project-1", repositoryRoot: "/private/repo", portable: false },
     goal: "Build the extraction port",
     goalRef: "event-goal",
     subgoals: [],
+    userStatements: [{
+      turnId: "turn-1",
+      sourceEventId: "event-goal",
+      kind: "GOAL",
+      statement: "Build the extraction port",
+      occurredAt: "2026-08-01T08:00:00.000Z",
+    }],
     userCorrections: [],
     actions: [],
     artifacts: [],

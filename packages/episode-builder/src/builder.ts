@@ -8,6 +8,7 @@ import type {
   Episode,
   EpisodeStatus,
   EpisodeSubgoal,
+  EpisodeUserStatement,
   NormalizedSession,
   NormalizedTurn,
   Outcome,
@@ -24,7 +25,7 @@ import type {
   EpisodePromptClassifier,
 } from "./types.js";
 
-const DEFAULT_BUILDER_VERSION = "episode-builder-v1";
+const DEFAULT_BUILDER_VERSION = "episode-builder-v2";
 const DEFAULT_MAX_TEXT_CHARS = 32_000;
 const MAX_TEXT_CHARS = 262_144;
 const VERSION = /^[A-Za-z0-9._-]{1,100}$/;
@@ -43,6 +44,7 @@ interface EpisodeDraft {
   readonly turnIdSet: Set<string>;
   readonly records: LedgerEventRecord[];
   readonly subgoals: EpisodeSubgoal[];
+  readonly userStatements: EpisodeUserStatement[];
   readonly corrections: Correction[];
   readonly actions: ActionRecord[];
   readonly artifacts: ArtifactRef[];
@@ -164,6 +166,7 @@ function freezeEpisode(draft: EpisodeDraft, builderVersion: string): Episode {
     goal: draft.goal,
     goalRef: draft.primaryEventId,
     subgoals: Object.freeze([...draft.subgoals]),
+    userStatements: Object.freeze([...draft.userStatements]),
     userCorrections: Object.freeze([...draft.corrections]),
     actions: Object.freeze([...draft.actions]),
     artifacts: Object.freeze([...draft.artifacts]),
@@ -321,6 +324,7 @@ function newDraft(
     turnIdSet: new Set(),
     records: [],
     subgoals: [],
+    userStatements: [],
     corrections: [],
     actions: [],
     artifacts: [],
@@ -447,6 +451,16 @@ export function buildEpisodes(
         const statement = classification.kind === "PRIMARY" && item.record.event.eventId === draft.primaryEventId
           ? draft.goal
           : limit(classification.statement, session.sessionId, turn.turnId, item.record.event.eventId);
+        const statementKind = classification.kind === "PRIMARY" || classification.kind === "NEW_GOAL"
+          ? "GOAL"
+          : classification.kind;
+        draft.userStatements.push(Object.freeze({
+          turnId: turn.turnId,
+          sourceEventId: item.record.event.eventId,
+          kind: statementKind,
+          statement,
+          occurredAt: item.record.event.occurredAt,
+        }));
         if (classification.kind === "CORRECTION") {
           const original = lastStatement ?? { text: draft.goal, eventId: draft.primaryEventId };
           draft.corrections.push(Object.freeze({

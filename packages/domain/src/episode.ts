@@ -20,6 +20,16 @@ export interface EpisodeSubgoal {
   readonly occurredAt: string;
 }
 
+export type EpisodeUserStatementKind = "GOAL" | "CONTINUATION" | "SUBGOAL" | "CORRECTION";
+
+export interface EpisodeUserStatement {
+  readonly turnId: string;
+  readonly sourceEventId: string;
+  readonly kind: EpisodeUserStatementKind;
+  readonly statement: string;
+  readonly occurredAt: string;
+}
+
 export interface ActionRecord {
   readonly actionId: string;
   readonly kind: "TOOL" | "COMMAND" | "FILE_CHANGE" | "DECISION";
@@ -51,6 +61,7 @@ export interface Episode {
   readonly goal: string;
   readonly goalRef: string;
   readonly subgoals: readonly EpisodeSubgoal[];
+  readonly userStatements: readonly EpisodeUserStatement[];
   readonly userCorrections: readonly Correction[];
   readonly actions: readonly ActionRecord[];
   readonly artifacts: readonly ArtifactRef[];

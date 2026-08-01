@@ -22,13 +22,26 @@ import type {
 function episode(): Episode {
   return {
     episodeId: "episode-mvp",
-    builderVersion: "episode-builder-v1",
+    builderVersion: "episode-builder-v2",
     sessionIds: ["session-1"],
     turnIds: ["turn-1"],
     projectContext: { projectId: "project-1", repositoryRoot: "/private/repo", portable: false },
     goal: "Implement five MVP knowledge kinds",
     goalRef: "event-goal",
     subgoals: [],
+    userStatements: [{
+      turnId: "turn-1",
+      sourceEventId: "event-goal",
+      kind: "GOAL",
+      statement: "Implement five MVP knowledge kinds",
+      occurredAt: "2026-08-01T08:00:00.000Z",
+    }, {
+      turnId: "turn-1",
+      sourceEventId: "event-corrected",
+      kind: "CORRECTION",
+      statement: "Store conclusions only",
+      occurredAt: "2026-08-01T08:00:01.000Z",
+    }],
     userCorrections: [{
       correctionId: "correction-1",
       turnId: "turn-1",

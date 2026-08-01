@@ -139,7 +139,7 @@ describe("buildEpisodes", () => {
     const result = buildEpisodes(source.records, source.sessions);
     expect(result.episodes).toHaveLength(1);
     expect(result.episodes[0]).toMatchObject({
-      builderVersion: "episode-builder-v1",
+      builderVersion: "episode-builder-v2",
       goal: "实现 Episode Builder",
       goalRef: source.records[1]?.event.eventId,
       turnIds: ["t1", "t2"],
@@ -148,6 +148,7 @@ describe("buildEpisodes", () => {
     });
     expect(result.episodes[0]?.evidenceRefs).toHaveLength(source.records.length);
     expect(result.episodes[0]?.subgoals).toEqual([]);
+    expect(result.episodes[0]?.userStatements.map((statement) => statement.kind)).toEqual(["GOAL", "CONTINUATION"]);
   });
 
   it("splits an explicit new goal and abandons an unfinished prior episode", () => {

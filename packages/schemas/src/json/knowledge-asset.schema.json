@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/knowledge-asset/v1",
+  "title": "KnowledgeAsset",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "id",
+    "subjectKey",
+    "kind",
+    "scope",
+    "version",
+    "status",
+    "title",
+    "summary",
+    "body",
+    "aliases",
+    "keywords",
+    "applicability",
+    "nonApplicability",
+    "symbols",
+    "relations",
+    "evidence",
+    "confidence",
+    "sourceEpisodes",
+    "contentHash",
+    "correlationId",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "subjectKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$"
+    },
+    "kind": {
+      "enum": ["FACT", "REQUIREMENT", "DESIGN", "DECISION", "IMPLEMENTATION", "EXPERIENCE", "RULE", "PREFERENCE", "OPEN_QUESTION"]
+    },
+    "scope": {
+      "oneOf": [
+        { "type": "object", "required": ["level", "taskId"], "properties": { "level": { "const": "TASK" }, "taskId": { "type": "string", "minLength": 1 }, "projectId": { "type": "string" }, "repositoryRemote": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId", "symbols"], "properties": { "level": { "const": "SYMBOL" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" }, "symbols": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId", "modulePaths"], "properties": { "level": { "const": "MODULE" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" }, "modulePaths": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId"], "properties": { "level": { "const": "PROJECT" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "userId"], "properties": { "level": { "const": "USER" }, "userId": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "teamId"], "properties": { "level": { "const": "TEAM" }, "teamId": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+        { "type": "object", "required": ["level"], "properties": { "level": { "const": "GLOBAL" } }, "additionalProperties": false }
+      ]
+    },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["PROPOSED", "ACCEPTED", "IMPLEMENTED", "VERIFIED", "REJECTED", "STALE", "SUPERSEDED"] },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "body": { "type": "string" },
+    "aliases": { "type": "array", "items": { "type": "string" } },
+    "keywords": { "type": "array", "items": { "type": "string" } },
+    "applicability": { "type": "array", "items": { "type": "string" } },
+    "nonApplicability": { "type": "array", "items": { "type": "string" } },
+    "symbols": { "type": "array", "items": { "type": "string" } },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "targetId"],
+        "properties": {
+          "type": { "enum": ["CONTRADICTS", "SUPERSEDES", "IMPLEMENTS", "DERIVED_FROM", "RELATED_TO", "DUPLICATE_OF"] },
+          "targetId": { "type": "string", "minLength": 1 },
+          "targetVersion": { "type": "integer", "minimum": 1 },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceId", "verdict"],
+        "properties": {
+          "evidenceId": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["SUPPORTS", "CONTRADICTS", "INCONCLUSIVE"] }
+        }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "sourceEpisodes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "contentHash": { "type": "string", "minLength": 1 },
+    "codeFingerprint": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

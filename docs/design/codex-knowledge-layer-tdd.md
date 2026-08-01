@@ -314,6 +314,8 @@ interface EventEnvelope<TPayload = unknown> {
 sha256(source + sessionId + turnId + eventType + sourceItemId + contentHash)
 ```
 
+Schema 前向兼容只允许顶层未知字段，并将其保存在独立 `extensions` 中；传入 Domain 的对象只投影 Schema 已知顶层字段。嵌套对象默认 `additionalProperties=false`，只有 `payload`、Assertion `parameters` 等明确声明的扩展容器可以携带自由结构，避免未知字段绕过领域边界。
+
 ### 8.2 Episode
 
 ```ts
@@ -385,6 +387,7 @@ projectId = sha256(normalizedGitRemote + repositoryRootMarker)
 
 ```ts
 interface KnowledgeAsset {
+  schemaVersion: 1;
   id: string;
   subjectKey: string;
   kind: KnowledgeKind;

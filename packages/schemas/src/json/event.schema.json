@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/event/v1",
+  "title": "EventEnvelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "source",
+    "eventType",
+    "sessionId",
+    "occurredAt",
+    "contentHash",
+    "correlationId",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "source": {
+      "enum": ["codex-hook", "codex-app-server", "filesystem", "git"]
+    },
+    "sourceVersion": { "type": "string", "minLength": 1 },
+    "sourceItemId": { "type": "string", "minLength": 1 },
+    "eventType": {
+      "enum": [
+        "session.started",
+        "user.prompted",
+        "tool.completed",
+        "file.changed",
+        "turn.stopped",
+        "session.ended"
+      ]
+    },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "turnId": { "type": "string", "minLength": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "cwd": { "type": "string", "minLength": 1 },
+    "projectHint": { "type": "string", "minLength": 1 },
+    "contentHash": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "payload": {}
+  }
+}

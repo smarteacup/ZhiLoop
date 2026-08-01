@@ -48,6 +48,7 @@ export interface KnowledgeRelation {
 }
 
 interface KnowledgeCandidateBase {
+  readonly schemaVersion: 1;
   readonly candidateId: string;
   readonly compilerVersion: string;
   readonly subjectKey: string;
@@ -75,6 +76,7 @@ export type CandidateSupport =
 export type KnowledgeCandidate = KnowledgeCandidateBase & CandidateSupport;
 
 export interface KnowledgeAsset {
+  readonly schemaVersion: 1;
   readonly id: string;
   readonly subjectKey: string;
   readonly kind: KnowledgeKind;

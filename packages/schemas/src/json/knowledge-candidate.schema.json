@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/knowledge-candidate/v1",
+  "title": "KnowledgeCandidate",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "compilerVersion",
+    "subjectKey",
+    "kind",
+    "scopeHint",
+    "title",
+    "summary",
+    "body",
+    "sourceEpisodes",
+    "confidence",
+    "createdAt",
+    "correlationId",
+    "assertions",
+    "evidenceHints"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "candidateId": { "type": "string", "minLength": 1 },
+    "compilerVersion": { "type": "string", "minLength": 1 },
+    "subjectKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$"
+    },
+    "kind": {
+      "enum": [
+        "FACT",
+        "REQUIREMENT",
+        "DESIGN",
+        "DECISION",
+        "IMPLEMENTATION",
+        "EXPERIENCE",
+        "RULE",
+        "PREFERENCE",
+        "OPEN_QUESTION"
+      ]
+    },
+    "scopeHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasonCodes"],
+      "properties": {
+        "level": { "enum": ["TASK", "SYMBOL", "MODULE", "PROJECT", "USER", "TEAM", "GLOBAL"] },
+        "taskId": { "type": "string", "minLength": 1 },
+        "projectId": { "type": "string", "minLength": 1 },
+        "repositoryRemote": { "type": "string", "minLength": 1 },
+        "modulePaths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "symbols": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "userId": { "type": "string", "minLength": 1 },
+        "teamId": { "type": "string", "minLength": 1 },
+        "reasonCodes": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "body": { "type": "string" },
+    "sourceEpisodes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assertionId", "candidateId", "kind", "parameters", "createdAt"],
+        "properties": {
+          "assertionId": { "type": "string", "minLength": 1 },
+          "candidateId": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": [
+              "USER_ACCEPTED",
+              "USER_REJECTED",
+              "SYMBOL_EXISTS",
+              "FILE_CONTAINS",
+              "DEPENDENCY_PRESENT",
+              "CONFIG_EQUALS",
+              "COMMAND_SUCCEEDED",
+              "TEST_PASSED",
+              "CROSS_PROJECT_VERIFIED"
+            ]
+          },
+          "parameters": { "type": "object" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "kind": { "enum": ["USER_ACCEPTED", "USER_REJECTED"] },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["statementRef"],
+                "properties": { "statementRef": { "type": "string", "minLength": 1 } }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "SYMBOL_EXISTS" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["projectId", "symbol"],
+                "properties": {
+                  "projectId": { "type": "string", "minLength": 1 },
+                  "symbol": { "type": "string", "minLength": 1 },
+                  "path": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "FILE_CONTAINS" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "expected", "matchMode"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "expected": { "type": "string" },
+                  "matchMode": { "enum": ["EXACT", "REGEX", "STRUCTURAL"] }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "DEPENDENCY_PRESENT" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "versionConstraint": { "type": "string", "minLength": 1 },
+                  "manifestPath": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "CONFIG_EQUALS" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "expected"],
+                "properties": {
+                  "key": { "type": "string", "minLength": 1 },
+                  "expected": { "type": "string" },
+                  "path": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "COMMAND_SUCCEEDED" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["commandHash", "expectedExitCode"],
+                "properties": {
+                  "commandHash": { "type": "string", "minLength": 1 },
+                  "expectedExitCode": { "type": "integer" }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "TEST_PASSED" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["testId"],
+                "properties": {
+                  "testId": { "type": "string", "minLength": 1 },
+                  "commandHash": { "type": "string", "minLength": 1 },
+                  "path": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "CROSS_PROJECT_VERIFIED" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["subjectKey", "minimumProjects"],
+                "properties": {
+                  "subjectKey": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$" },
+                  "minimumProjects": { "type": "integer", "minimum": 2 }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "evidenceHints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "sourceRef", "correlationId"],
+        "properties": {
+          "type": {
+            "enum": [
+              "USER_STATEMENT",
+              "CODE_SYMBOL",
+              "FILE_CONTENT",
+              "DEPENDENCY",
+              "CONFIGURATION",
+              "COMMAND_RESULT",
+              "TEST_RESULT",
+              "CROSS_PROJECT"
+            ]
+          },
+          "sourceRef": { "type": "string", "minLength": 1 },
+          "projectId": { "type": "string", "minLength": 1 },
+          "correlationId": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "anyOf": [
+    { "properties": { "assertions": { "type": "array", "minItems": 1 } } },
+    { "properties": { "evidenceHints": { "type": "array", "minItems": 1 } } }
+  ]
+}

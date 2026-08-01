@@ -224,6 +224,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-301：Project Identity Resolver
 
 **依赖**：CKL-002  
+**状态**：已完成  
 **交付物**：Git Remote、Repo Root、无 Remote 降级和 worktree 归一化。  
 **验收条件**：
 

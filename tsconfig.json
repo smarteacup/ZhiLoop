@@ -11,6 +11,7 @@
     { "path": "./packages/episode-builder" },
     { "path": "./packages/knowledge-compiler" },
     { "path": "./packages/candidate-repository" },
+    { "path": "./packages/project-identity" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

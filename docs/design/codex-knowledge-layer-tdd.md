@@ -398,10 +398,12 @@ interface KnowledgeScope {
 项目标识计算：
 
 ```text
-projectId = sha256(normalizedGitRemote + repositoryRootMarker)
+有网络 Remote：sha256("portable-git" + normalizedGitRemote)
+无 Remote 的 Git：sha256("local-git" + realGitCommonDir)
+无 Git：sha256("filesystem-local" + realRepositoryRoot + rootMarker)
 ```
 
-无 Git Remote 时，使用规范化仓库根路径和根目录标识文件生成本地项目 ID，并标记 `portable=false`。
+网络 Remote 身份标记 `portable=true`，不包含 worktree root 或 branch。无 Git Remote 时，使用共享 common-dir；无 Git 时使用规范化仓库根路径和根目录标识文件生成本地项目 ID，并标记 `portable=false`。
 
 ### 8.5 知识资产
 

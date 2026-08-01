@@ -22,7 +22,7 @@
 | P1 Gate | 通过 | `92bcfb9` | 三次幂等重放、Hook 全故障恢复、source/session/turn 全链路追踪 | 189 项模块测试、14 项架构/Gate 测试；1 高/3 中风险，全部修复 |
 | CKL-201 | 完成 | `82c9546` | 确定性 Episode 聚合、目标拆分/子目标、纠错双向保真、动作/产物/结果、Ledger 完整重建 | 211 项模块测试、16 项架构/Gate 测试；2 高/4 中风险，全部修复；10,000 事件中位 24.20ms |
 | CKL-202 | 完成 | `2467b5f` | 模型无关提取端口、最小输入、原子草稿 Schema/Grounding、版本化幂等键、超时重试 | 235 项模块测试、19 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.71ms |
-| CKL-203 | 完成 | `待提交` | 五类 MVP Compiler、供应商无关结构化生成端口、专用 Schema/Prompt、Candidate 强制 PROPOSED | 245 项模块测试、20 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.87ms |
+| CKL-203 | 完成 | `83cf0ae` | 五类 MVP Compiler、供应商无关结构化生成端口、专用 Schema/Prompt、Candidate 强制 PROPOSED | 245 项模块测试、20 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.87ms |
 
 ## 2. P0 Gate 证据
 

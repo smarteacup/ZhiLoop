@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "zhiloop": {
-    "allowedWorkspaceDependencies": ["@zhiloop/domain", "@zhiloop/schemas"],
-    "allowedExternalDependencies": []
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/domain",
+      "@zhiloop/schemas"
+    ],
+    "allowedExternalDependencies": [
+      "yaml",
+      "zod"
+    ]
   },
   "exports": {
     ".": {
@@ -19,6 +25,8 @@
   },
   "dependencies": {
     "@zhiloop/domain": "0.0.0",
-    "@zhiloop/schemas": "0.0.0"
+    "@zhiloop/schemas": "0.0.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   }
 }

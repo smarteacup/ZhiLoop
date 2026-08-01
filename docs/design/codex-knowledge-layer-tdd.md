@@ -915,83 +915,110 @@ ckl doctor
 
 ## 13. 配置边界
 
+`~/.ckl/config.yaml` 只接受一个版本化的根对象。以下各节均为该根对象的片段，字段名与 TypeScript API 统一使用 camelCase；未知字段、重复 YAML Key、Alias 和不安全对象键一律拒绝。缺失策略使用安全默认值补齐。
+
 ### 13.1 Verification Policy
 
 ```yaml
 version: 1
-auto_publish:
-  IMPLEMENTATION:
-    required_evidence: [SYMBOL_EXISTS]
-    max_status: IMPLEMENTED
-  EXPERIENCE:
-    required_evidence: [TEST_PASSED]
-    max_status: VERIFIED
-global_promotion:
-  min_verified_projects: 2
-interaction:
-  max_questions_per_turn: 1
-  default_scope: PROJECT
+verification:
+  autoPublish:
+    IMPLEMENTATION:
+      requiredAssertions: [SYMBOL_EXISTS]
+      maxStatus: IMPLEMENTED
+    EXPERIENCE:
+      requiredAssertions: [TEST_PASSED]
+      maxStatus: VERIFIED
+  globalPromotion:
+    minVerifiedProjects: 2
+  interaction:
+    maxQuestionsPerTurn: 1
+    defaultScope: PROJECT
 ```
 
 ### 13.2 Retrieval Policy
 
 ```yaml
 version: 1
-top_k:
-  exact: 30
-  fts: 30
-  vector: 30
-  relation: 20
-fusion:
-  algorithm: rrf
-  rrf_k: 60
-rerank:
-  candidates: 30
-output:
-  min_items: 0
-  max_items: 8
-eligibility:
-  default: [VERIFIED, IMPLEMENTED, ACCEPTED]
+retrieval:
+  topK:
+    exact: 30
+    fts: 30
+    vector: 30
+    relation: 20
+  fusion:
+    algorithm: rrf
+    rrfK: 60
+  rerank:
+    candidates: 30
+  output:
+    minItems: 0
+    maxItems: 8
+  eligibility:
+    default: [VERIFIED, IMPLEMENTED, ACCEPTED]
 ```
 
 ### 13.3 Injection Policy
 
 ```yaml
 version: 1
-default_level: L2_COMPACT
-default_max_tokens: 800
-user_prompt_deadline_ms: 500
-fail_open_on_timeout: true
-levels:
-  L1_POINTER:
-    max_items: 3
-    evidence: NONE
-  L2_COMPACT:
-    max_items: 5
-    evidence: POINTER
-  L3_EVIDENCED:
-    max_items: 8
-    evidence: SUMMARY
-  L4_EPISODE:
-    automatic: false
-authority_order: [BINDING_RULE, ACCEPTED_DECISION, VERIFIED_FACT, REFERENCE]
-expansion:
-  enabled: true
-  tools: [ckl.search, ckl.get, ckl.related, ckl.check]
+injection:
+  defaultLevel: L2_COMPACT
+  defaultMaxTokens: 800
+  userPromptDeadlineMs: 500
+  failOpenOnTimeout: true
+  levels:
+    L1_POINTER:
+      maxItems: 3
+      evidence: NONE
+    L2_COMPACT:
+      maxItems: 5
+      evidence: POINTER
+    L3_EVIDENCED:
+      maxItems: 8
+      evidence: SUMMARY
+    L4_EPISODE:
+      automatic: false
+  authorityOrder: [BINDING_RULE, ACCEPTED_DECISION, VERIFIED_FACT, REFERENCE]
+  expansion:
+    enabled: true
+    tools: [ckl.search, ckl.get, ckl.related, ckl.check]
 ```
 
 ### 13.4 Closure Policy
 
 ```yaml
 version: 1
-enabled: true
-default_max_continuations: 1
-high_risk_max_continuations: 2
-deterministic_deadline_ms: 500
-semantic_verification_deadline_ms: 3000
-decisions: [PASS, RETRY_WITH_CONTEXT, RETRY_WITH_CORRECTION, ASK_USER]
-fail_open_on_timeout: true
-forbid_requirement_expansion: true
+closure:
+  enabled: true
+  defaultMaxContinuations: 1
+  highRiskMaxContinuations: 2
+  deterministicDeadlineMs: 500
+  semanticVerificationDeadlineMs: 3000
+  decisions: [PASS, RETRY_WITH_CONTEXT, RETRY_WITH_CORRECTION, ASK_USER]
+  failOpenOnTimeout: true
+  forbidRequirementExpansion: true
+```
+
+### 13.5 Scope Policy
+
+```yaml
+version: 1
+scope:
+  defaultLevel: PROJECT
+  allowCrossProjectFallback: false
+  repositoryPublisherEnabled: false
+```
+
+### 13.6 Retention Policy
+
+```yaml
+version: 1
+retention:
+  rawEventDays: 30
+  logDays: 14
+  tombstoneDays: 365
+  storeTranscriptBody: false
 ```
 
 配置修改后必须通过 Schema 校验；无效配置保留上一有效版本并产生诊断事件。

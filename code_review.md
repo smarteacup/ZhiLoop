@@ -6,57 +6,57 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-003 / JSON Schema |
-| **CR 耗时** | 290s |
+| **CR 标识** | CKL-004 / 配置与策略系统 |
+| **CR 耗时** | 360s |
 | **🔴 高风险** | 1 个 |
-| **🟡 中风险** | 2 个 |
+| **🟡 中风险** | 3 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 3/3（100%） |
+| **修复程度** | 已修复 4/4（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 3 次 |
-| **总耗时** | 760s |
-| **🔴 高风险累计** | 2 个 |
-| **🟡 中风险累计** | 6 个 |
+| **总 CR 次数** | 4 次 |
+| **总耗时** | 1120s |
+| **🔴 高风险累计** | 3 个 |
+| **🟡 中风险累计** | 9 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-本次变更完成 CKL-003，为 EventEnvelope、KnowledgeCandidate 和 KnowledgeAsset 建立 Draft-07 JSON Schema 与 Ajv 解析器。所有可持久化顶层对象显式携带 `schemaVersion: 1`，不支持的版本返回 `UNSUPPORTED_SCHEMA_VERSION`，缺字段或内容错误返回带 JSON Path 的诊断结果。
+本次变更完成 CKL-004，为 Verification、Retrieval、Injection、Closure、Scope、Retention 六组策略建立严格 Zod Schema、YAML/对象加载器和原子激活存储。缺失字段从深度冻结的安全默认值补齐；未知字段、重复 YAML Key、Alias、循环对象和原型链危险键均被拒绝，并返回带属性路径的结构化诊断。
 
-顶层未知字段被保存在独立 `extensions` 中，Domain 对象只投影 Schema 已知字段；嵌套对象默认禁止未知字段，自由结构只允许出现在 payload 和 Assertion parameters 等明确容器中。Schema 枚举通过契约测试与 Domain 常量保持一致。
-
-新增 Ajv 8.20、ajv-formats 3.0.1，依赖审计为 0 个高危漏洞。当前 46 个模块测试和 9 个架构测试全部通过。
+配置契约已统一为一个 `version: 1` 根对象和 camelCase 字段，与 TypeScript API 完全一致。无效热更新不会替换上一有效快照。当前 82 个模块测试和 9 个架构测试全部通过；配置模块行覆盖率 99.30%、分支覆盖率 90.40%。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🔴 高 | `packages/schemas/src/json/knowledge-candidate.schema.json:80` | 初版 Assertion 只要求 parameters 是对象，且未检查 assertion.candidateId 与外层 Candidate 一致，错误断言可能被交给错误 Verifier 或污染证据。 | 自动知识确认、状态晋级、证据关联 | 已为 9 种 Assertion 定义参数 Schema，并增加跨字段 candidateIdMatch 校验与拒绝测试。 |
-| 增 | 🟡 中 | `packages/schemas/src/schema-registry.ts:50` | 初版仅分离顶层未知字段，但嵌套对象允许 additionalProperties，未知字段仍可能进入 Domain；手工 Known Keys 也可能与 Schema 漂移。 | 前向兼容、领域边界、序列化一致性 | 已限制嵌套扩展，并从 Schema properties 自动生成投影键；顶层扩展保留契约测试通过。 |
-| 增 | 🟡 中 | `packages/schemas/src/json/event.schema.json:42` | 时间字段只校验非空字符串，非法时间会进入事件排序和生命周期判断。 | Turn 排序、事件回放、版本时间 | 已引入 ajv-formats，对 Event/Candidate/Asset/Assertion 时间统一执行 date-time 校验。 |
+| 增 | 🔴 高 | `packages/config/src/policies.ts:28` | 初版允许把 IMPLEMENTATION 的 `maxStatus` 配为 VERIFIED，或删除 SYMBOL_EXISTS/TEST_PASSED 必需断言，配置可绕过领域验证门禁；L4 也可被设为默认自动注入层级。 | 知识自动晋级、证据可信度、上下文膨胀 | 已固定两类自动发布的最高状态和最低证据，禁止 L4 成为默认层级，并增加弱化门禁拒绝测试。 |
+| 增 | 🟡 中 | `docs/design/codex-knowledge-layer-tdd.md:916` | 设计文档使用 snake_case 的分散策略，而实现使用 camelCase 聚合根配置；注入工具和闭环决策字段也缺失于实现，后续模块会对配置产生不同解释。 | 配置兼容、后续 Injection/Closure 实现、运维可理解性 | 已统一为单个版本化 camelCase 根对象，补齐 authorityOrder、expansion、decisions、Scope 和 Retention 契约。 |
+| 增 | 🟡 中 | `packages/config/src/loader.ts:47` | 不受信配置可能通过 YAML Alias、循环引用或 `__proto__`/`constructor` 等键放大解析成本或污染对象合并结果。 | 本地守护进程稳定性、配置安全 | 已禁止 Alias 和重复 Key，递归检测循环及危险键，合并使用 `Object.fromEntries`；攻击型 Fixture 全部通过。 |
+| 增 | 🟡 中 | `packages/config/src/store.ts:25` | 若热更新先写 active 再校验，或返回可变配置对象，失败更新和外部写入会破坏正在运行的策略快照。 | 所有后台 Worker、Hook 注入和闭环策略 | 已实现 validate-then-swap 原子激活、失败保留对象身份，并对默认值和激活快照深度冻结。 |
 
 ## 配置检查
 
 | 配置 | 检查结果 | 结论 |
 |---|---|---|
-| Schema package 依赖策略 | 仅允许 Domain、Ajv、ajv-formats | 通过 |
-| Schema 版本 | 三种根对象均固定 `const: 1` | 通过 |
-| 未知字段策略 | 顶层保留 extensions，嵌套默认拒绝 | 通过 |
-| Domain/Schema 枚举 | Source、EventType、Kind、Status、Scope、Assertion、Evidence、Relation 均有一致性测试 | 通过 |
-| 供应链审计 | npm high audit 0 vulnerabilities | 通过 |
+| 配置版本 | 根对象仅支持 `version: 1`，其他版本单独诊断 | 通过 |
+| 验证门禁 | GLOBAL 至少 2 项目信号；问题数固定 1；默认 PROJECT；自动发布证据不可弱化 | 通过 |
+| 注入边界 | 500ms、fail-open、每层最多 8 条、L4 禁止自动、工具列表受控 | 通过 |
+| 闭环边界 | 默认最多 1 次、高风险最多 2 次、超时 fail-open、禁止需求扩张 | 通过 |
+| 隐私边界 | Raw Event 最多 30 天、Transcript 正文禁止持久化 | 通过 |
+| 供应链 | 仅新增 yaml 2.9.0、zod 4.4.3；npm 官方 registry 审计 0 漏洞 | 通过 |
 
 ## 性能与瓶颈复盘
 
-- Ajv Validator 在模块首次加载时编译一次，之后复用，不在每条事件上重复编译。
-- EventEnvelope 基准为 100,000 次解析约 802.62ms，即约 124,592 ops/s。
-- 当前解析路径只进行 Schema 校验、顶层字段投影和少量跨字段检查，不包含 I/O 或模型调用。
-- Schema 体积在构建后约为静态 JSON；未来若类型数量明显增加，应改为 standalone validator 以降低冷启动成本，当前不构成瓶颈。
+- 10,000 次完整 YAML 解析与校验耗时约 1536.31ms，约 6,509 ops/s。
+- 10,000 次对象配置校验及原子激活耗时约 269.60ms，约 37,092 ops/s。
+- 配置加载只发生在启动或文件变更，不在事件消费和 Prompt 注入热路径；当前解析性能不构成瓶颈。
+- 热路径只读取深度冻结的内存快照，不加锁、不做 I/O。未来若支持多 Worker Thread，应通过消息传递广播新快照，避免跨线程共享可变状态。
 
 ## Review 结论
 
-CKL-003 未发现未修复风险。版本错误可诊断、未知字段边界清楚、Assertion 参数和跨字段关系已验证，可以进入配置系统实现。
+CKL-004 未发现未修复风险。安全默认值、不可绕过门禁、配置格式、诊断、原子切换和性能均达到本模块验收条件，可以进入 P0 Gate。

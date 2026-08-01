@@ -6,7 +6,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       provider: "v8",
-      include: ["packages/domain/src/**/*.ts"],
+      include: ["packages/{domain,schemas,config}/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
       thresholds: {
         lines: 90,
@@ -18,4 +18,3 @@ export default defineConfig({
     },
   },
 });
-

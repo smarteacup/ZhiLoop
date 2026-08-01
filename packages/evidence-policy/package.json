@@ -1,0 +1,25 @@
+{
+  "name": "@zhiloop/evidence-policy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": ["@zhiloop/config", "@zhiloop/domain", "@zhiloop/evidence-engine"],
+    "allowedExternalDependencies": []
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/config": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/evidence-engine": "0.0.0"
+  }
+}

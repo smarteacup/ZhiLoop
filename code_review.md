@@ -6,84 +6,86 @@
 
 | 指标 | 数值 |
 |---|---:|
-| CR 标识 | CKL-303 / Verifier Registry 和 MVP Verifiers |
-| CR 耗时 | 560s |
-| 高风险 | 5 个 |
+| CR 标识 | CKL-304 / Evidence Policy Engine |
+| CR 耗时 | 620s |
+| 高风险 | 6 个 |
 | 中风险 | 8 个 |
 | 低风险 | 0 个 |
-| 修复程度 | 已修复 13/13（100%） |
+| 修复程度 | 已修复 14/14（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| 总 CR 次数 | 20 次 |
-| 总耗时 | 8400s |
-| 高风险累计 | 50 个 |
-| 中风险累计 | 87 个 |
+| 总 CR 次数 | 21 次 |
+| 总耗时 | 9020s |
+| 高风险累计 | 56 个 |
+| 中风险累计 | 95 个 |
 | 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
 
 ## 改动说明
 
-本次新增 `@zhiloop/evidence-engine`，以唯一 Registry 路由七类 MVP Verifier，并把 typed Probe 观察转换成四态 VerificationResult 与三态 Evidence verdict。核心变化是将“外部事实采集”和“证据契约/故障隔离”分层，使未来 filesystem、code、config、command/test Adapter 可以替换而不改变策略语义。
+本次新增 `@zhiloop/evidence-policy`，将 Scope、VerificationResult、当前状态和版本化策略折叠为唯一 EvidencePolicyDecision。核心行为是只有用户、代码或测试 Evidence 能推进状态，所有路径复用 Domain 状态机，模型内容本身永久停留 PROPOSED。
 
-对外新增 Registry、Verifier、Probe、Observation 和 Result 类型，不修改 Domain Assertion/Evidence 字段或 Candidate 状态。Command/Test 只核验已有事件，不执行命令；CROSS_PROJECT_VERIFIED 暂不注册，明确 UNKNOWN，后续由 Evidence Policy 聚合。
+对外新增状态 action、interaction、transitionPath、effectiveScope、shouldPublish、Evidence refs 和 reason codes。GLOBAL 晋升从裸项目计数收紧为可追溯 VerifiedProjectEvidenceRef；未满足门禁时保留 PROJECT 发布能力，并只在知识具备发布资格后询问。
 
-同时新增专项、架构和 Project Identity 集成测试，将第 15 个 workspace 纳入 build、依赖图、lockfile 和 coverage Gate。
+模块没有持久化或外部 I/O，新增专项、架构与 Project→Scope→Verifier→Policy 全链测试，并纳入第 16 个 workspace 的 build/coverage Gate。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 高 | `registry.ts` / plugin dispatch | 第三方 Verifier 抛异常会 reject Promise.all，导致整批 Evidence 丢失。 | 后台批次重试、其他 Assertion 饥饿 | Registry 二次异常隔离，单项返回 ERROR 且不泄漏异常文本。 |
-| 增 | 高 | `registry.ts` / result contract | 插件可返回 SUPPORTED 但省略/伪造 Evidence，或错绑 assertionId/projectId。 | 生命周期误晋升、跨项目污染 | 校验 status/verdict/type/assertion/project/correlation/time/target/source/reason 全契约；违规转 ERROR。 |
-| 增 | 高 | `verifiers.ts` / symbol project | SYMBOL_EXISTS 可携带其他项目 projectId。 | 跨项目代码证据串用 | Probe 调用前强制等于可信 ProjectContext。 |
-| 增 | 高 | `verifiers.ts` / file targets | path traversal、absolute/drive path 可诱导 Adapter 越出仓库。 | 本地敏感文件读取 | 所有 symbol/file/manifest/config/test path 使用统一 canonical relative path 门禁。 |
-| 增 | 高 | Command/Test semantics | Verifier 若直接运行 Assertion 中描述的命令会形成模型驱动 RCE/副作用。 | 本地命令执行、状态漂移 | 端口只按 commandHash/testId 查询当前 Turn 已记录结果；模块无 process/filesystem 能力。 |
-| 增 | 中 | `registry.ts` / duplicate registration | 两个 Verifier 争抢同一 kind 会让加载顺序决定结果。 | 非确定性 Evidence | 注册阶段拒绝跨 Verifier 和单 Verifier 内重复 kind。 |
-| 增 | 中 | `verifiers.ts` / UNKNOWN | Probe 缺失若当 ERROR 或 REFUTED，会错误否定知识。 | Candidate 状态与交互策略 | 缺能力固定 UNKNOWN 且不造 Evidence；不确定观察才生成 INCONCLUSIVE。 |
-| 增 | 中 | `verifiers.ts` / observation target | Adapter 返回另一目标的正确结果可能被当前 Assertion 使用。 | 证据错绑 | Observation target 必须与 Verifier 计算的 canonical target 完全一致。 |
-| 增 | 中 | `verifiers.ts` / metadata bounds | 超长/控制字符 details、sourceRef、reason 可污染日志或放大存储。 | 可观测性、隐私、内存 | 字段格式、长度、条数和有限数值门禁；错误文本不进入结果。 |
-| 增 | 中 | `verifiers.ts` / evidence identity | Evidence ID 未覆盖 details/reason/project/correlation 时，不同观察可能碰撞。 | 证据幂等与覆盖 | 128-bit 确定性 identity 覆盖完整观察与归属字段。 |
-| 增 | 中 | `registry.ts` / concurrency order | 并发 Probe 完成顺序若改变输出顺序，会破坏重放和批次对应。 | 幂等、审计 | Promise.all 保留输入顺序，并有乱序完成回归测试。 |
-| 增 | 中 | `verifiers.ts` / mutable output | Adapter 或调用方修改 Evidence 可改变后续 Policy 结论。 | 状态决策一致性 | Result、Evidence、details、reasonCodes 递归冻结。 |
-| 增 | 中 | workspace/coverage | 新包未纳入 root references 和 coverage 会形成 CI 假绿。 | 构建与测试完整性 | 15 workspace 依赖 Gate、root build、lockfile、coverage include 全部更新。 |
+| 增 | 高 | `policy.ts` / model-only | 把 Candidate 置信度或模型措辞当 Evidence 会直接发布幻觉。 | 全部知识生命周期 | 无 Evidence 固定 PROPOSED/不发布；Candidate status 必须仍为 PROPOSED。 |
+| 增 | 高 | `policy.ts` / error semantics | ERROR/UNKNOWN 若按失败或成功聚合，会错误否定或晋升知识。 | 状态、交互、召回 | 四态分别处理；ERROR 无 Evidence，UNKNOWN 不推进，REFUTED 单独阻断。 |
+| 增 | 高 | `policy.ts` / transition | PROPOSED 直接写 VERIFIED 绕过 Domain 状态机。 | 审计和状态不变量 | BFS 生成合法路径并逐边调用 transitionKnowledgeStatus 复核。 |
+| 增 | 高 | `policy.ts` / code cap | IMPLEMENTATION 同时有测试时可能被自动抬到 VERIFIED。 | 未经策略允许的强权威知识 | 配置和运行时双门禁把 IMPLEMENTATION 上限固定 IMPLEMENTED。 |
+| 增 | 高 | `policy.ts` / global evidence | 裸 verifiedProjectIds 可无来源自证跨项目阈值。 | GLOBAL 污染 | 改为 subject/evidence/source/time 完整的 VerifiedProjectEvidenceRef，并去重项目。 |
+| 增 | 高 | `policy.ts` / evidence binding | 错 assertion/type/project/correlation 的 Evidence 可推进当前 Candidate。 | 跨 Candidate/项目证据串用 | Policy 再次验证 Result/Evidence 全归属，malformed 输入失败关闭到 PROJECT。 |
+| 增 | 中 | `policy.ts` / required assertions | 只验证同 kind 的一个 Assertion 会忽略同类其他未验证目标。 | 部分实现被当完整实现 | required kind 必须存在，且该 kind 的全部 Candidate Assertion 都 SUPPORTED。 |
+| 增 | 中 | `policy.ts` / terminal states | 重算 REJECTED/SUPERSEDED 可能触发无意义确认或非法复活。 | 用户打扰、状态回退 | 终态固定 KEEP；STALE 仅新 VERIFIED Evidence 恢复。 |
+| 增 | 中 | `policy.ts` / early global prompt | PROPOSED 知识一提出 GLOBAL 就询问，形成确认噪声。 | 交互频率与用户遗漏 | GLOBAL 询问延迟到本地状态已具备发布资格；此前静默 PROJECT fallback。 |
+| 增 | 中 | `policy.ts` / conflicts | 用户同时接受和拒绝或已发布知识冲突时自动选一方。 | 决策覆盖、知识分叉 | 统一 ASK_USER，不迁移，每次决策最多一个 interaction。 |
+| 增 | 中 | `policy.ts` / policy weakening | 调用方传入弱化 requiredAssertions 或更高 maxStatus 可绕过默认配置。 | 自动发布门槛 | 运行时重验 SYMBOL/TEST 必选、maxStatus、问题上限和默认 Scope。 |
+| 增 | 中 | `policy.ts` / duplicate results | 重复/extra VerificationResult 可能重复计数或覆盖查找结果。 | Evidence 聚合确定性 | Assertion/Result 唯一性、kind、candidateId 和归属全部校验。 |
+| 增 | 中 | `policy.ts` / repeat publish | 状态已相同时 shouldPublish 仍为 true 会写重复版本。 | Markdown/SQLite 版本噪声 | 只有合法 transitionPath 非空时产生发布意图。 |
+| 增 | 中 | workspace/performance | 新策略进入后台批次后可能形成 CPU 瓶颈或 CI 假绿。 | Worker 吞吐、覆盖率 | 纯线性集合策略约66.8万 decisions/s；root refs、依赖和 coverage 全纳入。 |
 
 ## 删除与兼容性检查
 
-- 没有删除或修改 Domain 的九类 Assertion、Evidence、Candidate 或状态机字段。
-- 新模块没有既有生产调用方；CROSS_PROJECT_VERIFIED 返回 UNKNOWN 是显式未实现能力，不改变其 Domain 表达。
-- Probe 是新增端口，后续 Adapter 必须返回 canonical target/source event；不允许通过宽松兼容绕过 Registry 校验。
-- 没有 SQLite migration、Hook、Daemon、环境变量或用户配置变更。
+- 没有删除或修改 Domain 状态、Assertion、Evidence、Scope 或 CKL-303 Result 类型。
+- 新模块无既有生产调用方；`verifiedProjectIds` 在提交前已收紧为首次发布的 VerifiedProjectEvidenceRef，不存在迁移负担。
+- 状态决策只输出意图，不修改 Candidate Repository；后续存储必须把状态路径、Evidence 和发布原子提交。
+- 没有数据库 migration、Hook、Daemon、环境变量或用户配置变更。
 
 ## 配置检查
 
-没有新增 properties/YAML、功能开关、模型 endpoint、命令白名单或用户目录。所有能力通过显式 `VerificationContext.probes` 注入；缺失 Probe 安全返回 UNKNOWN。
+复用 CKL-004 的 `VerificationPolicy`，没有新增配置项。运行时再次确认 IMPLEMENTATION/EXPERIENCE 上限、必选 Assertion、GLOBAL 阈值 2～20、每 Turn 最多一个问题和 PROJECT 默认值，防止绕过已验证配置对象。
 
 ## Gate 证据
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| Evidence Engine 专项 | 17/17 | 通过 |
-| 架构/集成 Gate | 31/31 | 通过 |
-| 全仓模块 | 315/315，27 Test Files | 通过 |
-| 覆盖率 | Engine Lines 98.13%、Branches 92.30%、Functions 100%；整体 Lines 96.92%、Branches 90.01% | 通过 |
-| 性能 | 1000 Assertion 中位6.332ms、P95 7.734ms，约157,916 assertions/s | 通过 |
+| Evidence Policy 专项 | 15/15 | 通过 |
+| 架构/集成 Gate | 33/33 | 通过 |
+| 全仓模块 | 330/330，28 Test Files | 通过 |
+| 覆盖率 | Policy Lines 97.12%、Branches 92.26%、Functions 100%；整体 Lines 96.93%、Branches 90.20% | 通过 |
+| 性能 | 10,000 次中位14.977ms、P95 17.758ms，约667,698 decisions/s | 通过 |
 | 供应链 | npm 官方 registry 0 vulnerabilities | 通过 |
 
 ## 性能与瓶颈复盘
 
-- Registry 的计算主要是路由、字段校验、Evidence ID 和冻结；1000 条异步 Assertion P95 低于 8ms。
-- 实际瓶颈会位于 filesystem/code/config Probe I/O。Daemon 应按 project snapshot 批量读取 manifest/config，并对相同 source event 去重，而不是削弱 Registry 门禁。
-- verifyAll 并发启动全部 Probe；未来批次上限超过 Candidate 的 100 Assertion 门禁时，应在 Worker 层增加并发池，避免文件描述符峰值。
+- 单 Candidate 的复杂度与 Assertion、Result、跨项目 Evidence 数量线性相关；上游每 Candidate 100 Assertion 上限使成本可控。
+- 当前纯策略约 1.5 微秒/次，远低于 Probe I/O 和模型编译，不需要缓存。
+- `supported` 对 required kind 使用线性查找；在 100 条上限内无瓶颈。若未来放宽到千级，应预构建 resultByAssertion Map。
 
 ## 已知边界
 
-- 当前没有 Node filesystem/code/config/dependency Adapter；CKL-303 完成的是稳定验证端口和证据契约。
-- REGEX/STRUCTURAL 的资源限制必须由 Adapter 实现；禁止无超时执行模型生成正则。
-- CodeGraph 尚未初始化；影响范围通过依赖边界、攻击输入、插件伪造、真实 Project Identity 集成和全仓回归验证。
+- 原子状态/发布提交尚未实现，CKL-401/Registry 装配必须避免“状态已变但 Markdown 未写”的部分成功。
+- conflictIds 与 VerifiedProjectEvidenceRef 依赖可信聚合器，模型不能直接提供。
+- CKL-305 才处理代码指纹和 STALE 触发。
+- CodeGraph 尚未初始化；本次通过状态组合、恶意配置/Evidence、全链集成和全仓回归确认影响范围。
 
 ## Review 结论
 
-CKL-303 未发现未修复风险，四项验收条件全部满足。可以进入 CKL-304 Evidence Policy Engine。
+CKL-304 未发现未修复风险，五项验收条件全部满足。可以进入 CKL-305 代码指纹与失效检测。

@@ -17,10 +17,11 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "lint": "eslint .",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "node --test scripts/*.test.mjs && vitest run --coverage",
     "test:unit": "vitest run",
-    "check:deps": "node scripts/check-workspace-dependencies.mjs",
-    "check": "npm run check:deps && npm run lint && npm run build && npm run test"
+    "check:deps": "node scripts/check-workspace-dependencies.mjs && node scripts/check-source-imports.mjs",
+    "check": "npm run check:deps && npm run lint && npm run build && npm run typecheck:test && npm run test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

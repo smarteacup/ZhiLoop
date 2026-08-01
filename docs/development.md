@@ -14,6 +14,7 @@
 npm ci
 npm run build
 npm run lint
+npm run typecheck:test
 npm run test
 npm run check:deps
 npm run check

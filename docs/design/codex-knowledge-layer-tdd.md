@@ -428,10 +428,14 @@ stateDiagram-v2
     ACCEPTED --> IMPLEMENTED: 代码证据
     IMPLEMENTED --> VERIFIED: 测试或运行证据
     PROPOSED --> REJECTED: 用户明确否定
+    ACCEPTED --> REJECTED: 用户撤销接受
     ACCEPTED --> SUPERSEDED: 新决策替代
+    IMPLEMENTED --> SUPERSEDED: 新版本替代
+    VERIFIED --> SUPERSEDED: 新版本替代
     IMPLEMENTED --> STALE: 代码指纹失效
     VERIFIED --> STALE: 代码或依赖变化
     STALE --> VERIFIED: 重新验证
+    STALE --> SUPERSEDED: 新版本替代
     PROPOSED --> SUPERSEDED: 新候选替代
 ```
 
@@ -877,6 +881,8 @@ Embedding 相似只能产生“可能重复”关系，不得直接覆盖。
 
 - 至少两个不同 `projectId` 中达到 `VERIFIED`，且内容无项目专有标识。
 - 用户在对话中明确表示“作为全局规则/偏好”。
+
+`RULE` 和 `PREFERENCE` 不允许仅凭跨项目证据自动晋升，必须有用户明确表态。
 
 其余情况必须保持项目级或进入一次微确认。
 

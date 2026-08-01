@@ -6,49 +6,57 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-001 / main worktree |
-| **CR 耗时** | 210s |
-| **🔴 高风险** | 0 个 |
+| **CR 标识** | CKL-002 / Domain |
+| **CR 耗时** | 260s |
+| **🔴 高风险** | 1 个 |
 | **🟡 中风险** | 2 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 2/2（100%） |
+| **修复程度** | 已修复 3/3（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 1 次 |
-| **总耗时** | 210s |
-| **🔴 高风险累计** | 0 个 |
-| **🟡 中风险累计** | 2 个 |
+| **总 CR 次数** | 2 次 |
+| **总耗时** | 470s |
+| **🔴 高风险累计** | 1 个 |
+| **🟡 中风险累计** | 4 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-本次变更完成 CKL-001 工程骨架，建立 npm workspaces、TypeScript Project References、ESLint、Vitest/V8 Coverage、依赖图检查和 GitHub Actions。应用与包均可独立构建，根 `npm run check` 作为本地和 CI 的统一质量门禁。
+本次变更完成 CKL-002 Domain，定义 Event、Episode、Knowledge Candidate/Asset、Scope、Evidence、Assertion、Relation 与知识生命周期。所有领域对象不依赖 Node、Codex、存储或模型 SDK，状态迁移、Scope 校验和 GLOBAL 晋升均为无副作用纯函数。
 
-对外没有运行时接口、数据结构或持久化变化。工具链固定到 Node 24.18.0 LTS 和 npm 11.11.0；业务实现仍为空，后续模块必须沿既定 workspace 方向增加依赖。
+候选知识通过类型联合保证至少具有一个 Assertion 或 Evidence Hint；已解析 Scope 使用可判别联合限制不同层级的必填字段。GLOBAL 晋升只接受用户明确确认，或两个不同项目的验证证据；RULE/PREFERENCE 必须由用户明确确认。
 
-同时补充依赖检查器自测、开发说明和零高危依赖审计，用于在领域代码进入前先阻断架构漂移与供应链问题。
+同时补充源码 AST 导入检查、测试类型检查和 35 个 Domain 测试。Domain 行覆盖率 93.84%、分支覆盖率 93.87%，满足 P0 Gate。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🟡 中 | `.node-version:1` | 初始按本机版本固定 Node 25.8.1，但该版本线已 EOL，不适合作为 CI/生产基线。 | 构建安全更新、依赖兼容性、长期维护 | 已改为 Node 24.18.0 LTS，并在 Node 24 下执行完整质量门禁。 |
-| 增 | 🟡 中 | `scripts/check-workspace-dependencies.mjs:7` | 初版只检查循环和 package→app，无法阻止未声明的层间/外部依赖；重复 workspace 名还可能覆盖 Map 项。 | 模块边界、循环依赖漏检、供应链扩张 | 已增加每包依赖策略、未声明依赖拒绝、重复名称拒绝及正反向测试。 |
+| 增 | 🔴 高 | `packages/domain/src/promotion.ts:20` | 初版跨项目晋升没有区分知识类型，可能将 RULE/PREFERENCE 在没有用户确认时提升为 GLOBAL。 | 全局知识污染、跨项目错误门禁 | 已增加 KnowledgeKind 门禁，RULE/PREFERENCE 只能通过用户明确确认晋升，并补充正反测试。 |
+| 增 | 🟡 中 | `packages/domain/src/state-machine.ts:3` | 原设计未允许 IMPLEMENTED/VERIFIED/STALE 被新版本 SUPERSEDED，且 ACCEPTED 无法在用户撤销后 REJECTED。 | 知识版本更新、撤销与生命周期卡死 | 已同步修订 TDD 和状态机，49 条状态组合全部覆盖。 |
+| 增 | 🟡 中 | `scripts/check-source-imports.mjs:1` | 仅检查 package.json 依赖不足以阻止 Domain 从根 hoisted devDependency 或 Node 内置模块导入代码。 | 领域层可移植性、适配器隔离 | 已增加 TypeScript AST 源码导入检查和 4 个正反测试；Domain 只允许相对导入。 |
 
 ## 配置检查
 
 | 配置 | 检查结果 | 结论 |
 |---|---|---|
-| `.node-version` / `package.json#engines` | LTS 固定版本属于允许范围 | 通过 |
-| `package.json#packageManager` / lockfile | npm 版本已记录，lockfile 已生成 | 通过 |
-| workspace TypeScript references | Domain → Schemas → Config 顺序与依赖声明一致 | 通过 |
-| GitHub Actions | 使用固定 Node 文件、`npm ci` 和统一 `npm run check` | 通过 |
+| Domain package 依赖策略 | workspace/external allowlist 均为空 | 通过 |
+| Domain tsconfig | `types: []`，无 Node 全局类型 | 通过 |
+| 测试类型检查 | `tsconfig.test.json` + `npm run typecheck:test` | 通过 |
+| Coverage Gate | Lines 93.84%、Branches 93.87% | 通过 |
 | 生产/预发配置 | 本模块未引入运行时环境配置 | 不适用 |
+
+## 性能与瓶颈复盘
+
+- 状态迁移和默认召回资格判断为 O(1)。
+- Scope 校验仅遍历当前对象字段和少量 symbols/modulePaths，为 O(n)，无 I/O。
+- GLOBAL 晋升只对 projectId 去重，为 O(n) 时间与空间；输入规模受 Evidence Policy 限制，不构成瓶颈。
+- Domain 导入检查只在 CI/本地 Gate 执行，不进入运行时路径。
 
 ## Review 结论
 
-CKL-001 未发现未修复的高、中、低风险问题，可以进入 Domain 模块。当前已知限制是本机默认 Node 为 25.8.1，但锁定 Node 24.18.0 已通过 `npx node@24.18.0` 完整验证，CI 将使用正式 LTS 复验。
+CKL-002 未发现未修复风险。状态、Scope、GLOBAL 晋升和模块隔离均有拒绝路径测试，可以进入 JSON Schema 与版本规则实现。

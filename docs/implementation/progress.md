@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P2 进行中（CKL-204 已完成）  
+**当前里程碑**：P2 进行中（CKL-205 已完成，进入 P2 Gate）  
 **记录日期**：2026-08-01  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -24,6 +24,7 @@
 | CKL-202 | 完成 | `2467b5f` | 模型无关提取端口、最小输入、原子草稿 Schema/Grounding、版本化幂等键、超时重试 | 235 项模块测试、19 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.71ms |
 | CKL-203 | 完成 | `83cf0ae` | 五类 MVP Compiler、供应商无关结构化生成端口、专用 Schema/Prompt、Candidate 强制 PROPOSED | 245 项模块测试、20 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.87ms |
 | CKL-204 | 完成 | `379c863` | Episode v2 全部用户原话、接受/拒绝/纠错信号、保守目标关联、歧义门禁、确定性 Assertion | 259 项模块测试、21 项架构/Gate 测试；4 高/6 中风险，全部修复；100 Candidate × 100 Statement 中位 1.83ms |
+| CKL-205 | 完成 | `0923708` | SQLite 编译批次、租约/续租、generation fencing、原子 Candidate 落库、版本并存、默认不召回 | 274 项模块测试、23 项架构/Gate 测试；5 高/7 中风险，全部修复；100 Candidate 写 P95 2.18ms、读 P95 1.37ms |
 
 ## 2. P0 Gate 证据
 
@@ -65,6 +66,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 P2/CKL-205 Candidate Repository：实现候选批次持久化、compiler version 幂等、可重试状态和默认不召回门禁。
+- 下一任务是 P2 Gate：用版本化 Golden Fixture 验证五类知识端到端生成、Candidate 到 Episode/Turn 的完整追溯，以及模型失败后的持久化重试恢复。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

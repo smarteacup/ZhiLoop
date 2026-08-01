@@ -272,6 +272,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-305：代码指纹与失效检测
 
 **依赖**：CKL-303、CKL-304  
+**状态**：已完成  
 **交付物**：path/symbol/config/dependency 指纹和 `STALE` 迁移。  
 **验收条件**：
 

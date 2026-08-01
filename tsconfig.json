@@ -15,6 +15,7 @@
     { "path": "./packages/scope-resolver" },
     { "path": "./packages/evidence-engine" },
     { "path": "./packages/evidence-policy" },
+    { "path": "./packages/invalidation-engine" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

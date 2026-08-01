@@ -4,17 +4,20 @@ import type {
   EventEnvelope,
   KnowledgeAsset,
   KnowledgeCandidate,
+  KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
 
 import eventSchema from "./json/event.schema.json" with { type: "json" };
 import knowledgeAssetSchema from "./json/knowledge-asset.schema.json" with { type: "json" };
 import knowledgeCandidateSchema from "./json/knowledge-candidate.schema.json" with { type: "json" };
+import knowledgeExtractionOutputSchema from "./json/knowledge-extraction-output.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
 export const SCHEMA_NAMES = [
   "event",
   "knowledge-candidate",
+  "knowledge-extraction-output",
   "knowledge-asset",
 ] as const;
 
@@ -45,6 +48,7 @@ export type ParseResult<T> =
 export const schemas = Object.freeze({
   event: eventSchema,
   "knowledge-candidate": knowledgeCandidateSchema,
+  "knowledge-extraction-output": knowledgeExtractionOutputSchema,
   "knowledge-asset": knowledgeAssetSchema,
 });
 
@@ -53,6 +57,7 @@ const ajv = new Ajv({ allErrors: true, strict: true });
 const validators = {
   event: ajv.compile(eventSchema),
   "knowledge-candidate": ajv.compile(knowledgeCandidateSchema),
+  "knowledge-extraction-output": ajv.compile(knowledgeExtractionOutputSchema),
   "knowledge-asset": ajv.compile(knowledgeAssetSchema),
 } satisfies Record<SchemaName, ValidateFunction>;
 
@@ -149,6 +154,15 @@ export function parseKnowledgeCandidate(input: unknown): ParseResult<KnowledgeCa
   }
 
   return result;
+}
+
+export function parseKnowledgeExtractionOutput(input: unknown): ParseResult<KnowledgeExtractionOutput> {
+  return parse(
+    "knowledge-extraction-output",
+    validators["knowledge-extraction-output"],
+    input,
+    Object.keys(knowledgeExtractionOutputSchema.properties),
+  );
 }
 
 export function parseKnowledgeAsset(input: unknown): ParseResult<KnowledgeAsset> {

@@ -141,6 +141,7 @@ describe("buildEpisodes", () => {
     expect(result.episodes[0]).toMatchObject({
       builderVersion: "episode-builder-v1",
       goal: "实现 Episode Builder",
+      goalRef: source.records[1]?.event.eventId,
       turnIds: ["t1", "t2"],
       status: "COMPLETED",
       projectContext: { repositoryRoot: "/workspace/repo", portable: false },

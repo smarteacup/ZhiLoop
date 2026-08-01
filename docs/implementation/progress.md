@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P2 进行中（CKL-201 已完成）  
+**当前里程碑**：P2 进行中（CKL-202 已完成）  
 **记录日期**：2026-08-01  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -21,6 +21,7 @@
 | CKL-105 | 完成 | `550d935` | Session/Turn 确定性重建、重复 Stop 折叠、缺失结束推断、乱序稳定排序 | 187 项累计模块测试；10,000 事件重建中位 8.48ms；2 高/5 中风险，全部修复 |
 | P1 Gate | 通过 | `92bcfb9` | 三次幂等重放、Hook 全故障恢复、source/session/turn 全链路追踪 | 189 项模块测试、14 项架构/Gate 测试；1 高/3 中风险，全部修复 |
 | CKL-201 | 完成 | `82c9546` | 确定性 Episode 聚合、目标拆分/子目标、纠错双向保真、动作/产物/结果、Ledger 完整重建 | 211 项模块测试、16 项架构/Gate 测试；2 高/4 中风险，全部修复；10,000 事件中位 24.20ms |
+| CKL-202 | 完成 | `待提交` | 模型无关提取端口、最小输入、原子草稿 Schema/Grounding、版本化幂等键、超时重试 | 235 项模块测试、19 项架构/Gate 测试；3 高/5 中风险，全部修复；100 Candidate 中位 1.71ms |
 
 ## 2. P0 Gate 证据
 
@@ -62,6 +63,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 P2/CKL-202 Knowledge Extraction Port：定义模型无关接口、结构化输出 Schema、超时/重试和幂等版本边界。
+- 下一任务是 P2/CKL-203 MVP Knowledge Compiler：通过 CKL-202 端口提取 `REQUIREMENT`、`DESIGN`、`DECISION`、`IMPLEMENTATION`、`EXPERIENCE`，且不保存隐藏推理。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

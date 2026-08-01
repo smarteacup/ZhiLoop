@@ -43,6 +43,8 @@ Episode 内事件使用 `(occurredAt, Ledger sequence, eventId)` 全序；`evide
 
 首版只在单 Session 内聚合连续 Turn。跨 Session 合并必须等后续具备显式 task/topic reference 后再开放，不能仅靠文本相似度自动串联并行任务。
 
+主目标通过 `goalRef` 明确指向其来源事件；后续提取器不需要在整段 `evidenceRefs` 中猜测哪条事件承载目标。
+
 ## 4. 纠错闭环
 
 每条 `Correction` 同时保留：

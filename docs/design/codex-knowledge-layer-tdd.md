@@ -326,6 +326,7 @@ interface Episode {
   turnIds: string[];
   projectContext: ProjectContext;
   goal: string;
+  goalRef: string;
   subgoals: EpisodeSubgoal[];
   userCorrections: Correction[];
   actions: ActionRecord[];
@@ -354,6 +355,20 @@ MVP 必须实现：
 ```text
 REQUIREMENT | DESIGN | DECISION | IMPLEMENTATION | EXPERIENCE
 ```
+
+### 8.3.1 Knowledge Extraction Port
+
+模型适配器只接收 Episode 的最小语义投影，不接收 Session/Turn 元数据、本地仓库根路径或无关边界事件。主目标必须有 `goalRef`；模型返回的 Assertion/Evidence 引用只能使用输入提供的 eventId。
+
+适配器输出为版本化 `KnowledgeExtractionOutput` 草稿批次。Runner 必须先对整批执行 JSON Schema 和 Grounding 校验，再统一写入 candidate/assertion ID、`compilerVersion`、`sourceEpisodes`、时间和 correlationId；任一草稿非法时不得产生部分 Candidate。
+
+编译批次身份必须包含：
+
+```text
+episodeId + builderVersion + inputHash + compilerVersion + promptVersion
+```
+
+其中 `inputHash` 来自最小语义输入的规范化内容，避免开放 Episode 增长后复用旧批次。超时、模型不可用和可重试格式错误只返回零 Candidate 的 `RETRYABLE` 结果，Episode 继续由上游保留。
 
 ### 8.4 作用域
 

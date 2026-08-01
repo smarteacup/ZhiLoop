@@ -162,6 +162,7 @@ function freezeEpisode(draft: EpisodeDraft, builderVersion: string): Episode {
     turnIds: Object.freeze([...draft.turnIds]),
     projectContext: Object.freeze({ ...draft.projectContext }),
     goal: draft.goal,
+    goalRef: draft.primaryEventId,
     subgoals: Object.freeze([...draft.subgoals]),
     userCorrections: Object.freeze([...draft.corrections]),
     actions: Object.freeze([...draft.actions]),

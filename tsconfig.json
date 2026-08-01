@@ -9,6 +9,7 @@
     { "path": "./packages/hook-runtime" },
     { "path": "./packages/conversation-normalizer" },
     { "path": "./packages/episode-builder" },
+    { "path": "./packages/knowledge-compiler" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

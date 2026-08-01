@@ -10,6 +10,7 @@ import {
   type EventEnvelope,
   type KnowledgeAsset,
   type KnowledgeCandidate,
+  type KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
 import { describe, expect, it } from "vitest";
 
@@ -17,6 +18,7 @@ import {
   parseEventEnvelope,
   parseKnowledgeAsset,
   parseKnowledgeCandidate,
+  parseKnowledgeExtractionOutput,
   schemas,
 } from "./schema-registry.js";
 
@@ -81,6 +83,21 @@ const assetFixture = {
   createdAt: "2026-08-01T00:00:00Z",
   updatedAt: "2026-08-01T00:00:00Z",
 } satisfies KnowledgeAsset;
+
+const extractionFixture = {
+  schemaVersion: 1,
+  candidates: [{
+    subjectKey: "decision.codex.primary-source",
+    kind: "DECISION",
+    scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["REPO_MATCH"] },
+    title: "Use Codex Hooks first",
+    summary: "Use Hooks for existing clients.",
+    body: "App Server remains a later adapter.",
+    confidence: 0.9,
+    assertions: [],
+    evidenceHints: [{ type: "USER_STATEMENT", sourceRef: "event-1" }],
+  }],
+} satisfies KnowledgeExtractionOutput;
 
 describe("schema registry", () => {
   it("parses an EventEnvelope and separates unknown fields", () => {
@@ -203,6 +220,15 @@ describe("schema registry", () => {
     );
   });
 
+  it("validates an atomic Knowledge Extraction output", () => {
+    expect(parseKnowledgeExtractionOutput(extractionFixture).ok).toBe(true);
+    expect(parseKnowledgeExtractionOutput({
+      ...extractionFixture,
+      candidates: [...extractionFixture.candidates, { ...extractionFixture.candidates[0], title: "" }],
+    }).ok).toBe(false);
+    expect(parseKnowledgeExtractionOutput({ ...extractionFixture, extra: true }).ok).toBe(false);
+  });
+
   it("validates KnowledgeAsset scope and version", () => {
     expect(parseKnowledgeAsset(assetFixture).ok).toBe(true);
     const result = parseKnowledgeAsset({
@@ -216,10 +242,17 @@ describe("schema registry", () => {
     expect(schemas.event.properties.source.enum).toEqual(EVENT_SOURCES);
     expect(schemas.event.properties.eventType.enum).toEqual(EVENT_TYPES);
     expect(schemas["knowledge-candidate"].properties.kind.enum).toEqual(KNOWLEDGE_KINDS);
+    expect(schemas["knowledge-extraction-output"].definitions.candidateDraft.properties.kind.enum).toEqual(KNOWLEDGE_KINDS);
     expect(
       schemas["knowledge-candidate"].properties.assertions.items.properties.kind.enum,
     ).toEqual(ASSERTION_KINDS);
     expect(schemas["knowledge-candidate"].properties.evidenceHints.items.properties.type.enum).toEqual(
+      EVIDENCE_TYPES,
+    );
+    expect(schemas["knowledge-extraction-output"].definitions.assertionDraft.properties.kind.enum).toEqual(
+      ASSERTION_KINDS,
+    );
+    expect(schemas["knowledge-extraction-output"].definitions.evidenceHintDraft.properties.type.enum).toEqual(
       EVIDENCE_TYPES,
     );
     expect(schemas["knowledge-candidate"].properties.scopeHint.properties.level.enum).toEqual(

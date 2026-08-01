@@ -6,72 +6,82 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-201 / Episode Builder |
-| **CR 耗时** | 420s |
-| **🔴 高风险** | 2 个 |
-| **🟡 中风险** | 4 个 |
+| **CR 标识** | CKL-202 / Knowledge Extraction Port |
+| **CR 耗时** | 480s |
+| **🔴 高风险** | 3 个 |
+| **🟡 中风险** | 5 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 6/6（100%） |
+| **修复程度** | 已修复 8/8（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 12 次 |
-| **总耗时** | 4480s |
-| **🔴 高风险累计** | 16 个 |
-| **🟡 中风险累计** | 37 个 |
+| **总 CR 次数** | 13 次 |
+| **总耗时** | 4960s |
+| **🔴 高风险累计** | 19 个 |
+| **🟡 中风险累计** | 42 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-新增 `@zhiloop/episode-builder`，将 Normalized Session/Turn 与 Ledger 正文确定性聚合为 Episode；支持主目标、显式子目标、目标切换、纠错双向保真、动作/产物/结果提取、版本化身份和完整证据引用。同时收紧 Domain 的 Correction 结构，增加 `builderVersion` 与 `subgoals`。
+本次新增模型无关的 Knowledge Extraction Port。Episode 先投影成最小、可追溯且不可变的模型输入；供应商适配器只返回语义草稿，Runner 对整批执行 Schema/Grounding 门禁后统一生成完整 `KnowledgeCandidate`。
 
-模块不调用模型、不加载 SQLite，只以 type import 依赖 Ledger。真实 SQLite Ledger → Normalizer → Builder 集成重放得到字节一致结果。
+对外新增 `KnowledgeExtractionPort`、版本化 request/result、AdapterError 和草稿输出 Schema。失败结果不携带部分 Candidate；模型不可用、超时和格式错误保留 episodeId/extractionKey 供 Worker 重试，具体持久化延后至 CKL-205。
+
+Episode 增加必填 `goalRef`，补齐主目标来源。全量 TypeScript 编译确认唯一生产构造方已同步；无模型 SDK、存储、文件系统、子进程或用户配置变更。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🔴 高 | `packages/episode-builder/src/builder.ts` / prompt | payload 被清理或格式异常时若降级为“无归属活动”，会把缺失用户目标伪装成成功 Episode。 | 错误知识编译、审计失真 | UserPrompt 正文缺失时整次拒绝构建；新增 unavailable prompt 测试。 |
-| 增 | 🔴 高 | `packages/episode-builder/src/builder.ts` / evidence | 只按 eventId 查正文、不核对 Normalizer 引用元数据，或允许同一引用重复归属、遗漏额外 Ledger 记录，会让“完全可重建”出现假阳性。 | Episode 串 Session/Turn、证据重复或丢失 | 核对 sequence/source/type/time/session；重复归属、缺失、不一致和未引用记录全部拒绝；真实 Ledger 集成验证全 evidenceRefs。 |
-| 增 | 🟡 中 | `packages/episode-builder/src/builder.ts` / truncation | 主 prompt 被两次截断，产生重复诊断；省略号未计入字符上限。 | 诊断噪声、上下文预算越界 | 按 eventId 去重诊断，首目标复用已截断值，省略号计入硬上限；失败测试先复现后修复。 |
-| 增 | 🟡 中 | `packages/episode-builder/src/builder.ts` / dedup | Turn 和 Artifact 通过数组 `includes/some` 去重，长会话可能退化为 O(n²)。 | 后台延迟、CPU 放大 | 改为 Set 常数时间去重；10,000 事件/5,000 Turn P95 29.67ms。 |
-| 增 | 🟡 中 | `packages/episode-builder/src/builder.ts` / resolver | 自定义 Project Resolver 的非法运行时值或额外字段可能进入 Domain 输出。 | 项目归属错误、未知字段泄漏 | 验证 projectId/portable/可选字符串，只投影 ProjectContext 已知字段。 |
-| 增 | 🟡 中 | `packages/episode-builder/src/builder.ts` / classifier | 可替换分类器可能返回非法 kind、空 statement 或在单 Turn 重复主目标，导致静默丢目标。 | Episode 错分或子任务丢失 | 校验分类结果；第二主目标降级为显式 subgoal 并产生诊断。 |
+| 增 | 🔴 高 | `packages/domain/src/episode.ts` / `goalRef` | Episode 只有 goal 文本和全量 evidenceRefs，提取器无法确定主目标来源，只能猜 eventId。 | Candidate 无法追溯用户原始目标、错误证据绑定 | 增加必填 `goalRef`，Builder 绑定 primary event；最小输入与 Grounding 强制使用该引用。 |
+| 增 | 🔴 高 | `packages/knowledge-compiler/src/runner.ts` / identity | 仅使用 episodeId + compiler/prompt version 做幂等时，开放 Episode 增加 Turn 后 ID 不变，会错误复用旧编译批次。 | 新对话结论永久漏编译、知识陈旧 | 对规范化最小输入计算 inputHash 并纳入 extractionKey；输入内容变化测试覆盖。 |
+| 增 | 🔴 高 | `packages/knowledge-compiler/src/runner.ts` / atomic output | 逐 Candidate 校验或接受模型自报 source/project 会产生部分成功和伪造跨项目证据。 | 错误知识落库、项目知识污染 | 整批 Draft Schema 原子校验；Evidence/User assertion 引用和 project/remote 全量 Grounding，任一点失败 candidates 固定为空。 |
+| 增 | 🟡 中 | `packages/knowledge-compiler/src/input.ts` / projection | 直接传 Episode 会注入 Session/Turn、边界 eventId 和本机 repositoryRoot，增加上下文与隐私暴露。 | Token 膨胀、本地路径泄漏 | 明确最小 DTO，只保留实际语义引用；剔除本地根路径及会话元数据，并设置输入硬上限。 |
+| 增 | 🟡 中 | `packages/knowledge-compiler/src/runner.ts` / mutable input | 调用方或 Adapter 在异步重试中修改 request，会使 extractionKey、Grounding 和实际模型输入不一致。 | 幂等漂移、竞态错误 | 执行前 structuredClone + deepFreeze；Adapter 每次接收同一不可变快照。 |
+| 增 | 🟡 中 | `packages/knowledge-compiler/src/runner.ts` / ownership | Candidate 深冻结若复用 Adapter 输出中的嵌套数组，会意外冻结供应商对象。 | Adapter 缓存/复用异常 | Scope 和 Assertion parameters 先结构化复制；测试确认原输出仍可变。 |
+| 增 | 🟡 中 | `packages/knowledge-compiler/src/runner.ts` / abort | 父任务在调用途中取消时 attempts 少记一次，且重试等待失败可能误报为用户取消。 | 重试审计、指标和故障诊断错误 | 区分调用前/调用中取消；Scheduler 独立失败使用 `RETRY_SCHEDULER_FAILED`。 |
+| 增 | 🟡 中 | `packages/knowledge-compiler/src/input.ts` / dedup | 用数组 includes 收集相关证据，在大量 Action/Outcome 下退化为 O(n²)。 | 后台编译延迟和 CPU 放大 | 使用 Set 保持稳定顺序并实现 O(1) 去重；100 Candidate 性能基准通过。 |
 
 ## 删除与兼容性检查
 
-- `Correction.originalRef` 从可选改为必填，并新增原文/新引用字段；全量 TypeScript build 和 211 条测试确认仓库内没有旧构造方遗留。
-- `Episode` 新增必填 `builderVersion`、`subgoals`；当前唯一生产构造方为新 Builder，后续 CKL-202 直接消费明确版本结构。
-- 未删除现有 Schema、Ledger、Normalizer 行为；P0/P1 全部回归测试保持通过。
+- 未删除现有事件、Ledger、Normalizer、Episode 构建或 Candidate Schema 行为。
+- `Episode.goalRef` 是新增必填字段；仓库内唯一生产构造方 `freezeEpisode` 和全部 Fixture 已同步，235 条测试与全量 typecheck 无旧构造遗漏。
+- Domain 新增 Draft/Extraction 类型，不改变现有 KnowledgeCandidate/KnowledgeAsset 字段；CKL-203 可直接实现端口，不依赖具体供应商。
+- Schema Registry 新增第四种 Schema name；既有三个 parser 和 Fixture 全部回归通过。
+
+## 配置检查
+
+本次没有新增或修改运行配置、环境开关、凭证或用户目录文件，不存在 pre/prod/inner 配置迁移项。
 
 ## Gate 证据
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| 模块专项 | 22/22 | 通过 |
-| SQLite Ledger 完整重建 | 2 次结果深相等，全部 eventId 可追踪 | 通过 |
-| 架构边界 | Builder 无 SQLite/模型运行时依赖 | 通过 |
-| 全仓质量 | 211 模块 + 16 架构/Gate | 通过 |
-| 覆盖率 | Builder Lines 96.63%、Branches 86.28%；整体 Lines 97.61%、Branches 89.71% | 通过 |
-| 性能 | 10,000 events 中位 24.20ms、P95 29.67ms | 通过 |
+| Knowledge Compiler 专项 | 23/23 | 通过 |
+| Schema/相关专项 | 57/57 | 通过 |
+| 架构/集成 | 新增 3/3；全仓 19/19 | 通过 |
+| 全仓模块 | 235/235，21 Test Files | 通过 |
+| 覆盖率 | Compiler Lines 92.89%、Branches 89.44%；整体 Lines 96.91%、Branches 89.68% | 通过 |
+| 性能 | 100 Candidate 中位 1.71ms、P95 2.11ms | 通过 |
 | 供应链 | npm 官方 registry 0 vulnerabilities | 通过 |
 
 ## 性能与瓶颈复盘
 
-- 主路径为 O(E + T) 校验/提取和 O(E log E) Episode 内稳定排序；Turn/Artifact 去重已消除平方级扫描。
-- 默认会完整持有 Ledger records、Normalized refs 和 Episode 派生数组。百万级历史不应单批全量构建，后续 Worker 应按 Session/游标分片并物化结果。
-- 默认分类器是常量数量正则；替换为模型分类器时不得放进本纯函数同步主路径，应由可重放的外部分类结果或独立端口提供。
+- 无模型时主要成本是 structuredClone、规范化 JSON 哈希、AJV 批次校验和 Candidate 二次校验；100 Candidate P95 2.11ms，远低于模型网络延迟。
+- 输出设置 100 Candidate/100 Assertion/100 Evidence hint 和文本长度硬门禁；输入规范化 JSON 上限 4,000,000 字符，避免异常对象无界放大。
+- 超时后 Runner 不接受晚到结果并发起下一次尝试；供应商 Adapter 必须遵守 AbortSignal，否则旧网络请求仍可能占用供应商配额，但不会污染结果。
+- CKL-205 必须对 extractionKey 建唯一约束并实现 claim/lease，Runner 本身不解决多 Worker 并发重复调用。
 
 ## 已知边界
 
-- 显式词规则不能覆盖所有自然语言目标变化；歧义保守落为 subgoal，避免误拆。
-- 首版不跨 Session 合并，未来必须依赖显式 task/topic reference 和二次闭环验证。
-- 工具 Outcome 只承认机器可见 exit code/status；自然语言成功结论仍标为 UNKNOWN。
-- CodeGraph 尚未在仓库初始化，结构化影响扫描不可用；已由依赖边界、TypeScript 全量编译与全仓回归覆盖当前影响验证。
+- 当前没有具体模型 Prompt/Adapter，不验证五类 MVP 知识的提取质量。
+- 固定重试间隔尚未消费供应商 Retry-After；装配时需保持总次数和单次超时硬上限。
+- Grounding 只验证引用归属和项目一致性，不证明断言为真；真实性由后续 Evidence Engine 验证。
+- CodeGraph 尚未初始化；结构影响通过依赖边界、全量 TypeScript 编译、Schema 契约和全仓回归验证。
 
 ## Review 结论
 
-CKL-201 未发现未修复风险，四项验收条件全部满足。Episode Builder 可以作为 P2 的稳定输入边界，下一步进入 CKL-202 Knowledge Extraction Port。
+CKL-202 未发现未修复风险，四项验收条件全部满足。Knowledge Extraction Port 可以冻结为 CKL-203 的供应商无关执行边界。

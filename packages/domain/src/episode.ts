@@ -49,6 +49,7 @@ export interface Episode {
   readonly turnIds: readonly string[];
   readonly projectContext: ProjectContext;
   readonly goal: string;
+  readonly goalRef: string;
   readonly subgoals: readonly EpisodeSubgoal[];
   readonly userCorrections: readonly Correction[];
   readonly actions: readonly ActionRecord[];

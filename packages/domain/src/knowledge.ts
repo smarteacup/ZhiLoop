@@ -75,6 +75,73 @@ export type CandidateSupport =
 
 export type KnowledgeCandidate = KnowledgeCandidateBase & CandidateSupport;
 
+export type KnowledgeAssertionDraft =
+  | { readonly kind: "USER_ACCEPTED" | "USER_REJECTED"; readonly parameters: { readonly statementRef: string } }
+  | {
+      readonly kind: "SYMBOL_EXISTS";
+      readonly parameters: { readonly projectId: string; readonly symbol: string; readonly path?: string };
+    }
+  | {
+      readonly kind: "FILE_CONTAINS";
+      readonly parameters: {
+        readonly path: string;
+        readonly expected: string;
+        readonly matchMode: "EXACT" | "REGEX" | "STRUCTURAL";
+      };
+    }
+  | {
+      readonly kind: "DEPENDENCY_PRESENT";
+      readonly parameters: { readonly name: string; readonly versionConstraint?: string; readonly manifestPath?: string };
+    }
+  | {
+      readonly kind: "CONFIG_EQUALS";
+      readonly parameters: { readonly key: string; readonly expected: string; readonly path?: string };
+    }
+  | {
+      readonly kind: "COMMAND_SUCCEEDED";
+      readonly parameters: { readonly commandHash: string; readonly expectedExitCode: number };
+    }
+  | {
+      readonly kind: "TEST_PASSED";
+      readonly parameters: { readonly testId: string; readonly commandHash?: string; readonly path?: string };
+    }
+  | {
+      readonly kind: "CROSS_PROJECT_VERIFIED";
+      readonly parameters: { readonly subjectKey: string; readonly minimumProjects: number };
+    };
+
+export interface EvidenceHintDraft {
+  readonly type: EvidenceHint["type"];
+  readonly sourceRef: string;
+  readonly projectId?: string;
+}
+
+interface KnowledgeCandidateDraftBase {
+  readonly subjectKey: string;
+  readonly kind: KnowledgeKind;
+  readonly scopeHint: ScopeHint;
+  readonly title: string;
+  readonly summary: string;
+  readonly body: string;
+  readonly confidence: number;
+}
+
+export type KnowledgeCandidateDraft = KnowledgeCandidateDraftBase & (
+  | {
+      readonly assertions: readonly [KnowledgeAssertionDraft, ...KnowledgeAssertionDraft[]];
+      readonly evidenceHints: readonly EvidenceHintDraft[];
+    }
+  | {
+      readonly assertions: readonly KnowledgeAssertionDraft[];
+      readonly evidenceHints: readonly [EvidenceHintDraft, ...EvidenceHintDraft[]];
+    }
+);
+
+export interface KnowledgeExtractionOutput {
+  readonly schemaVersion: 1;
+  readonly candidates: readonly KnowledgeCandidateDraft[];
+}
+
 export interface KnowledgeAsset {
   readonly schemaVersion: 1;
   readonly id: string;

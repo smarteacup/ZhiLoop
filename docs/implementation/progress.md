@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P2 Gate 已通过，进入 P3  
+**当前里程碑**：P3 进行中（CKL-301 已完成）  
 **记录日期**：2026-08-01  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -26,6 +26,7 @@
 | CKL-204 | 完成 | `379c863` | Episode v2 全部用户原话、接受/拒绝/纠错信号、保守目标关联、歧义门禁、确定性 Assertion | 259 项模块测试、21 项架构/Gate 测试；4 高/6 中风险，全部修复；100 Candidate × 100 Statement 中位 1.83ms |
 | CKL-205 | 完成 | `0923708` | SQLite 编译批次、租约/续租、generation fencing、原子 Candidate 落库、版本并存、默认不召回 | 274 项模块测试、23 项架构/Gate 测试；5 高/7 中风险，全部修复；100 Candidate 写 P95 2.18ms、读 P95 1.37ms |
 | P2 Gate | 通过 | `0ce3cda` | v1 Golden Codex 对话、五类知识全链、Candidate→Episode→Turn 追溯、模型失败持久化恢复 | 276 项模块测试、25 项架构/Gate 测试；4 高/5 中风险，全部修复；成功链单次约 23.45ms |
+| CKL-301 | 完成 | `3277f3a` | Remote 脱敏归一化、portable/local/filesystem 三类 Project ID、worktree common-dir、参数安全 Git Probe | 285 项模块测试、27 项架构/Gate 测试；5 高/7 中风险，全部修复；真实仓库中位 31.31ms |
 
 ## 2. P0 Gate 证据
 
@@ -67,6 +68,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 P3/CKL-301 Project Identity Resolver：统一 Git Remote、Repo Root、worktree 和无 Remote 降级身份，为 Scope 与证据验证建立稳定项目边界。
+- 下一任务是 P3/CKL-302 Scope Resolver：按可证明信息选择 TASK/SYMBOL/MODULE/PROJECT/USER/TEAM/GLOBAL，默认最小 Scope，不确定时降级 PROJECT 而不是向上扩大。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

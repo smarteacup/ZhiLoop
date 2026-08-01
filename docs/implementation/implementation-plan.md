@@ -235,6 +235,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-302：Scope Resolver
 
 **依赖**：CKL-301、CKL-203  
+**状态**：已完成  
 **交付物**：TASK/SYMBOL/MODULE/PROJECT/USER/TEAM/GLOBAL 解析。  
 **验收条件**：
 

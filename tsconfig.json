@@ -12,6 +12,7 @@
     { "path": "./packages/knowledge-compiler" },
     { "path": "./packages/candidate-repository" },
     { "path": "./packages/project-identity" },
+    { "path": "./packages/scope-resolver" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

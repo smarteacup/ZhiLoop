@@ -1,0 +1,35 @@
+{
+  "name": "zhiloop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dynamic knowledge layer for AI coding agents",
+  "type": "module",
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=22.0.0 <27",
+    "npm": ">=10.0.0 <12"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "lint": "eslint .",
+    "test": "node --test scripts/*.test.mjs && vitest run --coverage",
+    "test:unit": "vitest run",
+    "check:deps": "node scripts/check-workspace-dependencies.mjs",
+    "check": "npm run check:deps && npm run lint && npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.2",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

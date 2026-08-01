@@ -6,81 +6,85 @@
 
 | 指标 | 数值 |
 |---|---:|
-| CR 标识 | CKL-204 / 用户承诺与纠正检测 |
-| CR 耗时 | 540s |
-| 高风险 | 4 个 |
-| 中风险 | 6 个 |
+| CR 标识 | CKL-205 / Candidate Repository |
+| CR 耗时 | 620s |
+| 高风险 | 5 个 |
+| 中风险 | 7 个 |
 | 低风险 | 0 个 |
-| 修复程度 | 已修复 10/10（100%） |
+| 修复程度 | 已修复 12/12（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| 总 CR 次数 | 15 次 |
-| 总耗时 | 5860s |
-| 高风险累计 | 26 个 |
-| 中风险累计 | 53 个 |
+| 总 CR 次数 | 16 次 |
+| 总耗时 | 6480s |
+| 高风险累计 | 31 个 |
+| 中风险累计 | 60 个 |
 | 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
 
 ## 改动说明
 
-本次为 Episode 增加全部 UserPrompt 的结构化原话投影，并在 Knowledge Compiler 内新增供应商无关、纯本地的承诺检测器。检测器生成 `USER_ACCEPTED`、`USER_REJECTED`、`CORRECTION` signal；只有唯一关联的接受/拒绝会落为确定性 Assertion，Candidate 仍保持 `PROPOSED`。
+本次新增 `@zhiloop/candidate-repository` SQLite Adapter。它在编译前按 CKL-202 extractionKey 原子 claim，在编译后保存完整 Runner 结果；支持租约、续租、generation fencing、RETRYABLE 重领、Compiler/Prompt 历史批次和 Candidate 完整性校验。
 
-没有新增模型 SDK、数据库、远程调用、凭证、运行配置或用户目录写入。检测和应用拆为两步，便于后续 Candidate Repository 原子保存原始 signal、歧义和富化后的 Candidate。
+新包可与 Event Ledger 共用 SQLite 文件，但使用独立 Migration 元数据，不修改 Ledger 的 user_version。没有新增模型、检索、发布、远程网络、凭证或用户目录写入。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 高 | `domain/episode.ts`、`episode-builder/builder.ts` | 旧 Episode 不保留普通 continuation/subgoal 原话，检测只能看到 eventId，无法审计“按这个做”“不要使用 X”。 | 承诺漏检、Turn 追溯断裂 | 增加 `EpisodeUserStatement`，每条 UserPrompt 保存 Turn/Event/分类/正文/时间，并冻结输出。 |
-| 增 | 高 | `episode-builder/builder.ts` / builder version | Episode 输出语义改变但仍用 v1，会让相同 Ledger 的不同契约共享版本身份。 | 缓存污染、错误重放和错误幂等 | 默认版本升为 `episode-builder-v2`；边界测试固定验证版本和投影。 |
-| 增 | 高 | `commitment-detector.ts` / target resolution | 泛化“按这个做”若直接覆盖多 Candidate，会把未指代方案错误标成用户接受。 | 错误知识进入 Evidence/Policy 流程 | 来源引用 > 唯一主题 > 单一方案三级解析；多方案返回 ambiguity，不生成承诺 signal。 |
-| 增 | 高 | `commitment-detector.ts` / assertion materialization | 外部篡改 signal kind、时间或 Candidate ID 可构造无效/越权 Assertion。 | Candidate 契约破坏、后续状态误判 | apply 边界校验 kind、时间、目标唯一性和存在性；非法 signal fail closed。 |
-| 增 | 中 | `commitment-detector.ts` / phrase detection | 在文档或测试中引用“按这个做”“不要使用 X”可能被误识别为真实承诺。 | 假阳性确认/拒绝 | 仅识别陈述开头的显式表达，并增加引用短语反例测试；普通“好的”不触发。 |
-| 增 | 中 | `commitment-detector.ts` / correction | Correction signal 若只保留 correctedRef，会再次丢失被纠正结论和关联依据。 | 审计和交互确认信息不足 | signal 同时保存 original/corrected ref 与 statement、Turn、时间、目标和原因码。 |
-| 增 | 中 | `commitment-detector.ts` / replay | Worker 重放同一 Episode 时可能重复追加 USER Assertion。 | Assertion 膨胀、证据重复计权 | Assertion ID 由 candidate/kind/statementRef 确定性哈希；应用前按同一语义去重。 |
-| 增 | 中 | `commitment-detector.ts` / Episode isolation | 全局传入的其他 Episode Candidate 可能参与“单一方案”判断。 | 跨任务错误关联 | 只处理 `sourceEpisodes` 包含当前 episodeId 的 Candidate，并覆盖隔离测试。 |
-| 增 | 中 | `commitment-detector.ts` / mutable input | OPEN Episode 后续仍会追加对话，提前检测会生成抖动 signal。 | 重复确认、时间竞态 | 拒绝 OPEN Episode；同时校验重复/缺失引用、时间和 Correction 一致性。 |
-| 增 | 中 | `commitment-detector.ts` / lexical matching | 每条 statement 为每个 Candidate 重复规范化和分词，100×100 已达到约 50ms。 | 大 Episode 后台编译吞吐下降 | 每次检测预计算 Candidate profile；相同基准降至中位 1.83ms、P95 2.03ms。 |
+| 增 | 高 | `candidate-repository/repository.ts` / claim | 仅在模型返回后 INSERT OR IGNORE，两个 Worker 仍会重复调用模型。 | 成本翻倍、并发批次不一致 | 编译前 `BEGIN IMMEDIATE` 原子 claim；有效租约返回 IN_PROGRESS，成功批次返回 ALREADY_SUCCEEDED。 |
+| 增 | 高 | `repository.ts` / lease takeover | 租约接管后旧 Worker 仍可能回写并覆盖新 generation。 | 新结果被陈旧结果污染 | 每代生成绑定 extractionKey/runCount/entropy 的 fencing token；save/renew 必须匹配当前 RUNNING token。 |
+| 增 | 高 | `repository.ts` / batch save | Candidate 逐条提交会在中途冲突时留下部分批次。 | 不完整知识被审计或消费 | 全批预校验并在单事务插入；冲突回滚后批次仍 RUNNING、Candidate 为 0。 |
+| 增 | 高 | `repository.ts` / visibility | 普通 Repository 查询若默认返回 PROPOSED，会绕过 Evidence/Policy 进入正式召回。 | 未确认知识污染上下文 | 表约束只允许 PROPOSED；`listCandidates()` 默认 SQL 排除 PROPOSED，管理读取必须显式开启。 |
+| 增 | 高 | `repository.ts` / untrusted result | JavaScript 调用方可伪造 status/reason/diagnostics，或让失败结果携带 Candidate。 | 状态机和持久化契约破坏 | 运行时验证三种结果状态、原因、attempts、diagnostics 及成功/失败互斥字段。 |
+| 增 | 中 | `repository.ts` / token entropy | 注入的随机源若重复返回同一 token，generation fencing 失效。 | 旧 Worker token 与新 Worker相同 | 随机文本只作为熵；最终 token 加入 extractionKey 和单调 runCount 后 SHA-256。 |
+| 增 | 中 | `repository.ts` / long run | 默认租约短于 Runner 多次超时总时长会触发无必要接管。 | 重复模型执行 | 默认租约改为 5 分钟，提供 renewClaim；最大可配置 1 小时。 |
+| 增 | 中 | `repository.ts` / identity | 只按 episodeId/compilerVersion 去重会混淆 Builder/Input/Prompt 变更。 | 错误复用旧 Candidate | 复用 extractionKey，并对六字段身份加唯一约束和结果一致性复核。 |
+| 增 | 中 | `repository.ts` / integrity | 只校验 payload hash、不核对冗余索引列，外部修改 compiler/subject 列可影响过滤。 | 查询结果被错误隐藏或归类 | 读取时同时核对 Candidate Schema、hash、ID 和六个索引字段；损坏 fail closed。 |
+| 增 | 中 | `repository.ts` / migrations | 使用 PRAGMA user_version 会与 CKL-103 Ledger Migration 争用同一版本号。 | 共库启动失败或跳过 Migration | Candidate Repository 使用组件命名的 meta 表；真实共库 Gate 通过，未来版本拒绝降级打开。 |
+| 增 | 中 | `vitest.config.ts` / coverage | 新测试能执行但新 workspace 未加入 coverage include，形成假绿。 | 未覆盖生产分支无法被 Gate 发现 | 将 candidate-repository 加入全仓覆盖清单；Repository Lines 95.16%、Branches 92.46%。 |
+| 增 | 中 | `repository.ts` / resource bounds | 无 Candidate 数量、JSON 总量、查询和租约上限会造成后台内存/锁时间膨胀。 | 本地 DoS、SQLite 长事务 | 10,000 Candidate、16M JSON、1,000 查询、1 小时租约硬上限，并在序列化过程中提前失败。 |
 
 ## 删除与兼容性检查
 
-- 没有删除既有 Episode 字段、Knowledge kind、Compiler port 或 Runner 行为。
-- `Episode.userStatements` 是新增必填字段，仓库内所有生产构造方和 Fixture 已同步；默认 Builder version 主动升为 v2，避免伪装向后兼容。
-- CKL-202 模型最小输入未加入全部 userStatements，因此 compiler inputHash 语义保持其既有范围；承诺检测明确读取完整终态 Episode。
-- `applyUserCommitments` 返回新对象且不修改输入；无 signal 时也保持 Candidate 语义和状态。
+- 没有删除或修改 Event Ledger 表、PRAGMA user_version、Knowledge Compiler API 或 Candidate Schema。
+- 根 Project References、lockfile 和 coverage include 新增第 12 个 workspace；依赖图无环，package 只依赖 Domain、Schemas、Knowledge Compiler 和 Node 内置模块。
+- Candidate Repository 表为新增表；同一 SQLite 文件与现有 Ledger 同时打开、追加和读取已通过 Gate。
+- 当前 Migration version 为 1；遇到更高版本直接关闭并报错，不尝试降级写入。
 
 ## 配置检查
 
-本次没有新增环境变量、功能开关、模型配置、pre/prod/inner 配置或数据库 Migration，不存在配置遗漏。
+本次没有新增环境变量、pre/prod/inner 配置、API Key 或默认用户路径。数据库 filename、clock、tokenFactory 和 lease 由装配层显式注入；未装配时只使用安全默认租约和系统随机 UUID。
 
 ## Gate 证据
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| CKL-204 专项 | 14/14 | 通过 |
-| Episode/承诺相关专项 | 28/28 | 通过 |
-| 架构/Gate | 21/21 | 通过 |
-| 全仓模块 | 259/259，23 Test Files | 通过 |
-| 覆盖率 | Detector Lines 95.58%、Branches 88.33%；整体 Lines 96%+、Branches 89%+ | 通过 |
-| 性能 | 100 Candidate × 100 Statement：中位 1.83ms、P95 2.03ms | 通过 |
+| Candidate Repository 专项 | 15/15 | 通过 |
+| 架构/Gate | 23/23 | 通过 |
+| 全仓模块 | 274/274，24 Test Files | 通过 |
+| 覆盖率 | Repository Lines 95.16%、Branches 92.46%、Functions 100%；整体高于全仓阈值 | 通过 |
+| 共库端到端 | Event Ledger + claim + Compiler Runner + atomic save | 通过 |
+| 性能 | 100 Candidate 写 P95 2.18ms；管理读 P95 1.37ms | 通过 |
 | 供应链 | npm 官方 registry 0 vulnerabilities | 通过 |
 
 ## 性能与瓶颈复盘
 
-- Candidate profile 在单次检测内只规范化/分词一次；Statement 仍需与 Candidate profile 做 O(S×C) 比较。MVP 每 Episode 为小批 Candidate，当前 10,000 对比较 P95 2.03ms。
-- `applyUserCommitments` 为保证输入不变和深冻结会克隆 Candidate；这属于后台路径，且当前批量远小于模型生成延迟。
-- 若未来跨 Episode 联合数千 Candidate 检测，应增加 subject/topic 倒排索引，不能直接扩大当前线性扫描范围。
+- 100 Candidate 的 Schema/JSON/hash/SQLite 原子写中位 1.87ms、P95 2.18ms；当前远低于模型耗时。
+- 管理读取会逐条校验 JSON hash、Schema 和索引列，100 Candidate P95 1.37ms。默认 limit=100、最大 1,000，避免单次无界读取。
+- Claim 使用短写事务协调跨进程竞争；编译和模型调用完全在事务外执行，不长期持有 SQLite 锁。
+- 超大批次仍会增加预校验内存和写锁时间；16M 总量是安全门禁，不是建议目标，Compiler 应保持小批知识。
 
 ## 已知边界
 
-- 显式规则不处理隐含同意、反讽和复杂指代；宁可不产生 signal，也不自动确认多个目标。
-- `FOLLOWED_BY_IMPLEMENTATION` 只证明后续发生 Action，不证明代码实现与设计完全一致；代码事实由后续 Verifier 判断。
-- Correction 无可定位目标时仍保留 signal 并标记 unresolved；交互式消歧尚未实现。
-- CodeGraph 尚未初始化；影响范围通过全量 TypeScript、依赖边界、端到端架构测试和全仓测试验证。
+- Daemon 尚未装配 claim/renew/run/save 循环；调用方必须在长任务中按租约续期。
+- 没有终态失败人工重置、批次删除、备份/恢复或导出 CLI；这些是后续运维能力。
+- Candidate Repository 不是正式召回源；Evidence/Asset Repository 尚未实现。
+- SQLite 文件权限为 0600，但应用层加密和磁盘密钥不在本模块范围。
+- CodeGraph 尚未初始化；影响范围通过全量 TypeScript、依赖边界、跨连接/共库集成和全仓测试验证。
 
 ## Review 结论
 
-CKL-204 未发现未修复风险，四项验收条件全部满足。可以进入 CKL-205 Candidate Repository。
+CKL-205 未发现未修复风险，三项验收条件全部满足。P2 功能模块已齐备，可以进入 P2 Gate。

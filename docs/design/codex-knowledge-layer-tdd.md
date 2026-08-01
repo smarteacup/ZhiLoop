@@ -864,6 +864,7 @@ updated_at: 2026-08-01T00:00:00+08:00
 | `source_cursors` | transcript/App Server 增量游标 |
 | `episodes` | Episode 头信息和状态 |
 | `episode_events` | Episode 与 Event 关系 |
+| `candidate_compilations` | extractionKey、Compiler/Prompt 版本、claim 租约、重试与批次状态 |
 | `knowledge_candidates` | 尚未发布的候选知识 |
 | `knowledge_assets` | Markdown 资产投影 |
 | `knowledge_versions` | 版本、hash 和 tombstone |

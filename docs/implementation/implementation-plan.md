@@ -1,6 +1,6 @@
 # ZhiLoop 实施计划
 
-**状态**：In Progress（P0、CKL-101/102 已完成）  
+**状态**：In Progress（P0、CKL-101/102/103 已完成）  
 **版本**：0.3  
 **创建日期**：2026-08-01  
 **最近更新**：2026-08-01  
@@ -112,7 +112,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 文件截断、替换和格式错误能产生诊断事件。
 - Transcript 原始结构不得暴露到 `ingestion-codex` 之外。
 
-### CKL-103：SQLite Event Ledger
+### CKL-103：SQLite Event Ledger（已完成）
 
 **依赖**：CKL-002、CKL-003  
 **交付物**：Migration、幂等追加、批量读取、游标提交、保留策略接口。  
@@ -564,7 +564,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 为避免实施前反复确认，以下值作为默认决定；只有用户明确改变方向时才调整：
 
-1. 使用 Node.js >= 22、TypeScript 和 npm workspaces。仓库锁定实际开发版本并提交 lockfile。
+1. 使用 Node.js >= 24.18、TypeScript 和 npm workspaces。仓库锁定 Node 24.18.0 LTS 并提交 lockfile；该下限用于保证内置 `node:sqlite` API 一致。
 2. 默认 Knowledge Extraction Adapter 使用 `codex exec` 非交互模式，配合 `--output-schema` 和只读沙箱生成结构化 Candidate；Adapter 同时保留 JSONL 运行事件用于诊断。领域层不依赖该实现，P7 可切换 App Server。
 3. P0-P4 不要求生产向量服务，使用 Exact、FTS5、Scope 和 Relation 完成闭环；P4 完成 `VectorIndexPort` 和确定性测试实现。P5 是否启用具体 Embedding Provider 由 Golden Dataset 结果决定，不影响其他模块交付。
 4. 所有知识默认保存在 `~/.ckl`，项目仓库 Publisher 默认关闭。

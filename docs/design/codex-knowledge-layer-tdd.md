@@ -837,7 +837,8 @@ updated_at: 2026-08-01T00:00:00+08:00
 
 | 表 | 用途 |
 |---|---|
-| `events` | 不可变标准事件账本 |
+| `events` | 不可变标准事件元数据与可清理 payload；payload 到期后保留 eventId、序号、hash 和 `payload_purged` tombstone |
+| `consumer_cursors` | 后台消费者的单调提交游标；保留清理不得越过最慢消费者 |
 | `source_cursors` | transcript/App Server 增量游标 |
 | `episodes` | Episode 头信息和状态 |
 | `episode_events` | Episode 与 Event 关系 |
@@ -853,7 +854,7 @@ updated_at: 2026-08-01T00:00:00+08:00
 | `retrieval_candidates` | 候选分数和命中原因 |
 | `feedback` | relevant、irrelevant、pin、suppress 等反馈 |
 
-SQLite Migration 必须向前兼容；索引表允许重建，事件和候选表不允许通过重建丢失。
+SQLite Migration 必须向前兼容；索引表允许重建，事件和候选表不允许通过重建丢失。Raw Event 保留到期时只清除已被所有注册消费者处理的 payload，禁止删除事件身份元数据，否则重放会破坏 `eventId` 幂等。
 
 ## 11. 更新、合并与冲突规则
 

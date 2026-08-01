@@ -6,7 +6,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       provider: "v8",
-      include: ["packages/{domain,schemas,config,ingestion-codex}/src/**/*.ts"],
+      include: ["packages/{domain,schemas,config,ingestion-codex,conversation-ledger}/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
       thresholds: {
         lines: 90,

@@ -87,6 +87,7 @@ describe("runKnowledgeExtraction", () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]).toMatchObject({
       compilerVersion: "compiler-v1",
+      status: "PROPOSED",
       sourceEpisodes: ["episode-1"],
       createdAt: "2026-08-01T09:00:00.000Z",
       correlationId: "correlation-1",

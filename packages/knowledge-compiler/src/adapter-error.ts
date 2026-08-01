@@ -4,7 +4,7 @@ export class KnowledgeExtractionAdapterError extends Error {
   readonly code: KnowledgeExtractionAdapterErrorCode;
   readonly retryable: boolean;
 
-  constructor(code: KnowledgeExtractionAdapterErrorCode, retryable: boolean, message = code) {
+  constructor(code: KnowledgeExtractionAdapterErrorCode, retryable: boolean, message: string = code) {
     super(message);
     this.name = "KnowledgeExtractionAdapterError";
     this.code = code;

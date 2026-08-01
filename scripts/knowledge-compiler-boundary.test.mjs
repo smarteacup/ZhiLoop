@@ -3,15 +3,49 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  MvpKnowledgeCompiler,
   runKnowledgeExtraction,
   toKnowledgeExtractionInput,
 } from "../packages/knowledge-compiler/dist/index.js";
 
 test("Knowledge Extraction Port has no model SDK, storage, filesystem, or process runtime dependency", async () => {
-  const source = await readFile("packages/knowledge-compiler/src/runner.ts", "utf8");
+  const source = `${await readFile("packages/knowledge-compiler/src/runner.ts", "utf8")}\n${await readFile("packages/knowledge-compiler/src/mvp-compiler.ts", "utf8")}`;
   assert.doesNotMatch(source, /openai|anthropic|gemini|node:sqlite|node:fs|child_process/i);
   assert.match(source, /from\s+["']@zhiloop\/domain["']/);
   assert.match(source, /from\s+["']@zhiloop\/schemas["']/);
+});
+
+test("CKL-203: the MVP compiler emits five independently proposed knowledge kinds", async () => {
+  const kinds = ["REQUIREMENT", "DESIGN", "DECISION", "IMPLEMENTATION", "EXPERIENCE"];
+  const compiler = new MvpKnowledgeCompiler({
+    compilerVersion: "compiler-v1",
+    promptVersion: "prompt-v1",
+    model: {
+      generate: async () => ({
+        schemaVersion: 1,
+        candidates: kinds.map((kind, index) => ({
+          subjectKey: `${kind.toLowerCase()}.boundary.topic-${index}`,
+          kind,
+          scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["BOUNDARY_TEST"] },
+          title: `${kind} result`,
+          summary: "A durable observable conclusion.",
+          body: "No hidden reasoning is stored.",
+          confidence: 0.8,
+          assertions: [],
+          evidenceHints: [{ type: "USER_STATEMENT", sourceRef: "event-goal" }],
+        })),
+      }),
+    },
+  });
+  const result = await runKnowledgeExtraction(request(), compiler, {
+    maxAttempts: 1,
+    retryDelayMs: 0,
+    perAttemptTimeoutMs: 1_000,
+  });
+
+  assert.equal(result.status, "SUCCEEDED");
+  assert.deepEqual(result.candidates.map((candidate) => candidate.kind), kinds);
+  assert.equal(result.candidates.every((candidate) => candidate.status === "PROPOSED"), true);
 });
 
 function episode() {
@@ -70,6 +104,7 @@ test("CKL-202: a valid structured batch is atomically materialized and stamped",
   assert.equal(result.status, "SUCCEEDED");
   assert.equal(result.candidates.length, 1);
   assert.equal(result.candidates[0].compilerVersion, "compiler-v1");
+  assert.equal(result.candidates[0].status, "PROPOSED");
   assert.deepEqual(result.candidates[0].sourceEpisodes, ["boundary-episode"]);
   assert.equal(result.promptVersion, "prompt-v1");
   assert.equal(typeof result.inputHash, "string");

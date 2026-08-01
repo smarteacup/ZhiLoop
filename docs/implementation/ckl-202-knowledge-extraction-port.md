@@ -67,6 +67,7 @@ Schema 通过后仍需执行确定性 Grounding：
 整批 Grounding 任一失败也返回零 Candidate。成功后 Runner 统一写入：
 
 - `candidateId`、`assertionId`：由版本身份和规范化草稿内容确定性计算；
+- `status="PROPOSED"`：模型不能指定或提升 Candidate 生命周期；
 - `compilerVersion`、`sourceEpisodes=[episodeId]`；
 - 请求给定的 `requestedAt` 和 `correlationId`；
 - Evidence hint correlationId 和 Assertion candidateId。

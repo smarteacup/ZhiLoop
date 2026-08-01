@@ -440,6 +440,8 @@ interface KnowledgeAsset {
 
 示例：`decision.codex.primary-source`。
 
+`KnowledgeCandidate` 必须显式携带 `status: "PROPOSED"`。模型输出草稿不包含状态字段，由 Compiler Runner 统一落印；任何建议、方案或模型置信度都不能直接产生 `ACCEPTED`、`IMPLEMENTED` 或 `VERIFIED`。
+
 ### 8.6 状态机
 
 ```mermaid

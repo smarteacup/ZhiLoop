@@ -179,6 +179,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-203：MVP Knowledge Compiler
 
 **依赖**：CKL-202  
+**状态**：已完成  
 **交付物**：支持 `REQUIREMENT`、`DESIGN`、`DECISION`、`IMPLEMENTATION`、`EXPERIENCE`。  
 **验收条件**：
 

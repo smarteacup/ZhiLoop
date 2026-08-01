@@ -125,4 +125,22 @@ export interface KnowledgeExtractionRunOptions {
   readonly scheduler?: KnowledgeExtractionScheduler;
 }
 
-export type KnowledgeExtractionAdapterErrorCode = "UNAVAILABLE" | "RATE_LIMITED" | "REJECTED";
+export type KnowledgeExtractionAdapterErrorCode = "UNAVAILABLE" | "RATE_LIMITED" | "INVALID_OUTPUT" | "REJECTED";
+
+export interface StructuredGenerationRequest {
+  readonly promptVersion: string;
+  readonly systemInstructions: string;
+  readonly input: KnowledgeExtractionInput;
+  readonly responseSchema: Readonly<Record<string, unknown>>;
+}
+
+export interface StructuredGenerationContext {
+  readonly extractionKey: string;
+  readonly inputHash: string;
+  readonly attempt: number;
+  readonly signal: AbortSignal;
+}
+
+export interface StructuredGenerationModel {
+  generate(request: StructuredGenerationRequest, context: StructuredGenerationContext): Promise<unknown>;
+}

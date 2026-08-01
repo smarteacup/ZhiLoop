@@ -19,6 +19,7 @@ function projectContext(context: ProjectContext): ExtractionProjectContext {
 }
 
 export function toKnowledgeExtractionInput(episode: Episode): KnowledgeExtractionInput {
+  if (episode.status === "OPEN") throw new Error("OPEN Episode must not be sent to knowledge extraction");
   const allEvidence = new Set(episode.evidenceRefs);
   const relevantEvidence: string[] = [];
   const relevantEvidenceSet = new Set<string>();

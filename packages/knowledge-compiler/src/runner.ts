@@ -278,6 +278,7 @@ function materializeCandidates(
       schemaVersion: 1,
       candidateId,
       compilerVersion: request.compilerVersion,
+      status: "PROPOSED",
       subjectKey: draft.subjectKey,
       kind: draft.kind,
       scopeHint: structuredClone(draft.scopeHint),
@@ -342,6 +343,7 @@ function resultBase(request: KnowledgeExtractionRequest, extractionKey: string, 
 
 function failureReason(error: unknown): { readonly reason: KnowledgeExtractionFailureReason; readonly retryable: boolean } {
   if (error instanceof KnowledgeExtractionAdapterError) {
+    if (error.code === "INVALID_OUTPUT") return { reason: "INVALID_OUTPUT", retryable: error.retryable };
     return {
       reason: error.retryable ? "ADAPTER_UNAVAILABLE" : "ADAPTER_REJECTED",
       retryable: error.retryable,

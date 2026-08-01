@@ -111,6 +111,11 @@ describe("toKnowledgeExtractionInput", () => {
     expect(() => toKnowledgeExtractionInput({ ...source, goalRef: "missing" })).toThrow("does not contain");
   });
 
+  it("rejects an OPEN Episode whose content and input hash can still change", () => {
+    expect(() => toKnowledgeExtractionInput({ ...episode(), status: "OPEN" })).toThrow("OPEN Episode");
+    expect(toKnowledgeExtractionInput({ ...episode(), status: "ABANDONED" }).episodeId).toBe("episode-1");
+  });
+
   it("rejects untraceable actions and outcomes", () => {
     const source = episode();
     expect(() => toKnowledgeExtractionInput({

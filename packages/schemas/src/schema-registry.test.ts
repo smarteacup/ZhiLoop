@@ -38,6 +38,7 @@ const candidateFixture = {
   schemaVersion: 1,
   candidateId: "candidate-1",
   compilerVersion: "1.0.0",
+  status: "PROPOSED",
   subjectKey: "decision.codex.primary-source",
   kind: "DECISION",
   scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["REPO_MATCH"] },
@@ -152,6 +153,12 @@ describe("schema registry", () => {
         evidenceHints: [],
       }).ok,
     ).toBe(true);
+  });
+
+  it("requires every Candidate to remain explicitly PROPOSED", () => {
+    expect(parseKnowledgeCandidate({ ...candidateFixture, status: "ACCEPTED" }).ok).toBe(false);
+    const withoutStatus = Object.fromEntries(Object.entries(candidateFixture).filter(([key]) => key !== "status"));
+    expect(parseKnowledgeCandidate(withoutStatus).ok).toBe(false);
   });
 
   it("separates Candidate top-level extensions", () => {

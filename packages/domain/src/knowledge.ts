@@ -51,6 +51,7 @@ interface KnowledgeCandidateBase {
   readonly schemaVersion: 1;
   readonly candidateId: string;
   readonly compilerVersion: string;
+  readonly status: "PROPOSED";
   readonly subjectKey: string;
   readonly kind: KnowledgeKind;
   readonly scopeHint: ScopeHint;

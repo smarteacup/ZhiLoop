@@ -1,0 +1,5 @@
+{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"id":"session-transcript-1","session_id":"session-transcript-1","timestamp":"2026-08-01T10:00:00.000Z","cwd":"/workspace/sample-project","originator":"Codex Desktop","cli_version":"0.146.0-fixture","source":"vscode","base_instructions":"not projected"}}
+{"timestamp":"2026-08-01T10:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-transcript-1"}}
+{"timestamp":"2026-08-01T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Explain the retry policy.","client_id":"message-transcript-1","future_field":"ignored"}}
+{"timestamp":"2026-08-01T10:00:03.000Z","type":"response_item","payload":{"type":"reasoning","encrypted_content":"hidden-reasoning-must-not-be-projected","summary":[]}}
+{"timestamp":"2026-08-01T10:00:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-transcript-1","last_agent_message":"The retry policy allows one continuation.","duration_ms":1200}}

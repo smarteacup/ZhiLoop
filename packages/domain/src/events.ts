@@ -1,6 +1,7 @@
 export const EVENT_SOURCES = [
   "codex-hook",
   "codex-app-server",
+  "codex-transcript",
   "filesystem",
   "git",
 ] as const;
@@ -34,4 +35,3 @@ export interface EventEnvelope<TPayload = unknown> {
   readonly correlationId: string;
   readonly payload: TPayload;
 }
-

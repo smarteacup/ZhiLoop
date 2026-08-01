@@ -289,7 +289,7 @@ zhiloop/
 interface EventEnvelope<TPayload = unknown> {
   schemaVersion: 1;
   eventId: string;
-  source: "codex-hook" | "codex-app-server" | "filesystem" | "git";
+  source: "codex-hook" | "codex-app-server" | "codex-transcript" | "filesystem" | "git";
   sourceVersion?: string;
   eventType:
     | "session.started"

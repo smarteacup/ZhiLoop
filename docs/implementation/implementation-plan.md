@@ -1,6 +1,6 @@
 # ZhiLoop 实施计划
 
-**状态**：In Progress（P0、CKL-101 已完成）  
+**状态**：In Progress（P0、CKL-101/102 已完成）  
 **版本**：0.3  
 **创建日期**：2026-08-01  
 **最近更新**：2026-08-01  
@@ -101,7 +101,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 缺少可选 `turn_id` 或 `transcript_path` 时仍可入队。
 - 同一输入生成相同 `eventId`。
 
-### CKL-102：版本化 Transcript Adapter
+### CKL-102：版本化 Transcript Adapter（已完成）
 
 **依赖**：CKL-101  
 **交付物**：增量读取、游标、内容 hash、版本检测和未知版本降级。  

@@ -6,62 +6,64 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-101 / Codex Hook Adapter |
-| **CR 耗时** | 330s |
+| **CR 标识** | CKL-102 / Versioned Transcript Adapter |
+| **CR 耗时** | 420s |
 | **🔴 高风险** | 1 个 |
-| **🟡 中风险** | 3 个 |
+| **🟡 中风险** | 4 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 4/4（100%） |
+| **修复程度** | 已修复 5/5（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 6 次 |
-| **总耗时** | 1600s |
-| **🔴 高风险累计** | 4 个 |
-| **🟡 中风险累计** | 13 个 |
+| **总 CR 次数** | 7 次 |
+| **总耗时** | 2020s |
+| **🔴 高风险累计** | 5 个 |
+| **🟡 中风险累计** | 17 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-本次变更完成 CKL-101，新建独立 `@zhiloop/ingestion-codex` 包，将官方当前 `UserPromptSubmit`、`PostToolUse`、`Stop`、`SessionEnd` 线协议投影为 Domain `EventEnvelope`。适配器不安装 Hook、不读取 transcript、不写 Ledger，只进行同步校验、规范化、哈希和 Schema 契约验证。
+本次变更完成 CKL-102，在 `@zhiloop/ingestion-codex` 中新增版本化 Codex rollout JSONL 增量读取器。游标记录 byte offset、line number、文件身份、尾部 anchor hash、格式/CLI 版本、session 和 active turn；重复读取不产生事件，追加只解析增量，未完成的末行保留到下次读取。
 
-四类脱敏 Fixture 均来自官方 Hook 字段形态。未知原始字段不进入 Domain；缺少可选 `turn_id`/`transcript_path` 仍可转换；同一语义输入跨观测时间生成相同 `eventId`。当前 105 个模块测试、9 个架构测试全部通过；ingestion-codex 行覆盖率 97.45%、分支覆盖率 90.72%。
+适配器只投影 `session_meta`、公开 `user_message` 和 `task_complete.last_agent_message`，明确忽略 reasoning、内部上下文、工具细节和 compacted 结构。新增独立 `codex-transcript` EventSource，避免把 transcript 冒充 Hook/App Server。当前 121 个模块测试、9 个架构测试全部通过；transcript adapter 行覆盖率 94.73%、分支覆盖率 85.20%。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🔴 高 | `packages/ingestion-codex/src/canonical-json.ts:31` | 初版规范化对象键使用 `localeCompare`，不同系统 Locale 可能产生不同排序，使同一 Hook 在不同机器生成不同 contentHash/eventId，破坏 Ledger 幂等。 | 重复事件、重放一致性、跨环境迁移 | 已改为明确的字符串码点比较；eventId 使用字段数组的规范 JSON + SHA-256，未知字段和 occurredAt 不参与身份计算，并增加稳定性测试。 |
-| 增 | 🟡 中 | `packages/ingestion-codex/src/adapter.ts:103` | 直接传播 Hook 原始对象会把 `transcript_path` 和未来私有字段泄漏到领域层，也会让 Codex 协议变化扩散到 Ledger。 | 隐私边界、协议兼容、下游耦合 | 已按四种事件显式白名单投影 payload；transcript 路径和未知字段不输出，未来事件返回独立 `UNSUPPORTED_HOOK_EVENT`。 |
-| 增 | 🟡 中 | `packages/ingestion-codex/src/canonical-json.ts:5` | 非 JSON 对象、循环引用、极深结构或超大工具输出可能静默丢字段、耗尽栈/内存，拖慢 Hook 快路径。 | Hook 稳定性、拒绝服务、内容完整性 | 已限制纯 JSON、最大深度 32、规范化 payload 4 MiB 上限，并为循环、Date、NaN、深度和大小增加拒绝测试。 |
-| 增 | 🟡 中 | `packages/ingestion-codex/src/adapter.ts:232` | Hook 本身没有发生时间字段；若调用方提供非法或溢出的时间，构造出的标准事件可能在后续 Schema 环节失败，诊断也会混淆为内部错误。 | 事件排序、诊断准确性、重放 | 已注入 clock/observedAt，校验完整 ISO date-time、月日和时区范围；输出再次通过 Event Schema，并深度冻结。 |
+| 增 | 🔴 高 | `packages/ingestion-codex/src/transcript-adapter.ts:203` | 直接把 rollout record 作为事件会保存 encrypted reasoning、base instructions、world state 和完整工具结果，违反“不保存隐藏推理”和最小化采集原则。 | 隐私、上下文泄露、知识污染 | 已改为三种公开白名单投影；真实 rollout 的 2,050 条内部记录全部只计数忽略，测试确认隐藏 sentinel 和 base instructions 不出现在事件中。 |
+| 增 | 🟡 中 | `packages/ingestion-codex/src/transcript-adapter.ts:283` | 只保存 byte offset 无法识别文件截断、替换或原地改写，可能从错误位置读取并造成事件丢失或重复。 | Ledger 幂等、重启恢复、对话完整性 | 已绑定绝对路径 hash + dev/ino，并校验 size 和最后 4 KiB anchor；截断、替换、原地修改均有独立诊断测试。 |
+| 增 | 🟡 中 | `packages/ingestion-codex/src/transcript-adapter.ts:339` | 分块读取若在 UTF-8/JSONL 行中间结束，推进游标会丢数据；若 read limit 等于 line limit，换行落在下一字节还会永久不前进。 | 增量捕获、长消息、CPU 空转 | 只推进到最后完整换行，残行下次重读；强制 read limit 大于 line limit，并用 512-byte 分块回放验证事件 ID 与一次读取完全一致。 |
+| 增 | 🟡 中 | `packages/ingestion-codex/src/transcript-adapter.ts:176` | Codex 官方声明 transcript 不是稳定接口；仅看 JSONL 可解析就继续会把未来结构误判为当前版本。 | 升级兼容、字段误读 | 以 session_meta 结构和 CLI major 0 识别 v1；未知首记录或 CLI major 返回不可恢复 `UNSUPPORTED_TRANSCRIPT_FORMAT`，不猜测映射。 |
+| 增 | 🟡 中 | `packages/ingestion-codex/src/transcript-adapter.ts:69` | 持久化游标可能损坏或被错误反序列化，负 offset、越界 anchor 会触发异常读或错误诊断。 | Daemon 重启、Ledger 游标恢复 | 读取文件前校验所有数值、hash、anchor 范围和格式/session 一致性，损坏游标单独诊断。 |
 
 ## 配置与兼容性检查
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| 官方协议依据 | 当前 Codex Hooks release behavior：四类字段和可选项已核对 | 通过 |
-| Workspace 依赖 | 仅依赖 Domain、Schemas 和 `node:crypto` | 通过 |
-| 原始字段隔离 | transcript path/unknown fields 不进入 EventEnvelope | 通过 |
-| 幂等身份 | source + session + turn + type + sourceItemId + contentHash | 通过 |
-| 供应链 | 无新增第三方依赖，npm 官方 registry 0 vulnerabilities | 通过 |
+| 官方边界 | 遵循“transcript format is not a stable interface”并实施版本降级 | 通过 |
+| EventSource | Domain、JSON Schema、TDD 同步增加 `codex-transcript` | 通过 |
+| 隐藏内容 | reasoning / base instructions / world state / tool raw output 均不投影 | 通过 |
+| 增量游标 | 重复、追加、残行、分块、截断、替换、anchor、损坏游标均覆盖 | 通过 |
+| 原始协议隔离 | 下游只接收三种 TranscriptEventPayload，不接收 rollout record | 通过 |
+| 供应链 | 仅使用 Node fs/path/crypto，无新增第三方依赖 | 通过 |
 
 ## 性能与瓶颈复盘
 
-- 100,000 次 `PostToolUse` 规范化、两次 SHA-256 和 Event Schema 校验约 1624.78ms，即约 61,547 events/s。
-- 单次小型 Fixture 平均约 0.016ms，远低于捕获类 Hook P95 100ms 目标；真实命令入口、进程启动和 IPC 将在 CKL-104 单独基准。
-- 算法复杂度为 O(n log k)：n 是 payload 字节/节点数，k 是单个对象键数；典型工具对象的 k 很小。
-- 4 MiB 上限避免极端输出进入热路径。后续 Spool/Ledger 必须接收结构化诊断，不能通过提高上限掩盖大输出问题。
+- 在本机真实 Codex rollout 上只读扫描 5,805,282 bytes、2,087 条记录耗时约 19.61ms，约 279.98 MiB/s。
+- 该样本产出 37 条公开标准事件，忽略 2,050 条内部记录；基准只输出数量和时延，没有输出对话正文。
+- 每批最多读取 8 MiB、单行最多 1 MiB，内存上界明确；增量验证只重读最后 4 KiB anchor，不对历史全文重复 hash。
+- 单个超大 compacted/replacement_history 行会被拒绝，即使该记录最终会忽略；这是有意的内存门禁。若真实数据命中，应改为流式跳过已知内部类型，而不是盲目提高全局行上限。
 
 ## 已知边界
 
-- 本模块没有落盘，因此尚未执行敏感信息替换；“入库前脱敏”属于 CKL-103，并已在计划中保留强制 Fixture。
-- `transcript_path` 只属于未来 CKL-102 的适配器内部输入，不进入标准事件 payload。
-- Codex 官方说明 transcript 格式不是稳定接口；CKL-102 必须使用版本检测和未知版本降级，不能复用本模块对 Hook 的稳定性假设。
+- v1 当前只支持 CLI `0.x` 且必须有 `session_meta`。官方发布 1.x 时必须先增加脱敏 Fixture 和契约测试，再允许新版本。
+- 只保存最终可见 assistant message，不保存中间 reasoning；普通 assistant 增量消息暂不创建独立事件，Episode Builder 以 `turn.stopped` 为准。
+- Anchor 用于快速检测 cursor 附近变化，不是整文件完整性证明；inode 变化、截断和常见原地替换已覆盖，Ledger 仍需依靠 eventId 去重。
 
 ## Review 结论
 
-CKL-101 未发现未修复风险。四类 Hook 的字段投影、幂等 ID、非法输入诊断、资源上限、Schema 契约和性能均达到验收条件，可以提交并进入 CKL-102。
+CKL-102 未发现未修复风险。增量一致性、版本降级、隐私投影、游标恢复、异常诊断和真实文件性能达到验收条件，可以提交并进入 CKL-103。

@@ -19,7 +19,7 @@
     "schemaVersion": { "const": 1 },
     "eventId": { "type": "string", "minLength": 1 },
     "source": {
-      "enum": ["codex-hook", "codex-app-server", "filesystem", "git"]
+      "enum": ["codex-hook", "codex-app-server", "codex-transcript", "filesystem", "git"]
     },
     "sourceVersion": { "type": "string", "minLength": 1 },
     "sourceItemId": { "type": "string", "minLength": 1 },

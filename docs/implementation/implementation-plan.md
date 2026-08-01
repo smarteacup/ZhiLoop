@@ -134,7 +134,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - Spool 恢复后事件按幂等规则补录。
 - Hook 不调用模型、不扫描代码、不重建索引。
 
-### CKL-105：Session/Turn 归一化
+### CKL-105：Session/Turn 归一化（已完成）
 
 **依赖**：CKL-102、CKL-103  
 **交付物**：Session、Turn 边界和事件顺序规则。  

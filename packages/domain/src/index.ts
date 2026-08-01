@@ -1,8 +1,8 @@
 export * from "./episode.js";
+export * from "./conversation.js";
 export * from "./events.js";
 export * from "./evidence.js";
 export * from "./knowledge.js";
 export * from "./promotion.js";
 export * from "./scope.js";
 export * from "./state-machine.js";
-

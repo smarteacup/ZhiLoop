@@ -6,69 +6,68 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-104 / Hook Handler 与本地 Spool |
-| **CR 耗时** | 680s |
-| **🔴 高风险** | 3 个 |
+| **CR 标识** | CKL-105 / Session/Turn 归一化 |
+| **CR 耗时** | 540s |
+| **🔴 高风险** | 2 个 |
 | **🟡 中风险** | 5 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 8/8（100%） |
+| **修复程度** | 已修复 7/7（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 9 次 |
-| **总耗时** | 3220s |
-| **🔴 高风险累计** | 11 个 |
-| **🟡 中风险累计** | 25 个 |
+| **总 CR 次数** | 10 次 |
+| **总耗时** | 3760s |
+| **🔴 高风险累计** | 13 个 |
+| **🟡 中风险累计** | 30 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-本次新增独立 `@zhiloop/hook-runtime` 包：有界 stdin、Codex Hook 适配、完整事件信封脱敏、100ms 内入队、失败开放、本地原子 Spool、损坏隔离和幂等恢复。Hook 与 Daemon 通过 `HookEventSink` 端口隔离，不直接打开 SQLite。新增两条架构测试，禁止 Hook Runtime 加载 SQLite 聚合入口、模型、代码扫描和子进程能力。
+本次新增 Domain 层 `NormalizedSession`、`NormalizedTurn`、稳定事件引用和关闭原因，并新建独立 `@zhiloop/conversation-normalizer` 包。Normalizer 从 `LedgerEventRecord` 纯函数重建会话：按 source timestamp、Ledger sequence 和 eventId 全序排序，折叠重复 Stop，补齐/提升缺失 turnId，并通过 SessionEnd、后续非重叠 Session 或 inactivity timeout 确定边界。
 
-当前 Node.js 24.18.0 全仓 164 个模块测试、11 个架构测试全部通过；Hook Runtime Lines 98.00%、Branches 92.30%、Functions 100%。测试只使用内存 SQLite 与系统临时目录，没有安装 Hook 或写入用户配置。
+Node.js 24.18.0 全仓 187 个模块测试和 12 个架构测试通过；Normalizer Lines 99.38%、Branches 95.77%、Functions 100%。真实 `SqliteEventLedger` 集成 Fixture 验证 Hook/Transcript 双 Stop 只产生一个 Turn。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🔴 高 | `packages/hook-runtime/src/redaction.ts` | 初版只脱敏 payload；恶意或异常上游可把凭证放入 turnId、sourceItemId 或 cwd，随后进入 Daemon/Spool。 | 本地凭证泄露、审计数据污染 | 入队和落盘前改为脱敏完整事件信封；保留 eventId/contentHash 身份，增加元数据泄密 Fixture。 |
-| 增 | 🔴 高 | `packages/hook-runtime/src/spool.ts` | 普通覆盖写无法同时保证多 Hook 进程竞争、崩溃一致性与 eventId 冲突检测。 | 事件丢失、部分 JSON、静默覆盖 | 使用 0600 临时文件、文件 fsync、原子硬链接和目录 fsync；确定性文件名去重，冲突信封拒绝覆盖，并发测试只留下一个完整文件。 |
-| 增 | 🔴 高 | `packages/hook-runtime/src/spool.ts` | 跟随符号链接或不校验临时文件名会把敏感事件写到 Spool 目录外。 | 任意路径写入、权限边界破坏 | 最终 Spool 目录必须是实体目录，记录读取使用 O_NOFOLLOW，随机文件名只允许安全字符，目录/文件权限固定为 0700/0600。 |
-| 增 | 🟡 中 | `packages/hook-runtime/src/handler.ts` | 限时 Promise 使用 unref timer 时，独立 Hook 进程可能在超时触发与 Spool 写入前自然退出。 | Daemon 超时事件丢失 | timeout timer 保持引用，最多 100ms；向 Sink 发送 AbortSignal，迟到写入由 Ledger eventId 幂等吸收。 |
-| 增 | 🟡 中 | `packages/hook-runtime/src/redaction.ts` | 从 Ledger 根入口导入脱敏函数会连带求值 `node:sqlite`，使轻量 Hook 初始化 SQLite 模块。 | 启动成本、职责越界、实验警告 | Ledger 增加 `./redaction` 子路径；Hook 只导入该叶子模块，并以架构测试禁止根入口和 node:sqlite。 |
-| 增 | 🟡 中 | `packages/conversation-ledger/src/redaction.ts` | Hook 适配器允许 32 层 JSON，信封/工具 payload 包装后可能超过脱敏器原 32 层限制，合法事件会在入队前被丢弃。 | 深层工具结果丢失 | 脱敏安全深度提高到 64，并保留 66 层拒绝 Fixture；覆盖适配器最大深度及信封包装余量。 |
-| 增 | 🟡 中 | `packages/hook-runtime/src/spool.ts` | 损坏文件若永久留在活动扩展名中，会反复占用扫描窗口并使后续有效事件饥饿。 | 恢复停滞、Daemon 重试热点 | 损坏/超限/文件名不匹配记录原子改名为 `.corrupt-<uuid>` 保留取证，有效记录继续恢复。 |
-| 增 | 🟡 中 | `packages/hook-runtime/src/spool.ts` | 一次性 readdir 并读取整个 backlog 会随事件数线性膨胀内存和首条恢复延迟。 | 大 backlog 内存峰值、恢复延迟 | 改为流式目录迭代，单轮默认最多读取 100 个活动文件；返回 scanTruncated/remaining 供 Daemon 分批调度。 |
+| 增 | 🔴 高 | `packages/conversation-normalizer/src/normalizer.ts` / `sessionSuccessors` | 初版每个 Session 都线性扫描全部 Session 查找后继，Session 数量增大时退化为 O(S²)。 | Daemon 重建延迟、CPU 峰值 | 按 contextKey 分组并用稳定开始元组二分查找，降为 O(S log S)；10,000 事件/1,000 Session 中位 8.48ms。 |
+| 增 | 🔴 高 | `packages/conversation-normalizer/src/normalizer.ts` / `nextNonOverlappingTurn` | 仅用相邻 Turn 开始时间关闭前 Turn；显式 turnId 交错时可能得到 endedAt 早于该 Turn 最后事件。 | Episode 边界错误、证据归属错误 | 改为二分查找第一个开始于当前 Turn 最后事件之后的非重叠 Turn；交错 Fixture 确认边界单调。 |
+| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Turn 聚合 | UserPrompt 无 turnId、后续工具才提供显式 ID 时会拆成一个 synthetic Turn 和一个 real Turn。 | 重复 Turn、知识片段化 | 活动 synthetic Turn 在首次显式 ID 出现时原地提升，保留全部事件并改为 `syntheticId=false`。 |
+| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Stop 规则 | 第一个 Stop 直接关闭 Turn 会把 Stop continuation 后的工具事件排除在 Turn 之外。 | 闭环续跑记录丢失 | 只有 Turn 最后事件为 Stop 才用 `STOP_EVENT` 关闭；多个 Stop 计数但只生成一个 Turn。 |
+| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Session 关闭 | SessionEnd 后出现晚到事件时，直接使用结束时间会造成 Session/Turn 结束早于最后活动。 | 时间线倒序、Episode 构建异常 | 产生 `EVENT_AFTER_SESSION_END` 诊断，SOURCE_END 关闭时间扩展到最后活动，保留可追溯事件。 |
+| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / options | Date.parse 会接受 2 月 30 日等被自动归一化的日期，超大 timeout 还可能导致 Date 溢出。 | 非确定性 timeout、运行时 RangeError | 显式校验 ISO 字段、月日/时分秒/offset；timeout 限定 1ms 到 365 天，`asOf` 必须由调用方传入。 |
+| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts:3` | 引用 Ledger 类型若变为普通 import，会在纯投影进程加载 `node:sqlite`。 | 模块耦合、启动成本 | 生产代码使用 `import type`，编译 JS 无 Ledger import；新增架构测试固定该边界。 |
 
 ## 配置与兼容性检查
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| Hook 退出语义 | 运行时输入、Sink/Spool 故障均返回 `exitCode: 0` | 通过 |
-| 入队门禁 | 默认 50ms，配置上限 100ms，超时发送 AbortSignal | 通过 |
-| Spool 原子性 | temp + fsync + link + directory fsync，跨进程冲突测试 | 通过 |
-| 隐私 | 完整信封脱敏；诊断只暴露 code/errorName | 通过 |
-| 路径权限 | 0700 目录、0600 文件、O_NOFOLLOW、文件名校验 | 通过 |
-| 恢复语义 | Ack 后删除；删除失败保留；Ledger 重放两次仍为一行 | 通过 |
-| 轻量边界 | 不加载 SQLite 根入口、模型、代码扫描或子进程 | 通过 |
-| 供应链 | 新模块无第三方运行时依赖；npm audit 0 vulnerabilities | 通过 |
+| 稳定排序 | `(occurredAt, sequence, eventId)` | 通过 |
+| 重复 Stop | 同 turnId/no-ID 活动 Turn 均折叠，保留 stopEventCount | 通过 |
+| 缺失 turnId | 确定性 synthetic ID，可被后续显式 ID 提升 | 通过 |
+| Session 关闭 | SOURCE_END > NEXT_SESSION > INACTIVITY_TIMEOUT | 通过 |
+| 并发隔离 | 无 context 不推断；重叠 Session 不互关 | 通过 |
+| 时间安全 | 严格 ISO、显式 asOf、timeout 有界 | 通过 |
+| 不可变性 | 结果、数组、Session、Turn、引用和诊断冻结 | 通过 |
+| 运行时依赖 | Ledger 仅类型依赖，不加载 SQLite | 通过 |
 
 ## 性能与瓶颈复盘
 
-- Node 24.18.0、内存 Sink、2,000 次样本：P50 0.0288ms、P95 0.0407ms、P99 0.0795ms、最大 0.5865ms，显著低于 100ms Gate。
-- P95 只代表成功捕获入队路径；真实 IPC 延迟将在 Daemon 传输装配后重新测量。严格的 100ms 门禁已独立覆盖 hung Sink。
-- Spool 对每个降级事件执行文件与目录同步，优先保证崩溃一致性；磁盘故障路径比内存入队慢，但不影响正常捕获路径。
-- 恢复每轮最多扫描 100 个正文文件；超大 backlog 需要 Daemon 连续调度，避免单轮长时间占用事件循环。
+- Node 24.18.0，10,000 个逆序事件、1,000 个 Session、10 次全量重建：中位 8.48ms，P95 16.67ms，约 1,178,857 events/s。
+- 主排序为 O(N log N)，Session 后继为 O(S log S)，每个 Session 内 Turn 后继为 O(T log T)；空间复杂度 O(N)。
+- 当前基准是内存 `LedgerEventRecord[]`，不包含 SQLite 分页读取。后续 Worker 应分离“读 Ledger”与“投影计算”指标。
+- 输出只复制事件引用，不复制 payload，降低 Episode 构建前的内存放大和敏感正文扩散。
 
 ## 已知边界
 
-- 当前只定义 `HookEventSink` 端口，尚未选择 Unix Socket/其他本地 IPC 协议；真实 Hook 安装和 Daemon 装配在 P1 Gate 后进行。
-- 文件系统调用没有可移植的强制取消能力，安装时必须同时配置 Codex Hook 外部 timeout 作为进程级硬上限。
-- `.corrupt-*` 文件保留用于诊断，后续需要单独的容量/保留策略；本模块不会静默删除损坏证据。
+- 当前是全量纯投影，没有持久化 Normalized Session/Turn 表或增量游标；P2 Episode Builder 可先复用全量重建，再根据真实规模决定物化。
+- contextKey 尚未使用规范化 projectId；相同仓库的软链接/路径别名可能无法互认，等待 Project Resolver。
+- SessionEnd 后事件采用“保留并扩展关闭时间”策略；诊断消费与告警阈值由 Daemon Worker 后续实现。
 
 ## Review 结论
 
-CKL-104 未发现未修复风险。失败开放、隐私、原子落盘、跨进程幂等、损坏恢复、内存边界、模块隔离和性能达到验收条件，可以提交并进入 CKL-105。
+CKL-105 未发现未修复风险。重复 Stop、乱序事件、缺失边界、并发隔离、确定性、复杂度和 SQLite 集成达到验收条件，可以提交并执行 P1 Gate。

@@ -7,6 +7,7 @@
     { "path": "./packages/ingestion-codex" },
     { "path": "./packages/conversation-ledger" },
     { "path": "./packages/hook-runtime" },
+    { "path": "./packages/conversation-normalizer" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

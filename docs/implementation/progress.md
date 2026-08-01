@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P1 实施中（CKL-101/102/103/104 已完成）  
+**当前里程碑**：P1 实施中（CKL-101/102/103/104/105 已完成，Gate 待执行）  
 **记录日期**：2026-08-01  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -18,6 +18,7 @@
 | CKL-102 | 完成 | `4743020` | 版本化 rollout JSONL 增量读取、游标、替换/截断/格式诊断 | 121 项累计模块测试；真实 5.8 MB rollout 约 280 MiB/s；1 高/4 中风险，全部修复 |
 | CKL-103 | 完成 | `31ce136` | SQLite Migration、幂等追加、消费游标、payload tombstone、入库脱敏 | 137 项累计模块测试；1000 条 WAL 写约 11.60ms、读约 7.17ms；3 高/3 中风险，全部修复 |
 | CKL-104 | 完成 | `1ef5027` | 轻量 Hook Handler、100ms 入队门禁、完整信封脱敏、原子 Spool 与幂等恢复 | 164 项累计模块测试；Hook P95 0.0407ms；3 高/5 中风险，全部修复 |
+| CKL-105 | 完成 | 待本次提交 | Session/Turn 确定性重建、重复 Stop 折叠、缺失结束推断、乱序稳定排序 | 187 项累计模块测试；10,000 事件重建中位 8.48ms；2 高/5 中风险，全部修复 |
 
 ## 2. P0 Gate 证据
 
@@ -59,5 +60,5 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-105：实现 Session/Turn 边界、缺失 SessionEnd 关闭规则和乱序事件稳定排序。
+- 下一步执行 P1 Gate：录制 Fixture 三次重放、模拟 Hook 全故障、全链路 session/turn/source 追踪，并冻结 P1 验收记录。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。真实装配继续等待 P1 Gate 通过。

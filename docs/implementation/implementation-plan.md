@@ -213,6 +213,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 ### P2 Gate
 
+**状态**：通过  
+
 - 端到端 Fixture 能从对话生成五种 MVP 知识。
 - 所有 Candidate 可追溯至 Episode 和 Turn。
 - 模型失败不丢事件且可重试。

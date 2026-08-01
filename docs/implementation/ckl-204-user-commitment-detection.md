@@ -42,9 +42,10 @@ applyUserCommitments(candidates, detection): readonly KnowledgeCandidate[]
 目标解析按以下优先级执行：
 
 1. Correction 的 `originalRef` 精确匹配 Candidate 的 Evidence/Assertion 来源；
-2. 用户原话中的明确主题唯一匹配 Candidate title、subjectKey 或 summary 中的有效词；
-3. 没有主题匹配且 Episode 只有一个 `REQUIREMENT/DESIGN/DECISION` 方案时，允许关联该方案；
-4. 多个方案均可能命中时不生成接受/拒绝信号，而是返回 `ambiguities`。
+2. 普通接受/拒绝的 statementRef 只被一个 Candidate 明确引用时，关联该 Candidate；若多个 Candidate 引用仍视为歧义；
+3. 用户原话中的明确主题唯一匹配 Candidate title、subjectKey 或 summary 中的有效词；
+4. 没有引用/主题匹配且 Episode 只有一个 `REQUIREMENT/DESIGN/DECISION` 方案时，允许关联该方案；
+5. 多个方案均可能命中时不生成接受/拒绝信号，而是返回 `ambiguities`。
 
 首版只识别位于用户陈述开头的明确承诺/否定表达，例如“按这个做”“采用 Redis 方案”“不是这个意思”“不要使用 Redis”。文档、测试或讨论中仅引用这些词不会被当成承诺。普通“好的”没有足够语义，不会单独触发确认。
 

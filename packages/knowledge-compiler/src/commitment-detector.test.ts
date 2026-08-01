@@ -124,6 +124,35 @@ describe("detectUserCommitments", () => {
     }]);
   });
 
+  it("uses a unique Candidate source reference to resolve generic acceptance in a multi-kind batch", () => {
+    const acceptance = statement("event-accept", "按这个做", "2026-08-01T08:01:00.000Z");
+    const result = detectUserCommitments(episode([acceptance]), [
+      candidate("requirement", "Keep data local", "REQUIREMENT"),
+      candidate("design", "Use Redis cache", "DESIGN", "event-accept"),
+      candidate("decision", "Select the cache", "DECISION"),
+    ]);
+    expect(result.signals[0]).toMatchObject({
+      kind: "USER_ACCEPTED",
+      candidateIds: ["design"],
+      reasonCodes: ["EXPLICIT_SOURCE_REFERENCE"],
+    });
+    expect(result.ambiguities).toEqual([]);
+  });
+
+  it("keeps generic acceptance ambiguous when several Candidates cite the same statement", () => {
+    const acceptance = statement("event-accept", "按这个做", "2026-08-01T08:01:00.000Z");
+    const result = detectUserCommitments(episode([acceptance]), [
+      candidate("design", "Use Redis cache", "DESIGN", "event-accept"),
+      candidate("decision", "Select Redis", "DECISION", "event-accept"),
+    ]);
+    expect(result.signals).toEqual([]);
+    expect(result.ambiguities[0]).toMatchObject({
+      kind: "USER_ACCEPTED",
+      candidateIds: ["decision", "design"],
+      statementRef: "event-accept",
+    });
+  });
+
   it("uses a unique explicit topic to select one candidate from several", () => {
     const acceptance = statement("event-accept", "采用 Redis 方案", "2026-08-01T08:01:00.000Z");
     const result = detectUserCommitments(episode([acceptance]), [

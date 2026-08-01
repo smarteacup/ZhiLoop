@@ -327,7 +327,16 @@ export function detectUserCommitments(
     if (handledCorrections.has(statement.sourceEventId)) continue;
     const kind = markerKind(statement.statement);
     if (kind === undefined) continue;
-    const resolution = resolveByText(statement.statement, localProfiles);
+    const referenced = sourceTargets(statement.sourceEventId, localCandidates);
+    const resolution: TargetResolution = referenced.length === 1
+      ? {
+          candidateIds: sortedIds(referenced),
+          reasonCode: "EXPLICIT_SOURCE_REFERENCE",
+          ambiguousCandidateIds: [],
+        }
+      : referenced.length > 1
+        ? { candidateIds: [], ambiguousCandidateIds: sortedIds(referenced) }
+        : resolveByText(statement.statement, localProfiles);
     if (resolution.candidateIds.length === 0) {
       if (resolution.ambiguousCandidateIds.length > 0) {
         ambiguities.push(createAmbiguity(kind, statement, resolution.ambiguousCandidateIds));

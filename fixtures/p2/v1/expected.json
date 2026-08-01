@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "p2-golden-v1",
+  "rows": 9,
+  "events": 9,
+  "sessions": 1,
+  "turns": 3,
+  "episodes": 1,
+  "builderVersion": "episode-builder-v2",
+  "goal": "设计并实现可追溯的五类知识编译流程",
+  "knowledgeKinds": [
+    "REQUIREMENT",
+    "DESIGN",
+    "DECISION",
+    "IMPLEMENTATION",
+    "EXPERIENCE"
+  ],
+  "acceptanceStatement": "按这个做",
+  "correctionStatement": "不是这个意思，不要让 PROPOSED 候选进入正式召回，只能显式用于审计"
+}

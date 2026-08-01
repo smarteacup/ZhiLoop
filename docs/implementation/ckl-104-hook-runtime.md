@@ -50,7 +50,7 @@ Daemon 调用 `LocalEventSpool.drain()`，按 `occurredAt`、`queuedAt` 和文�
 
 ## 5. 验证结果
 
-- 27 条 Hook Runtime 专项测试覆盖成功入队、Sink 拒绝、严格超时、完整信封脱敏、stdin 越界、并发落盘、权限、符号链接、损坏隔离、取消、清理失败和 SQLite 幂等补录。
-- Hook Runtime 覆盖率：Lines 98.00%，Branches 92.30%，Functions 100%。
+- 28 条 Hook Runtime 专项测试覆盖成功入队、Sink 拒绝、严格超时、完整信封脱敏、stdin 越界、并发落盘、权限、符号链接、损坏隔离、取消、清理失败、观察时间变化和 SQLite 幂等补录。
+- Hook Runtime 覆盖率：Lines 98.00%，Branches 92.76%，Functions 100%。
 - Node.js 24.18.0、2,000 次内存 Sink 样本：P50 0.0288 ms，P95 0.0407 ms，P99 0.0795 ms，最大 0.5865 ms。
 - 测试仅使用内存 SQLite 和系统临时目录；未创建 `~/.ckl`，未安装 Codex Hook，未修改 Codex/CCM 配置。

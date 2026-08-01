@@ -15,7 +15,7 @@ function event(prompt: string, observedAt = "2026-08-01T08:00:00.000Z"): EventEn
   const result = adaptCodexHook({
     hook_event_name: "UserPromptSubmit",
     session_id: "session-1",
-    turn_id: `turn-${prompt}`,
+    turn_id: "turn-1",
     cwd: "/workspace/project",
     prompt,
   }, { observedAt });
@@ -68,6 +68,15 @@ describe("LocalEventSpool", () => {
     await expect(spool.store({ ...original, payload: { kind: "user-prompt", prompt: "changed" } })).rejects.toBeInstanceOf(
       SpoolConflictError,
     );
+  });
+
+  it("deduplicates a repeated observation whose occurredAt changed", async () => {
+    const spool = new LocalEventSpool(spoolDirectory);
+    const original = event("same-observation", "2026-08-01T08:00:00.000Z");
+    await expect(spool.store(original)).resolves.toMatchObject({ status: "stored" });
+    await expect(spool.store({ ...original, occurredAt: "2026-08-01T08:01:00.000Z" })).resolves.toMatchObject({
+      status: "duplicate",
+    });
   });
 
   it("drains records in source time order and removes only acknowledged files", async () => {

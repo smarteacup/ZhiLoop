@@ -144,7 +144,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - SessionEnd 缺失时可根据后续 Session 或超时关闭。
 - 乱序工具事件按 source timestamp 和 source order 稳定排序。
 
-### P1 Gate
+### P1 Gate（已通过）
 
 - 录制 Fixture 重放三次后 Ledger 行数不变。
 - Hook 失败不会影响模拟 Codex 流程。

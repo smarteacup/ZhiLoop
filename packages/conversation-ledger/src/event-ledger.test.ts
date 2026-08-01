@@ -88,6 +88,19 @@ describe("SQLite Event Ledger", () => {
     ledger.close();
   });
 
+  it("allows a repeated observation time but rejects identity metadata collisions", () => {
+    const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
+    const first = event(1);
+    expect(ledger.append(first).status).toBe("appended");
+    expect(ledger.append({ ...first, occurredAt: "2026-08-01T11:00:00.000Z" })).toEqual({
+      status: "duplicate",
+      sequence: 1,
+    });
+    expect(() => ledger.append({ ...first, eventType: "file.changed" })).toThrow("eventId conflict");
+    expect(ledger.count()).toBe(1);
+    ledger.close();
+  });
+
   it("redacts secret keys and token patterns before persistence", () => {
     const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
     const original = event(1, {

@@ -6,68 +6,64 @@
 
 | 指标 | 数值 |
 |---|---:|
-| **CR 标识** | CKL-105 / Session/Turn 归一化 |
-| **CR 耗时** | 540s |
-| **🔴 高风险** | 2 个 |
-| **🟡 中风险** | 5 个 |
+| **CR 标识** | P1 Gate / 端到端幂等与故障恢复 |
+| **CR 耗时** | 300s |
+| **🔴 高风险** | 1 个 |
+| **🟡 中风险** | 3 个 |
 | **🟢 低风险** | 0 个 |
-| **修复程度** | 已修复 7/7（100%） |
+| **修复程度** | 已修复 4/4（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| **总 CR 次数** | 10 次 |
-| **总耗时** | 3760s |
-| **🔴 高风险累计** | 13 个 |
-| **🟡 中风险累计** | 30 个 |
+| **总 CR 次数** | 11 次 |
+| **总耗时** | 4060s |
+| **🔴 高风险累计** | 14 个 |
+| **🟡 中风险累计** | 33 个 |
 | **🟢 低风险累计** | 0 个 |
 | **平均修复程度** | 100% |
 
 ## 改动说明
 
-本次新增 Domain 层 `NormalizedSession`、`NormalizedTurn`、稳定事件引用和关闭原因，并新建独立 `@zhiloop/conversation-normalizer` 包。Normalizer 从 `LedgerEventRecord` 纯函数重建会话：按 source timestamp、Ledger sequence 和 eventId 全序排序，折叠重复 Stop，补齐/提升缺失 turnId，并通过 SessionEnd、后续非重叠 Session 或 inactivity timeout 确定边界。
+本次新增脱敏录制 Hook Fixture 和两条 P1 端到端 Gate：同一会话三次回放、Daemon 全故障时 Hook 失败开放、Spool 恢复到 Ledger、敏感值验证，以及 raw event 到 source/session/Turn/Session boundary 的完整追踪。
 
-Node.js 24.18.0 全仓 187 个模块测试和 12 个架构测试通过；Normalizer Lines 99.38%、Branches 95.77%、Functions 100%。真实 `SqliteEventLedger` 集成 Fixture 验证 Hook/Transcript 双 Stop 只产生一个 Turn。
+Gate 同时修复 Spool 与 Ledger 的幂等身份不一致，并加强 Ledger 对相同 eventId、不同身份元数据的冲突检查。Node 24.18.0 下全仓 189 个模块测试、14 个架构/Gate 测试通过，整体 Lines 97.81%、Branches 90.54%，npm audit 0 vulnerabilities。
 
 ## 风险矩阵
 
 | 增/删 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增 | 🔴 高 | `packages/conversation-normalizer/src/normalizer.ts` / `sessionSuccessors` | 初版每个 Session 都线性扫描全部 Session 查找后继，Session 数量增大时退化为 O(S²)。 | Daemon 重建延迟、CPU 峰值 | 按 contextKey 分组并用稳定开始元组二分查找，降为 O(S log S)；10,000 事件/1,000 Session 中位 8.48ms。 |
-| 增 | 🔴 高 | `packages/conversation-normalizer/src/normalizer.ts` / `nextNonOverlappingTurn` | 仅用相邻 Turn 开始时间关闭前 Turn；显式 turnId 交错时可能得到 endedAt 早于该 Turn 最后事件。 | Episode 边界错误、证据归属错误 | 改为二分查找第一个开始于当前 Turn 最后事件之后的非重叠 Turn；交错 Fixture 确认边界单调。 |
-| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Turn 聚合 | UserPrompt 无 turnId、后续工具才提供显式 ID 时会拆成一个 synthetic Turn 和一个 real Turn。 | 重复 Turn、知识片段化 | 活动 synthetic Turn 在首次显式 ID 出现时原地提升，保留全部事件并改为 `syntheticId=false`。 |
-| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Stop 规则 | 第一个 Stop 直接关闭 Turn 会把 Stop continuation 后的工具事件排除在 Turn 之外。 | 闭环续跑记录丢失 | 只有 Turn 最后事件为 Stop 才用 `STOP_EVENT` 关闭；多个 Stop 计数但只生成一个 Turn。 |
-| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / Session 关闭 | SessionEnd 后出现晚到事件时，直接使用结束时间会造成 Session/Turn 结束早于最后活动。 | 时间线倒序、Episode 构建异常 | 产生 `EVENT_AFTER_SESSION_END` 诊断，SOURCE_END 关闭时间扩展到最后活动，保留可追溯事件。 |
-| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts` / options | Date.parse 会接受 2 月 30 日等被自动归一化的日期，超大 timeout 还可能导致 Date 溢出。 | 非确定性 timeout、运行时 RangeError | 显式校验 ISO 字段、月日/时分秒/offset；timeout 限定 1ms 到 365 天，`asOf` 必须由调用方传入。 |
-| 增 | 🟡 中 | `packages/conversation-normalizer/src/normalizer.ts:3` | 引用 Ledger 类型若变为普通 import，会在纯投影进程加载 `node:sqlite`。 | 模块耦合、启动成本 | 生产代码使用 `import type`，编译 JS 无 Ledger import；新增架构测试固定该边界。 |
+| 增 | 🔴 高 | `packages/hook-runtime/src/spool.ts` / duplicate | eventId 不含 observedAt；重复 Stop 在不同时间被观察时 Ledger 返回 duplicate，但 Spool 比较完整信封并误报 conflict。Daemon 故障下第二次 Hook 会无法降级落盘。 | 事件丢失、Hook 降级不可靠 | Spool 改用与事件 ID 一致的身份字段和脱敏 payload 比较，允许 occurredAt/context 元数据变化；增加重复观察 Fixture 和 P1 全故障回放。 |
+| 增 | 🟡 中 | `packages/conversation-ledger/src/event-ledger.ts` / duplicate | Ledger 过去只比较 contentHash 和 storedPayloadHash；哈希碰撞或上游缺陷可让不同 source/session/turn/type 静默成为 duplicate。 | 错误归属、审计不可追踪 | duplicate 额外比较 source、sourceItemId、eventType、sessionId、turnId、correlationId；身份冲突抛错。 |
+| 增 | 🟡 中 | `scripts/p1-gate.test.mjs` / trace | 只验证 Ledger count 无法证明 session.ended 等边界事件进入后续投影。 | Gate 假阳性、Episode 丢边界 | 对每个 Ledger eventId 检查其必须出现在 Normalized Turn 或 Session boundary 引用集合。 |
+| 增 | 🟡 中 | `scripts/p1-gate.test.mjs` / failure flow | 只断言 Hook 返回 0 不能证明 Spool 可恢复或正文已脱敏。 | 数据静默滞留、隐私回归 | 全部 5 次 Hook 后 drain 到真实内存 Ledger，断言 delivered=4、remaining=0、敏感原值消失且替换标记存在。 |
 
-## 配置与兼容性检查
+## Gate 证据
 
 | 检查项 | 结果 | 结论 |
 |---|---|---|
-| 稳定排序 | `(occurredAt, sequence, eventId)` | 通过 |
-| 重复 Stop | 同 turnId/no-ID 活动 Turn 均折叠，保留 stopEventCount | 通过 |
-| 缺失 turnId | 确定性 synthetic ID，可被后续显式 ID 提升 | 通过 |
-| Session 关闭 | SOURCE_END > NEXT_SESSION > INACTIVITY_TIMEOUT | 通过 |
-| 并发隔离 | 无 context 不推断；重叠 Session 不互关 | 通过 |
-| 时间安全 | 严格 ISO、显式 asOf、timeout 有界 | 通过 |
-| 不可变性 | 结果、数组、Session、Turn、引用和诊断冻结 | 通过 |
-| 运行时依赖 | Ledger 仅类型依赖，不加载 SQLite | 通过 |
+| 录制 Fixture 三次回放 | Ledger 4 → 4 → 4 | 通过 |
+| Daemon 全故障 | 5/5 Hook exitCode 0 | 通过 |
+| Spool 恢复 | 4 unique delivered、0 remaining | 通过 |
+| 重复 Stop | 1 Session、1 Turn | 通过 |
+| source/session | 4/4 可追踪 | 通过 |
+| Turn/Session boundary | 4/4 eventId 被引用 | 通过 |
+| 敏感信息 | 合成 token 不存在，`[REDACTED]` 存在 | 通过 |
+| 全仓质量 | 189 模块 + 14 架构/Gate，audit 0 | 通过 |
 
 ## 性能与瓶颈复盘
 
-- Node 24.18.0，10,000 个逆序事件、1,000 个 Session、10 次全量重建：中位 8.48ms，P95 16.67ms，约 1,178,857 events/s。
-- 主排序为 O(N log N)，Session 后继为 O(S log S)，每个 Session 内 Turn 后继为 O(T log T)；空间复杂度 O(N)。
-- 当前基准是内存 `LedgerEventRecord[]`，不包含 SQLite 分页读取。后续 Worker 应分离“读 Ledger”与“投影计算”指标。
-- 输出只复制事件引用，不复制 payload，降低 Episode 构建前的内存放大和敏感正文扩散。
+- P1 Gate 两条端到端场景在本机约 125ms 完成；主要成本是临时文件 fsync 和 SQLite 初始化，不进入正常成功入队 P95。
+- eventId duplicate 查询仍走 SQLite UNIQUE 索引，新增身份字段比较只发生在冲突路径，不增加额外查询。
+- Spool 恢复保持 at-least-once；Ack 后删除失败会重放，由 Ledger duplicate 吸收。
 
 ## 已知边界
 
-- 当前是全量纯投影，没有持久化 Normalized Session/Turn 表或增量游标；P2 Episode Builder 可先复用全量重建，再根据真实规模决定物化。
-- contextKey 尚未使用规范化 projectId；相同仓库的软链接/路径别名可能无法互认，等待 Project Resolver。
-- SessionEnd 后事件采用“保留并扩展关闭时间”策略；诊断消费与告警阈值由 Daemon Worker 后续实现。
+- Fixture 是脱敏的可重复样本，不代表所有 Codex 版本字段；未来 Hook 协议升级必须添加对应版本 Fixture。
+- Gate 使用内存 Ledger 和临时 Spool，不覆盖真实 Unix Socket IPC、安装权限、开机启动和卸载回滚。
+- observedAt 变化允许 duplicate 后保留首次记录时间；如果未来需要记录多次观察，应新增 observation 表，不能改变 eventId 语义。
 
 ## Review 结论
 
-CKL-105 未发现未修复风险。重复 Stop、乱序事件、缺失边界、并发隔离、确定性、复杂度和 SQLite 集成达到验收条件，可以提交并执行 P1 Gate。
+P1 Gate 未发现未修复风险，三项验收条件全部通过。事件采集、失败恢复、幂等账本和 Session/Turn 追踪可以冻结为 P1 基线，项目可进入 P2/CKL-201。

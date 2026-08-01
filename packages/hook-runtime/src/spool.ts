@@ -43,6 +43,20 @@ function eventFileName(eventId: string): string {
   return `${sha256(eventId)}.json`;
 }
 
+function sameIdempotencyIdentity(left: EventEnvelope, right: EventEnvelope): boolean {
+  return (
+    left.eventId === right.eventId &&
+    left.source === right.source &&
+    left.sourceItemId === right.sourceItemId &&
+    left.eventType === right.eventType &&
+    left.sessionId === right.sessionId &&
+    left.turnId === right.turnId &&
+    left.contentHash === right.contentHash &&
+    left.correlationId === right.correlationId &&
+    canonicalStringify(left.payload) === canonicalStringify(right.payload)
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -159,7 +173,7 @@ export class LocalEventSpool {
 
   async #existingResult(fileName: string, expected: SpoolRecord): Promise<SpoolStoreResult> {
     const existing = await this.#read(fileName);
-    if (canonicalStringify(existing.event) !== canonicalStringify(expected.event)) {
+    if (!sameIdempotencyIdentity(existing.event, expected.event)) {
       throw new SpoolConflictError(`eventId conflict for ${expected.event.eventId}`);
     }
     return { status: "duplicate", fileName };

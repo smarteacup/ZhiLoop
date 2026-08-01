@@ -223,7 +223,11 @@ export class SqliteEventLedger {
         redaction_count, inserted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const find = this.#database.prepare("SELECT sequence, content_hash, stored_payload_hash, payload_purged FROM events WHERE event_id = ?");
+    const find = this.#database.prepare(`
+      SELECT sequence, source, source_item_id, event_type, session_id, turn_id,
+             content_hash, correlation_id, stored_payload_hash, payload_purged
+      FROM events WHERE event_id = ?
+    `);
     return this.#transaction(() => prepared.map((item) => {
       const event = item.event;
       const result = insert.run(
@@ -250,11 +254,28 @@ export class SqliteEventLedger {
         return { status: "appended", sequence: Number(result.lastInsertRowid), redactionCount: item.redactionCount };
       }
       const existing = find.get(event.eventId) as
-        | { sequence: number; content_hash: string; stored_payload_hash: string; payload_purged: number }
+        | {
+            sequence: number;
+            source: string;
+            source_item_id: string | null;
+            event_type: string;
+            session_id: string;
+            turn_id: string | null;
+            content_hash: string;
+            correlation_id: string;
+            stored_payload_hash: string;
+            payload_purged: number;
+          }
         | undefined;
       if (existing === undefined) throw new Error("duplicate event could not be resolved");
       if (
+        existing.source !== event.source ||
+        existing.source_item_id !== (event.sourceItemId ?? null) ||
+        existing.event_type !== event.eventType ||
+        existing.session_id !== event.sessionId ||
+        existing.turn_id !== (event.turnId ?? null) ||
         existing.content_hash !== event.contentHash ||
+        existing.correlation_id !== event.correlationId ||
         (existing.payload_purged === 0 && existing.stored_payload_hash !== item.storedPayloadHash)
       ) {
         throw new Error(`eventId conflict for ${event.eventId}`);

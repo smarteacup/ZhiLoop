@@ -1,0 +1,5 @@
+{"observedAt":"2026-08-01T08:00:00.000Z","hook":{"hook_event_name":"UserPromptSubmit","session_id":"p1-session","turn_id":"p1-turn","cwd":"/fixture/project","prompt":"Implement the agreed session normalization rules."}}
+{"observedAt":"2026-08-01T08:00:01.000Z","hook":{"hook_event_name":"PostToolUse","session_id":"p1-session","turn_id":"p1-turn","cwd":"/fixture/project","tool_name":"shell","tool_use_id":"p1-tool-1","tool_input":{"command":"npm test"},"tool_response":{"status":"passed","authorization":"Bearer fixture-token-value-1234567890"}}}
+{"observedAt":"2026-08-01T08:00:02.000Z","hook":{"hook_event_name":"Stop","session_id":"p1-session","turn_id":"p1-turn","cwd":"/fixture/project","stop_hook_active":false,"last_assistant_message":"Implementation and tests completed."}}
+{"observedAt":"2026-08-01T08:00:03.000Z","hook":{"hook_event_name":"Stop","session_id":"p1-session","turn_id":"p1-turn","cwd":"/fixture/project","stop_hook_active":false,"last_assistant_message":"Implementation and tests completed."}}
+{"observedAt":"2026-08-01T08:00:04.000Z","hook":{"hook_event_name":"SessionEnd","session_id":"p1-session","cwd":"/fixture/project","reason":"other"}}

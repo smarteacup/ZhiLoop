@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P3 进行中（CKL-304 已完成）  
+**当前里程碑**：P3 进行中（CKL-305 已完成，进入 P3 Gate）  
 **记录日期**：2026-08-01  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -30,6 +30,7 @@
 | CKL-302 | 完成 | `a7453e2` | 七级最小可证明 Scope、可信身份门禁、项目特征识别、冲突/非法输入 PROJECT 降级 | 298 项模块测试、29 项架构/Gate 测试；5 高/7 中风险，全部修复；约 1,096,802 decisions/s |
 | CKL-303 | 完成 | `51201cc` | 唯一 Verifier Registry、七类 typed Probe/Verifier、四态结果、Evidence 完整性与插件故障隔离 | 315 项模块测试、31 项架构/Gate 测试；5 高/8 中风险，全部修复；约 157,916 assertions/s |
 | CKL-304 | 完成 | `9511e0c` | Evidence 状态策略、合法迁移路径、自动发布/询问、可追溯跨项目 GLOBAL 晋升 | 330 项模块测试、33 项架构/Gate 测试；6 高/8 中风险，全部修复；约 667,698 decisions/s |
+| CKL-305 | 完成 | `d2bf29e` | path/symbol/config/dependency 目标指纹、相关 ChangeSet、复验防伪与正文保留 STALE | 342 项模块测试、35 项架构/Gate 测试；5 高/7 中风险，全部修复；10,000 次中位 16.916ms |
 
 ## 2. P0 Gate 证据
 
@@ -71,6 +72,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 P3/CKL-305 代码指纹与失效检测：为 path/symbol/config/dependency 生成稳定 fingerprint，在相关变化时重新验证并进入 STALE，不相关变化不得误伤知识。
+- 下一任务是 P3 Gate：构造代码无测试→IMPLEMENTED、代码+关联测试→VERIFIED、两项目隔离和 GLOBAL 晋升 Golden Fixture，并验证变化后 STALE 闭环。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

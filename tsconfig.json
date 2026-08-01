@@ -8,6 +8,7 @@
     { "path": "./packages/conversation-ledger" },
     { "path": "./packages/hook-runtime" },
     { "path": "./packages/conversation-normalizer" },
+    { "path": "./packages/episode-builder" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

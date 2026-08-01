@@ -5,8 +5,18 @@ export type EpisodeStatus = "OPEN" | "COMPLETED" | "ABANDONED";
 export interface Correction {
   readonly correctionId: string;
   readonly turnId: string;
-  readonly originalRef?: string;
+  readonly originalRef: string;
+  readonly originalStatement: string;
+  readonly correctedRef: string;
   readonly correctedStatement: string;
+  readonly occurredAt: string;
+}
+
+export interface EpisodeSubgoal {
+  readonly goalId: string;
+  readonly turnId: string;
+  readonly sourceEventId: string;
+  readonly statement: string;
   readonly occurredAt: string;
 }
 
@@ -34,10 +44,12 @@ export interface Outcome {
 
 export interface Episode {
   readonly episodeId: string;
+  readonly builderVersion: string;
   readonly sessionIds: readonly [string, ...string[]];
   readonly turnIds: readonly string[];
   readonly projectContext: ProjectContext;
   readonly goal: string;
+  readonly subgoals: readonly EpisodeSubgoal[];
   readonly userCorrections: readonly Correction[];
   readonly actions: readonly ActionRecord[];
   readonly artifacts: readonly ArtifactRef[];
@@ -47,4 +59,3 @@ export interface Episode {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
-

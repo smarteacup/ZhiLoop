@@ -24,7 +24,7 @@ describe("event payload redaction", () => {
   it("allows shared object references but rejects excessive depth", () => {
     const shared = { safe: "value" };
     expect(redactEventPayload({ left: shared, right: shared }).redactionCount).toBe(0);
-    const deep = Array.from({ length: 34 }).reduce<unknown>((value) => [value], null);
+    const deep = Array.from({ length: 66 }).reduce<unknown>((value) => [value], null);
     expect(() => redactEventPayload(deep)).toThrow("maximum JSON depth");
   });
 });

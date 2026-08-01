@@ -6,6 +6,7 @@
     { "path": "./packages/config" },
     { "path": "./packages/ingestion-codex" },
     { "path": "./packages/conversation-ledger" },
+    { "path": "./packages/hook-runtime" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

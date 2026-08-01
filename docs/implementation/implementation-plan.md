@@ -123,7 +123,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 1000 条批量事件写入和读取测试通过。
 - 事件正文和日志经过脱敏测试。
 
-### CKL-104：Hook Handler 与本地 Spool
+### CKL-104：Hook Handler 与本地 Spool（已完成）
 
 **依赖**：CKL-101、CKL-103  
 **交付物**：轻量 Hook 入口、严格超时、Ledger 不可用时的本地 Spool。  

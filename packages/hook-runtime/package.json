@@ -1,11 +1,13 @@
 {
-  "name": "@zhiloop/conversation-ledger",
+  "name": "@zhiloop/hook-runtime",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "zhiloop": {
     "allowedWorkspaceDependencies": [
+      "@zhiloop/conversation-ledger",
       "@zhiloop/domain",
+      "@zhiloop/ingestion-codex",
       "@zhiloop/schemas"
     ],
     "allowedExternalDependencies": [
@@ -16,10 +18,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./redaction": {
-      "types": "./dist/redaction.d.ts",
-      "default": "./dist/redaction.js"
     }
   },
   "scripts": {
@@ -27,7 +25,9 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@zhiloop/conversation-ledger": "0.0.0",
     "@zhiloop/domain": "0.0.0",
+    "@zhiloop/ingestion-codex": "0.0.0",
     "@zhiloop/schemas": "0.0.0"
   }
 }

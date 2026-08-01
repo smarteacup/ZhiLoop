@@ -31,7 +31,7 @@ function redactString(value: string, state: MutableRedactionState): string {
 }
 
 function visit(value: unknown, state: MutableRedactionState, depth: number): unknown {
-  if (depth > 32) throw new Error("event payload exceeds maximum JSON depth");
+  if (depth > 64) throw new Error("event payload exceeds maximum JSON depth");
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "string") return redactString(value, state);
   if (typeof value === "number") {

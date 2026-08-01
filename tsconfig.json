@@ -4,8 +4,8 @@
     { "path": "./packages/domain" },
     { "path": "./packages/schemas" },
     { "path": "./packages/config" },
+    { "path": "./packages/ingestion-codex" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]
 }
-

@@ -1,0 +1,11 @@
+{
+  "session_id": "session-fixture-1",
+  "transcript_path": null,
+  "cwd": "/workspace/sample-project",
+  "hook_event_name": "Stop",
+  "turn_id": "turn-fixture-1",
+  "stop_hook_active": false,
+  "last_assistant_message": "Implementation and tests are complete.",
+  "model": "codex-fixture-model",
+  "permission_mode": "default"
+}

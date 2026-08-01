@@ -1,6 +1,6 @@
 # ZhiLoop 实施计划
 
-**状态**：In Progress（P0 已完成）  
+**状态**：In Progress（P0、CKL-101 已完成）  
 **版本**：0.3  
 **创建日期**：2026-08-01  
 **最近更新**：2026-08-01  
@@ -90,7 +90,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 ## 4. P1：Codex 捕获与事件账本
 
-### CKL-101：Codex Hook 输入适配器
+### CKL-101：Codex Hook 输入适配器（已完成）
 
 **依赖**：CKL-003  
 **交付物**：`UserPromptSubmit`、`PostToolUse`、`Stop`、`SessionEnd` 到标准事件的转换。  

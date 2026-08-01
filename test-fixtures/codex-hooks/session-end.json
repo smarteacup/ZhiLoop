@@ -1,0 +1,8 @@
+{
+  "session_id": "session-fixture-1",
+  "transcript_path": null,
+  "cwd": "/workspace/sample-project",
+  "hook_event_name": "SessionEnd",
+  "reason": "other",
+  "model": "codex-fixture-model"
+}

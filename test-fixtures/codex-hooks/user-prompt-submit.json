@@ -1,0 +1,11 @@
+{
+  "session_id": "session-fixture-1",
+  "transcript_path": null,
+  "cwd": "/workspace/sample-project",
+  "hook_event_name": "UserPromptSubmit",
+  "turn_id": "turn-fixture-1",
+  "prompt": "Please explain the retry policy.",
+  "model": "codex-fixture-model",
+  "permission_mode": "default",
+  "future_field": "ignored"
+}

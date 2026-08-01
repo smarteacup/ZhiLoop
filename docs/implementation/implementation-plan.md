@@ -1,8 +1,9 @@
 # ZhiLoop 实施计划
 
-**状态**：Proposed  
-**版本**：0.2  
+**状态**：In Progress（P0 已完成）  
+**版本**：0.3  
 **创建日期**：2026-08-01  
+**最近更新**：2026-08-01  
 **依据**：[ZhiLoop（Codex Knowledge Layer）技术设计](../design/codex-knowledge-layer-tdd.md)
 
 ## 1. 实施约束
@@ -30,9 +31,9 @@ flowchart LR
 
 P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；P6 完成“有限闭环 MVP”；P7 是接入形态演进阶段。
 
-## 3. P0：工程与领域骨架
+## 3. P0：工程与领域骨架（已完成）
 
-### CKL-001：初始化工程
+### CKL-001：初始化工程（已完成）
 
 **依赖**：无  
 **交付物**：Workspace、TypeScript 配置、lint、test、build、package scripts。  
@@ -45,7 +46,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - CI 或本地等价命令会检查循环依赖。
 - Node 版本和包管理器版本被固定并记录。
 
-### CKL-002：定义 Domain 包
+### CKL-002：定义 Domain 包（已完成）
 
 **依赖**：CKL-001  
 **交付物**：Event、Episode、Candidate、Asset、Scope、Evidence、Assertion、Relation、状态机类型。  
@@ -58,7 +59,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - `GLOBAL` 晋升不变量有单元测试。
 - Domain 包在无 Node API 的测试环境可加载。
 
-### CKL-003：定义 JSON Schema 和版本规则
+### CKL-003：定义 JSON Schema 和版本规则（已完成）
 
 **依赖**：CKL-002  
 **交付物**：`EventEnvelope`、`KnowledgeCandidate`、`KnowledgeAsset` 基础 Schema，以及后续 Schema 的版本与兼容规则。  
@@ -68,7 +69,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 未知字段策略明确：输入允许保留扩展字段，领域对象只读取已知字段。
 - `schemaVersion` 不支持时产生可诊断错误，不静默解析。
 
-### CKL-004：配置系统
+### CKL-004：配置系统（已完成）
 
 **依赖**：CKL-001、CKL-003  
 **交付物**：Verification、Retrieval、Injection、Closure、Scope、Retention 配置加载器。  
@@ -79,11 +80,13 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 修改配置不需要修改业务代码。
 - 禁止通过配置绕过 Domain 不变量。
 
-### P0 Gate
+### P0 Gate（已通过）
 
 - 架构依赖检查通过。
 - Domain 覆盖率不低于 90%。
 - 所有 Schema Fixture 通过。
+
+具体提交、测试、覆盖率、安全审计和 Review 证据见[实施进度与验证记录](progress.md)。
 
 ## 4. P1：Codex 捕获与事件账本
 

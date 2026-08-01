@@ -1,0 +1,58 @@
+# ZhiLoop 实施进度与验证记录
+
+**当前里程碑**：P0 已完成，P1 待实施  
+**记录日期**：2026-08-01  
+**运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
+
+## 1. 模块交付记录
+
+测试数量为各提交完成时的累计值；每个模块均在实现后先自测，再完成独立风险 Review，最后提交到 `main`。
+
+| 模块 | 状态 | 提交 | 主要交付 | 自测与 Review |
+|---|---|---|---|---|
+| CKL-001 | 完成 | `99641d8` | npm Workspace、TypeScript、ESLint、Vitest、依赖边界、CI | 9 项架构测试；0 高/2 中风险，全部修复 |
+| CKL-002 | 完成 | `da7d36e` | 领域模型、状态机、Scope、证据、GLOBAL 晋升 | 35 项 Domain 测试；行 93.84%、分支 93.87%；1 高/2 中风险，全部修复 |
+| CKL-003 | 完成 | `7d2dbe7` | 三类版本化 JSON Schema、Ajv 解析与诊断 | 46 项模块测试；100,000 次 Event 解析约 124,592 ops/s；1 高/2 中风险，全部修复 |
+| CKL-004 | 完成 | `54fd84a` | 六类策略、YAML/对象加载、原子激活、安全默认值 | 82 项模块测试；配置行 99.30%、分支 90.40%；1 高/3 中风险，全部修复 |
+
+## 2. P0 Gate 证据
+
+在固定的 Node.js 24.18.0 LTS 与 npm 11.11.0 环境执行了从锁文件开始的完整验证：
+
+```text
+npm ci
+npm run clean
+npm run check
+```
+
+结果：
+
+| Gate | 结果 |
+|---|---|
+| 干净安装 | 171 packages installed，0 vulnerabilities |
+| Workspace 架构 | 5 个 workspace 依赖方向通过；循环、越层和未声明依赖检查通过 |
+| Lint / Build / Test Typecheck | 全部通过 |
+| 架构测试 | 9/9 通过 |
+| 模块测试 | 82/82 通过，8 个 Test Files 全部通过 |
+| 整体覆盖率 | Lines 97.89%、Branches 90.67%、Functions 100%、Statements 95.94% |
+| Domain Gate | Lines 93.84%、Branches 93.87%，高于 90% 门槛 |
+| Schema Fixture | Event、Candidate、Asset 的有效/无效/版本/扩展/交叉字段 Fixture 全部通过 |
+| 供应链审计 | npm 官方 registry：0 vulnerabilities |
+
+## 3. P0 验收映射
+
+| 验收项 | 证据 | 结论 |
+|---|---|---|
+| 工程可在干净环境构建 | `npm ci` 后执行 clean + check | 通过 |
+| 包与应用可独立编译 | TypeScript Project References 构建 5 个 workspace | 通过 |
+| Domain 与基础设施隔离 | package allowlist + TypeScript AST import checker | 通过 |
+| 状态与 GLOBAL 晋升不变量 | 49 条状态组合及晋升正反测试 | 通过 |
+| Schema 可版本化、可诊断 | `schemaVersion: 1`、JSON Path 诊断、未知版本拒绝 | 通过 |
+| 配置不能削弱安全门禁 | Zod literal/range/cross-field invariants 和攻击型 Fixture | 通过 |
+| 无效配置不影响运行快照 | validate-then-swap，失败保持上一对象身份 | 通过 |
+
+## 4. 已知边界与下一步
+
+- P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
+- 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
+- 下一任务是 CKL-101：实现 Codex Hook 输入适配器。它只负责把输入转换为标准事件；持久化、后台消费和知识注入仍保持关闭，直至各自 Gate 通过。

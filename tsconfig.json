@@ -13,6 +13,7 @@
     { "path": "./packages/candidate-repository" },
     { "path": "./packages/project-identity" },
     { "path": "./packages/scope-resolver" },
+    { "path": "./packages/evidence-engine" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

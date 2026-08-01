@@ -247,6 +247,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-303：Verifier Registry 和 MVP Verifiers
 
 **依赖**：CKL-002、CKL-204、CKL-301  
+**状态**：已完成  
 **交付物**：User、Symbol、File、Dependency、Config、Command、Test Verifier。  
 **验收条件**：
 

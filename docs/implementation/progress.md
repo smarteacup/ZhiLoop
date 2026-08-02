@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P5 进行中（P4 Gate 已通过，进入 CKL-501）  
+**当前里程碑**：P5 进行中（CKL-501 已完成，进入 CKL-502）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -38,6 +38,7 @@
 | CKL-404 | 完成 | `06d6f82` | 可关闭 VectorIndexPort、embeddingVersion/cache、内存 cosine 索引、原子 replace/remove | 390 项模块测试、38 项架构/Gate 测试；5 高/7 中风险，全部修复；专项行 98.92%、分支 91.30% |
 | CKL-405 | 完成 | `66e736e` | 八类治理命令、薄 CLI/复用服务、状态门禁、版本化审计/suppression、双源 doctor | 409 项模块测试、38 项架构/Gate 测试；6 高/9 中风险，全部修复；专项行 96.05%、分支 90.48% |
 | P4 Gate | 通过 | `1329968` | 对话→验证→Markdown→SQLite 全链、删除投影等价重建、500 例 Shadow Dataset | 409 项模块测试、40 项架构/Gate 测试；4 高/5 中风险，全部修复；错误自动确认率 0/300=0.00% |
+| CKL-501 | 完成 | `3444f55` | 精确 QueryContext、path/symbol/error/config 抽取、可信 project boundary、缺失上下文失败收窄 | 419 项模块测试、40 项架构/Gate 测试；5 高/8 中风险，全部修复；专项行 100%、分支 93.00%；10k prompt P95 0.100ms |
 
 ## 2. P0 Gate 证据
 
@@ -79,6 +80,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-501：解析 prompt/project/cwd/branch/path/symbol/error code/config key，缺失上下文必须安全降级且不得扩大 Scope。
+- 下一任务是 CKL-502：实现 Exact、FTS、Vector、Scope、Relation 多路召回和 RRF，旧版本去重且默认排除 STALE/SUPERSEDED。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

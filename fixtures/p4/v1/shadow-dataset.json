@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "p4-shadow-v1",
+  "groups": [
+    { "id": "supported-implementation", "count": 100, "kind": "IMPLEMENTATION", "probeStatus": "SUPPORTED", "expectedShouldPublish": true },
+    { "id": "supported-experience", "count": 100, "kind": "EXPERIENCE", "probeStatus": "SUPPORTED", "expectedShouldPublish": true },
+    { "id": "unknown-implementation", "count": 100, "kind": "IMPLEMENTATION", "probeStatus": "UNKNOWN", "expectedShouldPublish": false },
+    { "id": "refuted-implementation", "count": 100, "kind": "IMPLEMENTATION", "probeStatus": "REFUTED", "expectedShouldPublish": false },
+    { "id": "error-implementation", "count": 100, "kind": "IMPLEMENTATION", "probeStatus": "ERROR", "expectedShouldPublish": false }
+  ],
+  "gate": {
+    "maximumIncorrectAutoConfirmationRate": 0.01,
+    "minimumCases": 500
+  }
+}

@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P4 进行中（CKL-401 已完成，进入 CKL-402）  
+**当前里程碑**：P4 进行中（CKL-402 已完成，进入 CKL-403）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -33,6 +33,7 @@
 | CKL-305 | 完成 | `d2bf29e` | path/symbol/config/dependency 目标指纹、相关 ChangeSet、复验防伪与正文保留 STALE | 342 项模块测试、35 项架构/Gate 测试；5 高/7 中风险，全部修复；10,000 次中位 16.916ms |
 | P3 Gate | 通过 | `e156f77` | 代码/测试 Evidence 生命周期、项目隔离、结构化 GLOBAL 晋升、ERROR 失败关闭、正文保留 STALE | 342 项模块测试、38 项架构/Gate 测试；4 高/5 中风险，全部修复；整体行覆盖率 96.97%、分支 90.36% |
 | CKL-401 | 完成 | `f83067e` | 严格 Front Matter、原子 current、不可覆盖版本、手工编辑 trust 门禁、tombstone 与旧版恢复 | 358 项模块测试、38 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.41%、分支 85.30%；原子发布 P95 22.819ms |
+| CKL-402 | 完成 | `c32570f` | COMMITTED Markdown 到 SQLite 资产/版本/关系/Evidence/FTS5、事务 indexVersion、删除后重建 | 371 项模块测试、38 项架构/Gate 测试；7 高/8 中风险，全部修复；专项行 94.00%、分支 89.09%；100 资产重建 157.151ms |
 
 ## 2. P0 Gate 证据
 
@@ -74,6 +75,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-402：实现可从 COMMITTED Markdown 完整重建的 SQLite Registry Projection、FTS5、关系、Evidence 和事务化 indexVersion；MANUAL_EDIT/非法文档不得覆盖上一有效投影。
+- 下一任务是 CKL-403：实现 contentHash 增量 Indexer、稳定 chunkId、文件变动去抖合并和 5 秒可检索 SLA；重复/不变事件不得增加 indexVersion。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

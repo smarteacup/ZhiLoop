@@ -4,51 +4,51 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-402 | 25 次 |
-| 耗时 | 600s | 11120s |
-| 高风险 | 7 | 79 |
-| 中风险 | 8 | 124 |
+| CR 标识/次数 | CKL-403 | 26 次 |
+| 耗时 | 600s | 11720s |
+| 高风险 | 6 | 85 |
+| 中风险 | 9 | 133 |
 | 低风险 | 0 | 0 |
 | 修复程度 | 15/15（100%） | 100% |
 
 ## 改动说明
 
-新增 `@zhiloop/knowledge-registry`，把 COMMITTED Markdown 投影为 SQLite assets/versions/relations/evidence/FTS5 和单调 activeIndexVersion；提供增量 project、全量 rebuild、版本/边/证据读取和默认安全 FTS 查询。
+新增 `@zhiloop/knowledge-indexer`：contentHash 增量判断、稳定 heading chunk、合法手工内容 adoption、跨版本单资产事务替换、去抖/max-wait 调度和 Node 文件 watcher。Registry 新增原子 `replaceAssetHistory`。
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | 重建先清库再异步读取，失败丢失可用投影 | 事务前形成完整 Markdown 快照；断裂历史不触碰旧数据库。 |
-| 高 | MANUAL_EDIT 手工提升 Status/Scope/Evidence 进入索引 | 只投影 COMMITTED；手工 current 回退同版本 immutable。 |
-| 高 | 资产、关系、Evidence、FTS 分步提交产生混合版本 | 全部更新和 activeIndexVersion 切换位于同一事务。 |
-| 高 | 多实例在写锁外计算相同 indexVersion | 取得 BEGIN IMMEDIATE 后重新读取并递增 activeIndexVersion。 |
-| 高 | tombstone 仍残留 FTS 或默认 get | 激活 tombstone 删除 FTS；默认 get 双重过滤。 |
-| 高 | 幂等路径掩盖 payload/边/FTS 磁盘损坏 | 重复投影完整复核 payload hash、Schema、contentHash、列、边和 FTS。 |
-| 高 | 伪造 COMMITTED 结构与错误 documentPath 投影 | 校验 historyState、路径 asset/version 绑定、tombstone 成对字段和 canonical hash。 |
-| 中 | FTS 查询语法导致异常或注入 | Unicode token 提取、引号封装和参数绑定。 |
-| 中 | STALE/SUPERSEDED 默认召回 | 默认 SQL 只允许 ACCEPTED/IMPLEMENTED/VERIFIED。 |
-| 中 | 新投影 Migration 覆盖 Ledger/Candidate 版本 | 独立 component meta，拒绝高版本，不使用 PRAGMA user_version。 |
-| 中 | 版本跳号或同版本冲突 | 增量要求 v1 起步且严格 +1；immutable hash 冲突失败。 |
-| 中 | rebuild 删除共库非投影表 | 只清理五张投影表；sentinel 共存测试通过。 |
-| 中 | 数据库权限泄漏 | 非内存文件 chmod 0600。 |
-| 中 | 查询/结果无界 | query 2,000 chars、30 tokens、limit 1～100。 |
-| 中 | 全量重建随资产增长阻塞常态路径 | 100 资产 157.151ms；常态由 CKL-403 contentHash 增量更新。 |
+| 高 | 持续 watcher 事件不断重置 debounce，资产永不生效 | 独立 2s max-wait，不被后续事件重置。 |
+| 高 | 手工 VERIFIED/Scope/Evidence 提升被自动 adoption | 复用 CKL-401 protected trust gate，失败 SKIPPED_UNSAFE 且旧投影保留。 |
+| 高 | 合并事件跨多个版本时逐个切换中间索引 | `replaceAssetHistory` 在单事务中替换 1..N 和 active。 |
+| 高 | 断裂/非法历史先删除旧投影 | 全部版本事务前读取；失败返回诊断，不触碰 SQLite。 |
+| 高 | Chunk sink 失败后 contentHash 被视为完成，永不重试 | 独立 sink 状态；SQLite 不回滚，下一事件只重试 chunks。 |
+| 高 | watcher 路径越界映射其他资产 | root-relative、固定 assets 布局、safe assetId/version 文件白名单。 |
+| 中 | 重复/乱序事件重复索引 | batch Set 去重，最终以 current/contentHash 为准。 |
+| 中 | 资产异常中断同批其他资产 | syncMany 逐资产故障隔离和结构化诊断。 |
+| 中 | 未变段落跨版本 chunkId 抖动 | ID 排除 version，绑定 heading occurrence、part 和内容 hash。 |
+| 中 | current 物理删除误当 tombstone | 只接受显式 tombstone；删除/非法 current 保持旧投影。 |
+| 中 | 调度器关闭后仍有后台写 | close 清 timer 并等待在途 batch，可选择丢弃 pending。 |
+| 中 | watcher 异步 error 未处理导致进程崩溃 | 内部 error listener 保存 lastError，并提供 onError 回调。 |
+| 中 | fs.watch 重复 adoption 自激 | adoption 产生的事件命中相同 contentHash，UNCHANGED 不增 indexVersion。 |
+| 中 | chunk 过大或空正文 | 200～20,000 chars 硬边界、段落切分、summary fallback。 |
+| 中 | 新 Registry API 覆盖率回退 | 补充连续性、active 匹配、成功替换专项；Registry Lines 94.52%。 |
 
 ## 配置、兼容性与性能检查
 
-新增独立 Migration v1，无环境变量、Hook、Daemon 或用户配置。数据库可与其他组件同文件共存。100 资产/100 版本全量重建 157.151ms；瓶颈在 Markdown YAML/Schema/hash 读取校验，SQLite 单事务未形成显著瓶颈。
+没有数据库 Migration、环境变量或用户配置。新增 watcher/scheduler 仅在装配显式 start 后运行，本次未启动 Daemon、未监控用户目录。10 次内容变化、每次 100 个重复通知：Median 286.239ms、P95 295.755ms；默认 250ms debounce 是主要延迟，远低于 5s SLA。
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | 13/13；Lines 94.00%、Branches 89.09%、Functions 100% |
-| 全仓 | 371/371 模块；38/38 架构/Gate |
-| 整体覆盖率 | Lines 96.82%、Branches 89.86% |
-| Workspace | 19 个 workspace，依赖方向和源码 import 通过 |
+| Indexer 专项 | 12/12；Lines 97.98%、Branches 92.85% |
+| Registry 扩展 | 14/14；Lines 94.52%、Branches 89.83% |
+| 全仓 | 384/384 模块；38/38 架构/Gate |
+| Workspace | 20 个 workspace，依赖方向和源码 import 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-402 的四项验收条件全部满足，15 项风险已修复，无未解决高/中风险。可以进入 CKL-403 Incremental Indexer。
+CKL-403 的三项验收条件全部满足，15 项风险已修复，无未解决高/中风险。可以进入 CKL-404 VectorIndexPort。

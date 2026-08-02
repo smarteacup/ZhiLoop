@@ -311,4 +311,24 @@ describe("SqliteKnowledgeRegistryProjection", () => {
     expect(() => projection.projectCurrent(record)).toThrow("derived edges");
     projection.close();
   });
+
+  it("atomically replaces one contiguous asset history for the incremental indexer", async () => {
+    const markdown = new MarkdownKnowledgeRepository(markdownRoot);
+    const first = await publish(markdown, asset("knowledge.registry.replace-history"));
+    const second = await publish(markdown, asset(first.asset.id, {
+      version: 2, title: "Replacement history v2", updatedAt: at2, correlationId: "replace-v2",
+    }), 1);
+    const firstVersion = await markdown.readVersion(first.asset.id, 1);
+    const secondVersion = await markdown.readVersion(first.asset.id, 2);
+    if (!firstVersion.ok || !secondVersion.ok) throw new Error("fixture history missing");
+    const projection = new SqliteKnowledgeRegistryProjection(":memory:");
+    projection.projectCurrent(first);
+    expect(() => projection.replaceAssetHistory([], second)).toThrow("must not be empty");
+    expect(() => projection.replaceAssetHistory([secondVersion.value], second)).toThrow("contiguous");
+    expect(() => projection.replaceAssetHistory([firstVersion.value, secondVersion.value], first)).toThrow("latest immutable");
+    expect(projection.replaceAssetHistory([firstVersion.value, secondVersion.value], second))
+      .toMatchObject({ status: "PROJECTED", indexVersion: 2, assetVersion: 2 });
+    expect(projection.listVersions(first.asset.id).map((item) => item.asset.version)).toEqual([1, 2]);
+    expect(projection.search("Replacement")[0]?.asset.version).toBe(2);
+  });
 });

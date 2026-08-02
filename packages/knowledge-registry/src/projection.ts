@@ -461,6 +461,43 @@ export class SqliteKnowledgeRegistryProjection {
     });
   }
 
+  replaceAssetHistory(
+    versions: readonly StoredKnowledgeVersion[],
+    active: StoredKnowledgeVersion,
+  ): ProjectionWriteResult {
+    this.#assertOpen();
+    if (versions.length === 0) throw new KnowledgeProjectionConflictError("asset history must not be empty");
+    versions.forEach((record, index) => {
+      prepare(record);
+      if (record.asset.id !== active.asset.id || record.asset.version !== index + 1) {
+        throw new KnowledgeProjectionConflictError("asset history must be contiguous and belong to one asset");
+      }
+    });
+    prepare(active);
+    const last = versions.at(-1) as StoredKnowledgeVersion;
+    if (
+      last.asset.version !== active.asset.version || last.asset.contentHash !== active.asset.contentHash ||
+      last.tombstone !== active.tombstone || last.tombstoneReason !== active.tombstoneReason
+    ) {
+      throw new KnowledgeProjectionConflictError("active Markdown record must match the latest immutable version");
+    }
+    return this.#transaction(() => {
+      const indexVersion = this.#nextIndexVersion();
+      this.#database.prepare("DELETE FROM knowledge_fts WHERE asset_id = ?").run(active.asset.id);
+      this.#database.prepare("DELETE FROM knowledge_assets WHERE asset_id = ?").run(active.asset.id);
+      this.#database.prepare("DELETE FROM knowledge_versions WHERE asset_id = ?").run(active.asset.id);
+      for (const version of versions) this.#insertVersion(version, indexVersion);
+      this.#activate(active, indexVersion);
+      this.#setActiveIndexVersion(indexVersion);
+      return deepFreeze({
+        status: "PROJECTED" as const,
+        indexVersion,
+        assetId: active.asset.id,
+        assetVersion: active.asset.version,
+      });
+    });
+  }
+
   async rebuildFromMarkdown(repository: MarkdownKnowledgeRepository): Promise<ProjectionRebuildResult> {
     this.#assertOpen();
     const snapshots: ProjectionSnapshot[] = [];

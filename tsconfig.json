@@ -18,6 +18,7 @@
     { "path": "./packages/invalidation-engine" },
     { "path": "./packages/markdown-repository" },
     { "path": "./packages/knowledge-registry" },
+    { "path": "./packages/knowledge-indexer" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

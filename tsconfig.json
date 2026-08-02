@@ -16,6 +16,7 @@
     { "path": "./packages/evidence-engine" },
     { "path": "./packages/evidence-policy" },
     { "path": "./packages/invalidation-engine" },
+    { "path": "./packages/markdown-repository" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

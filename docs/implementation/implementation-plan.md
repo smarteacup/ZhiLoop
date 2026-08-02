@@ -295,6 +295,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-401：Markdown Knowledge Repository
 
 **依赖**：CKL-003、CKL-304  
+**状态**：已完成  
 **交付物**：Front Matter 校验、原子写入、版本文件、tombstone。  
 **验收条件**：
 

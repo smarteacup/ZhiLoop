@@ -4,37 +4,41 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | P4 Gate | 29 次 |
-| 耗时 | 360s | 13200s |
-| 高风险 | 4 | 100 |
-| 中风险 | 5 | 154 |
+| CR 标识/次数 | CKL-501 | 30 次 |
+| 耗时 | 420s | 13620s |
+| 高风险 | 5 | 105 |
+| 中风险 | 8 | 162 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 9/9（100%） | 100% |
+| 修复程度 | 13/13（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | Gate 直接构造最终 Asset，绕过对话与验证链 | 从录制 Hook 生成 Episode，经真实 Compiler/Scope/Verifier/Policy 后才 materialize。 |
-| 高 | 全部不发布也能得到 0% 误确认 | Dataset 强制 200 个正例且 false negative 必须为 0。 |
-| 高 | 重建只比较搜索命中，可能丢版本或边 | 比较当前资产、immutable versions、Relation、Evidence 与 FTS 结果。 |
-| 高 | Shadow 评估意外调用 Publisher | Runner 只收集 shouldPublish 决策并断言可见写入数为 0。 |
-| 中 | 错误率使用总样本稀释负例风险 | 分母固定为所有 expectedShouldPublish=false 的 300 个负例。 |
-| 中 | ERROR 被错误当成 UNKNOWN 或支持证据 | 独立 100 例异常 Probe，真实 Registry 隔离后均不得发布。 |
-| 中 | indexVersion 重建后不同导致假失败 | 等价快照排除运行序号，只比较业务内容。 |
-| 中 | 临时 Gate 数据污染工作区/用户目录 | 仅 mkdtemp 写入并 finally 清理，不触及用户配置。 |
-| 中 | 远端模型使 Gate 不可复现 | 使用确定性模型 Port；Schema 与后续领域/存储路径仍为真实实现。 |
+| 高 | project 缺失时误放宽为 GLOBAL/任意项目 | boundary 同时关闭 project/global，保留 NO_TRUSTED_PROJECT_CONTEXT。 |
+| 高 | `..`/仓库外绝对路径污染 Exact/Scope 通道 | 词法拒绝 traversal；绝对路径必须在可信 repositoryRoot 内。 |
+| 高 | repositoryRoot 为 `/`、盘符根或含 traversal 形成宽边界 | 明确拒绝根目录、盘符根、相对根和 dot segments。 |
+| 高 | 模型/规范化改写 symbol/error/config 导致精确召回丢失 | 每个 term 同时保存 exact 与 canonical，不做同义语义改写。 |
+| 高 | 超长 prompt/大量 hints 造成正则与内存 DoS | prompt 100k、term 1k、每类 100 的硬边界。 |
+| 中 | 独立 branch 覆盖可信 ProjectContext branch | ProjectContext 优先，冲突记录 BRANCH_INPUT_CONFLICT。 |
+| 中 | cwd 是相对路径或指向仓库外 | cwd 必须安全绝对；有 root 时必须位于 root 内。 |
+| 中 | 显式与 prompt token 重复放大权重 | 按 type+canonical 去重，显式 hint 优先保留。 |
+| 中 | 无效 hint 静默消失无法解释 | 每类输出 INVALID_*_HINT_IGNORED reason code。 |
+| 中 | term 超限静默截断 | 输出 *_LIMIT_REACHED reason code。 |
+| 中 | Unicode 外观差异造成匹配漂移 | canonical 仅 NFKC，exact 原样保留。 |
+| 中 | 下游修改 context 扩大边界 | 输出递归 freeze，数组/term/boundary 均不可变。 |
+| 中 | Resolver 偷跑 Git/文件扫描/模型 | workspace allowlist 仅 Domain，运行时无外部/Node 依赖。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | P4 Gate 2/2；500 个 Shadow cases |
-| 全仓 | 409/409 模块；40/40 架构/Gate |
-| 整体覆盖率 | Lines 97.00%、Branches 90.14% |
-| Workspace | 22 个，依赖/import policy 通过 |
+| 专项 | 10/10；Lines 100%、Branches 93.00% |
+| 全仓 | 419/419 模块；40/40 架构/Gate |
+| 整体覆盖率 | Lines 97.09%、Branches 90.26% |
+| Workspace | 23 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-P4 Gate 三项验收满足，Shadow 错误自动确认率 0.00%，9 项风险全部修复，无遗留 actionable finding。可以进入 CKL-501。
+CKL-501 两项验收满足，13 项风险全部修复，无遗留 actionable finding。可以进入 CKL-502。

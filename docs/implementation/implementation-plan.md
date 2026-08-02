@@ -362,6 +362,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-501：Query Context Resolver
 
 **依赖**：CKL-301、CKL-402  
+**状态**：已完成  
 **交付物**：prompt、project、cwd、branch、path、symbol、错误码解析。  
 **验收条件**：
 

@@ -1,2 +1,1 @@
-export {};
-
+export * from "./knowledge-cli.js";

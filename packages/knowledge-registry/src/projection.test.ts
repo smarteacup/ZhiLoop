@@ -85,6 +85,9 @@ describe("SqliteKnowledgeRegistryProjection", () => {
     expect(projection.getRelations(record.asset.id, 1).relations).toEqual(record.asset.relations);
     expect(projection.getEvidence(record.asset.id, 1).evidence).toEqual(record.asset.evidence);
     expect(projection.listVersions(record.asset.id)).toHaveLength(1);
+    expect(projection.listAssets()).toMatchObject([{ asset: { id: record.asset.id }, tombstone: false }]);
+    expect(projection.listAssets({ offset: 1 })).toEqual([]);
+    expect(() => projection.listAssets({ offset: -1 })).toThrow("non-negative");
     projection.close();
   });
 
@@ -136,6 +139,8 @@ describe("SqliteKnowledgeRegistryProjection", () => {
     expect(projection.search("TitleBeacon")).toEqual([]);
     expect(projection.getAsset(first.asset.id)).toBeUndefined();
     expect(projection.getAsset(first.asset.id, true)).toMatchObject({ tombstone: true, tombstoneReason: "retired" });
+    expect(projection.listAssets()).toEqual([]);
+    expect(projection.listAssets({ includeTombstones: true })).toMatchObject([{ asset: { id: first.asset.id }, tombstone: true }]);
     expect(projection.listVersions(first.asset.id).map((item) => item.tombstone)).toEqual([false, true]);
   });
 

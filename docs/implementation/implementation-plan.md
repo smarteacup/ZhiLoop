@@ -341,6 +341,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-405：知识治理 CLI
 
 **依赖**：CKL-401、CKL-402  
+**状态**：已完成  
 **交付物**：list/show/diff/trace/mark-stale/suppress/rebuild/doctor。  
 **验收条件**：
 

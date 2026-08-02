@@ -20,6 +20,7 @@
     { "path": "./packages/knowledge-registry" },
     { "path": "./packages/knowledge-indexer" },
     { "path": "./packages/vector-index" },
+    { "path": "./packages/knowledge-governance" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

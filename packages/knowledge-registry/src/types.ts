@@ -40,6 +40,12 @@ export interface KnowledgeSearchOptions {
   readonly includeInactive?: boolean;
 }
 
+export interface KnowledgeListOptions {
+  readonly includeTombstones?: boolean;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
 export interface KnowledgeSearchResult {
   readonly asset: KnowledgeAsset;
   readonly rank: number;

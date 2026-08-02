@@ -15,6 +15,7 @@ import {
   KnowledgeProjectionConflictError,
   KnowledgeProjectionRebuildError,
   type KnowledgeProjectionOptions,
+  type KnowledgeListOptions,
   type KnowledgeSearchOptions,
   type KnowledgeSearchResult,
   type ProjectedEvidence,
@@ -29,6 +30,8 @@ import {
 const CURRENT_MIGRATION_VERSION = 1;
 const DEFAULT_SEARCH_LIMIT = 20;
 const MAX_SEARCH_LIMIT = 100;
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 1_000;
 const MAX_QUERY_CHARS = 2_000;
 const DEFAULT_ELIGIBLE_STATUSES = ["ACCEPTED", "IMPLEMENTED", "VERIFIED"] as const;
 
@@ -559,6 +562,24 @@ export class SqliteKnowledgeRegistryProjection {
     const row = this.#assetRow(assetId);
     if (row === undefined || (!includeTombstone && row.tombstone === 1)) return undefined;
     return projected(row);
+  }
+
+  listAssets(options: KnowledgeListOptions = {}): readonly ProjectedKnowledgeAsset[] {
+    this.#assertOpen();
+    const limit = options.limit ?? DEFAULT_LIST_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT) {
+      throw new Error(`limit must be between 1 and ${MAX_LIST_LIMIT}`);
+    }
+    const offset = options.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("offset must be a non-negative safe integer");
+    const tombstoneClause = options.includeTombstones === true ? "" : "WHERE tombstone = 0";
+    const rows = this.#database.prepare(`
+      SELECT asset_id, current_version, tombstone, tombstone_reason, payload_json, payload_hash,
+             content_hash, status, subject_key, kind, index_version
+      FROM knowledge_assets ${tombstoneClause}
+      ORDER BY subject_key ASC, asset_id ASC LIMIT ? OFFSET ?
+    `).all(limit, offset) as unknown as AssetRow[];
+    return deepFreeze(rows.map(projected));
   }
 
   getVersion(assetId: string, version: number): ProjectedKnowledgeVersion | undefined {

@@ -4,46 +4,43 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-502 | 31 次 |
-| 耗时 | 780s | 14400s |
-| 高风险 | 8 | 113 |
-| 中风险 | 10 | 172 |
+| CR 标识/次数 | CKL-503 | 32 次 |
+| 耗时 | 480s | 14880s |
+| 高风险 | 6 | 119 |
+| 中风险 | 9 | 181 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 18/18（100%） | 100% |
+| 修复程度 | 15/15（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | BM25/cosine/exact 原始分数直接相加 | 通道内排序后只用 rank，RRF contribution 为 `1/(k+rank)`。 |
-| 高 | Scope 作为弱权重被高分结果抵消 | Scope 是融合前强制门禁，且 Relation 目标二次过滤。 |
-| 高 | 调用者伪造 QueryContext boundary 跨项目 | 校验 boundary 与可信 project/task 一致，不一致整请求拒绝。 |
-| 高 | FTS/Port 返回旧版本导致历史知识召回 | 每个 source hit 与 getCurrent 的 version+contentHash 对照。 |
-| 高 | Vector 旧 chunk 或 supersede chunk 继续命中 | chunk version+assetContentHash 必须等于 current；同 asset 去重。 |
-| 高 | Relation 从项目 A 搭桥到项目 B | 仅 eligible seed 扩展，target 再走 Scope gate。 |
-| 高 | STALE/SUPERSEDED/tombstone 默认进入结果 | eligibility 只允许 ACCEPTED/IMPLEMENTED/VERIFIED；tombstone 无条件拒绝。 |
-| 高 | NaN/负 rank 污染 RRF 为 NaN | Port hit 强制 positive safe rank、finite rawScore 和有界 reason。 |
-| 中 | 一个可选通道失败拖垮召回 | 每通道隔离捕获并返回 CHANNEL_FAILED，保留其他结果。 |
-| 中 | embedding/index 版本不一致产生无意义相似度 | 版本不等时不 embed/search，记录 VECTOR_VERSION_MISMATCH。 |
-| 中 | 超长 prompt 直接发送 embedding 增加成本 | Vector query 上限 20k，超限仅关闭该通道。 |
-| 中 | 同资产多 chunk/多 query 重复加分 | 各通道先按 assetId 去重，跨通道才累计一次 contribution。 |
-| 中 | Relation 从不合格结果出发 | seed 来自 Exact/FTS/Vector 经 status+scope 过滤后的 provisional RRF。 |
-| 中 | 通道无法独立关闭 | options 与 policy topK 均可逐通道关闭，并保留诊断。 |
-| 中 | 全表扫描固定 1,000 截断 | SQLite Adapter 以 1,000 条分页读至末页。 |
-| 中 | 融合输出无界 | 每通道 <=100，最终 <= rerank.candidates <=100。 |
-| 中 | 错误消息携带控制字符/超长供应商正文 | diagnostic 统一去控制字符并截断 500。 |
-| 中 | 下游修改 contribution/Scope 事实 | RetrievalResult 递归 freeze。 |
+| 高 | Port 返回未知/重复/缺失 ID 注入或删除候选 | 输出必须恰好覆盖输入 ID 集合且每个一次，否则完整 fallback。 |
+| 高 | Port 返回完整 Asset 篡改 Scope/Status/Evidence | Port 只返回 assetId/score/reason；最终 Asset 来自 CKL-502 原对象克隆。 |
+| 高 | Rerank 异常导致结果为空或顺序改变 | unavailable/error/timeout/invalid output 均按 originalRank fallback。 |
+| 高 | 超时后模型请求仍持续消耗 | deadline 触发 AbortController，Port 可立即取消底层调用。 |
+| 高 | 同 subject 多个 id 同时进入注入 | 最终排序后按 subjectKey 保留最高项，记录 kept/removed。 |
+| 高 | 将 body/Episode 正文发送给 Rerank 模型 | 输入只含 title/summary/边界/证据 ID/通道解释，不含 body/source episode。 |
+| 中 | NaN/Infinity/越界 score 破坏排序 | score 必须 finite 且在 [-1,1]。 |
+| 中 | 无理由的模型排序不可解释 | 每项强制 1～10 个受限 reason codes。 |
+| 中 | Port 接收超过 30 候选造成上下文膨胀 | originalRank 排序后硬截前 30，并输出 limit 诊断。 |
+| 中 | 超长 query 进入 Port | 20k 上限，超限原样 fallback。 |
+| 中 | deepFreeze 反向冻结调用者对象 | Port 输入和最终输出先 clone，再冻结副本。 |
+| 中 | score 并列导致非确定顺序 | originalRank 后 assetId 稳定 tie-break。 |
+| 中 | provider 错误包含控制字符/长正文 | diagnostic 去控制字符并截断 500。 |
+| 中 | timer 未释放造成进程滞留 | success/error/timeout 均在 finally clearTimeout。 |
+| 中 | 输出解释丢失 RRF 贡献 | 每项保留 originalRank、Scope/Status/Evidence 和 contributions。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | 12/12；Lines 98.13%、Branches 89.04% |
-| 全仓 | 431/431 模块；40/40 架构/Gate |
-| 整体覆盖率 | Lines 97.13%、Branches 90.21% |
-| Workspace | 24 个，依赖/import policy 通过 |
+| 专项 | 15/15；Lines 100%、Branches 97.29% |
+| 全仓 | 446/446 模块；40/40 架构/Gate |
+| 整体覆盖率 | Lines 97.20%、Branches 90.35% |
+| Workspace | 25 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-502 四项验收满足，18 项风险全部修复，无遗留 actionable finding。可以进入 CKL-503。
+CKL-503 三项验收满足，15 项风险全部修复，无遗留 actionable finding。可以进入 CKL-504。

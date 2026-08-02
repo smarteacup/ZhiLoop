@@ -23,6 +23,7 @@
     { "path": "./packages/knowledge-governance" },
     { "path": "./packages/query-context" },
     { "path": "./packages/retrieval-engine" },
+    { "path": "./packages/knowledge-reranker" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

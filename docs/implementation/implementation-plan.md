@@ -437,6 +437,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-507：运行中知识 MCP
 
 **依赖**：CKL-402、CKL-504、CKL-505  
+**状态**：已完成  
 **交付物**：`ckl.search`、`ckl.get`、`ckl.related`、`ckl.check`。  
 **验收条件**：
 

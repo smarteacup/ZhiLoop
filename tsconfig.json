@@ -27,6 +27,7 @@
     { "path": "./packages/context-orchestrator" },
     { "path": "./packages/retrieval-evaluation" },
     { "path": "./packages/codex-context-injection" },
+    { "path": "./packages/knowledge-mcp" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

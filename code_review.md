@@ -4,45 +4,44 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-506 | 35 次 |
-| 耗时 | 480s | 16260s |
-| 高风险 | 8 | 140 |
-| 中风险 | 9 | 208 |
+| CR 标识/次数 | CKL-507 | 36 次 |
+| 耗时 | 420s | 16680s |
+| 高风险 | 7 | 147 |
+| 中风险 | 9 | 217 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 17/17（100%） | 100% |
+| 修复程度 | 16/16（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | 项目 A Envelope 注入项目 B | Prompt fingerprint、project/task、每项 Scope 与 Trace 双重一致性校验。 |
-| 高 | 500ms 超时或 Provider 异常阻断原始 prompt | 所有失败结果无 hook output；序列化为空 stdout，Codex 继续。 |
-| 高 | Provider 响应 Abort 的 rejection 抢先导致误分类 | timeout flag 在 Abort 前设置，catch 以该 flag 为准。 |
-| 高 | OFF 回滚后在途 Provider 迟到仍注入 | 请求完成前重读 revision/mode；变化即 ROLLED_BACK。 |
-| 高 | 未通过 Golden Gate 直接启用 ACTIVE | ACTIVE 强制 passing Evidence、dataset version 和 SHA-256 config fingerprint。 |
-| 高 | REFERENCE 中 instruction-like 文本被当成命令 | 显式 Authority 语义、JSON 数据边界和用户/高优先级指令优先声明。 |
-| 高 | Envelope 与 Trace 注入集合被替换 | ID/版本/Scope/Authority/detailLevel 顺序完全一致才渲染。 |
-| 高 | Hook 输出使用错误 Codex 事件契约 | 对照当前官方 Manual，仅输出支持的 `continue` 和 `hookSpecificOutput.additionalContext`。 |
-| 中 | Rollout Evidence 可由调用者事后修改 | activate 时 structuredClone，快照与嵌套 Evidence 递归 freeze。 |
-| 中 | 非法 Hook input 进入 Provider | 校验事件、session/turn/cwd/prompt、permission/model/transcript 边界。 |
-| 中 | Provider error 含控制字符或长敏感正文 | diagnostic 去 NUL/换行、限制 500，且不序列化到 stdout。 |
-| 中 | timer 保持进程或完成后误触发 | timer `unref` 并在 finally 清理。 |
-| 中 | 空 Envelope 产生无意义 developer context | 无知识且无 Task Contract 时返回 NO_CONTEXT。 |
-| 中 | Task Contract 被误当成动态知识替代品 | 仍是独立 JSON 区块；没有知识时可单独注入。 |
-| 中 | Feature revision 回退或重复 | revision 必须为递增安全整数。 |
-| 中 | Trace/Run ID 包含控制字符污染日志 | 输出前按有限单行文本校验。 |
-| 中 | Renderer 字段顺序不稳定影响快照与调试 | 对对象 key 做稳定排序后 JSON 序列化。 |
+| 高 | Search/Related 命中对象伪造 Scope/Status/正文 | 对命中 ID 批量 current；输出只使用 current 对象字段。 |
+| 高 | 项目 A MCP 返回项目 B 知识 | 四工具统一执行 QueryContext Scope gate，USER/TEAM 当前拒绝。 |
+| 高 | `ckl.get` 展开旧版本 | 请求 version 必须等于 current，变化时只返回 VERSION_MISMATCH。 |
+| 高 | Related 越界 seed 扩散到关系图 | 所有 seed 先做 current + status + scope 资格校验。 |
+| 高 | MCP 故障拖垮主动注入 | 两包双向无依赖，架构测试固定；工具错误不进入注入链。 |
+| 高 | 完整 Envelope 重复注入导致上下文膨胀 | search/related 排除已知 id@version；get 只返回 content/evidence 新增字段。 |
+| 高 | Backend 对同 ID 声称多个 current | version/contentHash 任一冲突即拒绝整次调用。 |
+| 中 | known 旧版本阻止新版本返回 | 去重键包含 id@version，current 新版本仍可返回。 |
+| 中 | 自然语言 query 或批量输入无界 | query 20k、items 8、seed 20、known/check 100 硬限制。 |
+| 中 | 非法 Trace ID 污染工具追溯 | 所有 Backend result 先校验有限单行 ID。 |
+| 中 | Get 重复 title/summary/scope 等已知字段 | ExpansionDelta 类型和契约测试只允许 L3 新增内容。 |
+| 中 | Check 无法解释不合格原因 | 当前版本、状态、Scope 分别输出 reason codes。 |
+| 中 | 取消请求仍触发 Backend | 四工具入口先检查 AbortSignal，测试验证零调用。 |
+| 中 | 重复 seed/check ID 造成歧义 | 输入集合强制唯一。 |
+| 中 | 调用者修改工具结果污染缓存 | 全部结果递归 freeze。 |
+| 中 | Relation 输出重复 seed | 显式 seed 集合过滤后再做 known 去重。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | Codex Context Injection 14/14；Lines 95.94%、Branches 88.42% |
-| 全仓 | 485/485 模块；40/40 架构/Gate |
-| 整体覆盖率 | Lines 97.04%、Branches 90.21% |
-| Workspace | 28 个，依赖/import policy 通过 |
+| 专项 | Knowledge MCP 6/6；Lines 97.16%、Branches 88.18% |
+| 全仓 | 491/491 模块；41/41 架构/Gate |
+| 整体覆盖率 | Lines 97.04%、Branches 90.16% |
+| Workspace | 29 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-506 七项验收满足，17 项风险全部修复，无遗留 actionable finding。可以进入 CKL-507。
+CKL-507 五项验收满足，16 项风险全部修复，无遗留 actionable finding。可以进入 P5 Gate。

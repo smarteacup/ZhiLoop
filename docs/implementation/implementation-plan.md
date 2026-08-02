@@ -578,6 +578,18 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - Worker 并发触发只执行一次，Cursor 不允许倒退，失败进入健康快照。
 - Daemon 只编排现有公开端口，不复制领域实现。
 
+### CKL-705：默认 Codex Exec 模型适配器
+
+**依赖**：CKL-202、CKL-203、CKL-X01  
+**状态**：已完成  
+**交付物**：`@zhiloop/model-codex-exec`、非交互 read-only `codex exec`、Schema/result 临时文件、JSONL 脱敏诊断、进程取消和有界输出。  
+**验收条件**：
+
+- `--output-schema` 与 `--output-last-message` 提供唯一结构化结果，JSONL 事件只用于诊断。
+- 子进程禁用 shell、显式只读沙箱，超时/取消能终止运行，临时文件最终清理。
+- 诊断不保留 Prompt、对话正文、命令、reasoning、结果或 stderr 原文。
+- Compiler/Domain 不依赖 Codex CLI 实现，替换 App Server 只需增加同端口 Adapter。
+
 ## 11. 横切任务
 
 ### CKL-X01：安全和脱敏

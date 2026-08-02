@@ -11,6 +11,7 @@
 | ZhiLoop Sidecar | >=0.1.0、major=0 | 不低于最低版本且 major 相同 | 不自动替换已运行进程 |
 | Sidecar Protocol | 1 | 必须精确匹配 | 拒绝连接 |
 | Codex CLI | >=0.144.4（已测试下限） | 需要 Plugin v1、Hooks v1、App Server v2 | 启用前 doctor 检查 |
+| Codex Exec Extraction | 当前 CLI contract | 需要 `--sandbox read-only`、`--ephemeral`、`--json`、`--output-schema`、`--output-last-message` | 编译批次标记可重试/拒绝，不产生部分 Candidate |
 | Codex Hook Schema | `codex-hooks-v1` | 必须精确匹配 | Hook launcher 空输出放行 |
 | Codex App Server | `codex-app-server-v2` | 必须精确匹配 | 停止结构化实时采集/回填，不回退伪造事件 |
 | Event/Candidate/Asset Schema | 1 | Reader 只接受已注册版本 | 拒绝该记录并返回诊断 |

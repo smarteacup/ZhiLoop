@@ -1,0 +1,31 @@
+{
+  "name": "@zhiloop/knowledge-registry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/domain",
+      "@zhiloop/markdown-repository",
+      "@zhiloop/schemas"
+    ],
+    "allowedExternalDependencies": [
+      "node:*"
+    ]
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/markdown-repository": "0.0.0",
+    "@zhiloop/schemas": "0.0.0"
+  }
+}

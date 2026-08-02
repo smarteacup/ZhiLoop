@@ -307,6 +307,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-402：SQLite Registry Projection 和 FTS5
 
 **依赖**：CKL-401  
+**状态**：已完成  
 **交付物**：资产、版本、关系、证据、FTS 和 indexVersion。  
 **验收条件**：
 

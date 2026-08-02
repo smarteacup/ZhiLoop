@@ -78,7 +78,7 @@ Implementation 的生命周期有意最高为 `IMPLEMENTED`，不能为了字面
 | 闭环循环 | 0 | 0 |
 | npm high+ vulnerabilities | 0 | 0 |
 
-最终单流 Gate 单次约 143～189ms；同仓 P4/P5/P6 组合回归和完整 `npm run check` 均重复通过。
+最终单流 Gate 单次约 143～201ms；同仓 P4/P5/P6 组合回归和完整 `npm run check` 均重复通过。
 
 ## 5. 最终 Review
 

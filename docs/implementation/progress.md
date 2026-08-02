@@ -57,7 +57,7 @@
 | CKL-703 | 完成 | `b0effbc` | Codex 原生插件、CCM 可逆 Hook 合并、sidecar 生命周期和兼容声明 | 604 项模块测试、47 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 94.98%、分支 88.93% |
 | CKL-704 | 完成 | `749e085` | Daemon 生命周期、Hook/MCP 快路径、Worker 单飞和结构化健康 | 614 项模块测试、48 项架构/Gate 测试；8 高/7 中风险，全部修复；专项行 100%、分支 94.11% |
 | CKL-705 | 完成 | `a2b5c00` | 默认 read-only `codex exec`、结构化 Schema/result、JSONL 脱敏诊断、取消和有界进程输出 | 623 项模块测试、50 项架构/Gate 测试；专项行 96.00%、分支 88.46%；O(n²) 输出统计瓶颈已修复 |
-| MVP Final Gate | 通过 | `06149cc` | 同一任务贯穿捕获、编译、Evidence、Markdown/SQLite、召回、L2 注入、MCP 展开和 Stop 一次续跑 | 623 项模块测试、51 项架构/Gate 测试；同流约 143～189ms；无间接拼接证据 |
+| MVP Final Gate | 通过 | `06149cc` | 同一任务贯穿捕获、编译、Evidence、Markdown/SQLite、召回、L2 注入、MCP 展开和 Stop 一次续跑 | 623 项模块测试、51 项架构/Gate 测试；同流约 143～201ms；无间接拼接证据 |
 
 ## 2. P0 Gate 证据
 

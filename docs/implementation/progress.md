@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P4 进行中（CKL-403 已完成，进入 CKL-404）  
+**当前里程碑**：P4 进行中（CKL-404 已完成，进入 CKL-405）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -35,6 +35,7 @@
 | CKL-401 | 完成 | `f83067e` | 严格 Front Matter、原子 current、不可覆盖版本、手工编辑 trust 门禁、tombstone 与旧版恢复 | 358 项模块测试、38 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.41%、分支 85.30%；原子发布 P95 22.819ms |
 | CKL-402 | 完成 | `c32570f` | COMMITTED Markdown 到 SQLite 资产/版本/关系/Evidence/FTS5、事务 indexVersion、删除后重建 | 371 项模块测试、38 项架构/Gate 测试；7 高/8 中风险，全部修复；专项行 94.00%、分支 89.09%；100 资产重建 157.151ms |
 | CKL-403 | 完成 | `be5128a` | contentHash 增量、稳定 chunkId、跨版本单资产事务、去抖/max-wait、Node watcher | 384 项模块测试、38 项架构/Gate 测试；6 高/9 中风险，全部修复；Indexer 行 97.98%、分支 92.85%；100 重复通知 P95 295.755ms |
+| CKL-404 | 完成 | `06d6f82` | 可关闭 VectorIndexPort、embeddingVersion/cache、内存 cosine 索引、原子 replace/remove | 390 项模块测试、38 项架构/Gate 测试；5 高/7 中风险，全部修复；专项行 98.92%、分支 91.30% |
 
 ## 2. P0 Gate 证据
 
@@ -76,6 +77,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-404：定义可关闭的 VectorIndexPort、contentHash embedding 缓存、replace/remove 语义和失败降级；FTS 在向量不可用时必须完全正常。
+- 下一任务是 CKL-405：实现 list/show/diff/trace/mark-stale/suppress/rebuild/doctor 治理 CLI，所有变更命令必须保留审计记录并返回可靠退出码。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

@@ -410,6 +410,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-505：Retrieval Trace 与评估工具
 
 **依赖**：CKL-502、CKL-503、CKL-504  
+**状态**：已完成  
 **交付物**：Explain 输出、Golden Dataset Runner、Recall@K/Precision@K、注入复杂度审计。  
 **验收条件**：
 

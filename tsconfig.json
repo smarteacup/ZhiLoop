@@ -25,6 +25,7 @@
     { "path": "./packages/retrieval-engine" },
     { "path": "./packages/knowledge-reranker" },
     { "path": "./packages/context-orchestrator" },
+    { "path": "./packages/retrieval-evaluation" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

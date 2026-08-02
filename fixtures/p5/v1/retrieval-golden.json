@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "zhiloop-retrieval-golden",
+  "version": 1,
+  "cases": [
+    {
+      "caseId": "exact-symbol",
+      "query": { "prompt": "ContextOrchestrator 如何选择 L3？", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.context.complexity"],
+      "forbiddenAssetIds": ["knowledge.other.project"]
+    },
+    {
+      "caseId": "exact-error-code",
+      "query": { "prompt": "修复 CKL_SCOPE_MISMATCH", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.scope.error"]
+    },
+    {
+      "caseId": "exact-config-key",
+      "query": { "prompt": "injection.defaultMaxTokens 为什么是 800", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.injection.budget"]
+    },
+    {
+      "caseId": "path-match",
+      "query": { "prompt": "修改 packages/retrieval-engine/src/engine.ts", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.retrieval.scope-gate"]
+    },
+    {
+      "caseId": "decision-authority",
+      "query": { "prompt": "为什么使用 RRF 而不是直接相加原始分数？", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.retrieval.rrf-decision"]
+    },
+    {
+      "caseId": "binding-rule",
+      "query": { "prompt": "知识注入必须遵守哪些门禁？", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.injection.binding-rule"]
+    },
+    {
+      "caseId": "relation-expansion",
+      "query": { "prompt": "ContextEnvelope 和 Task Contract 是什么关系？", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.context.task-contract", "knowledge.context.complexity"]
+    },
+    {
+      "caseId": "current-version",
+      "query": { "prompt": "当前 token budget 的实现结论", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.injection.budget"],
+      "forbiddenAssetIds": ["knowledge.injection.budget.v0"]
+    },
+    {
+      "caseId": "global-verified",
+      "query": { "prompt": "全局知识需要哪些证据？", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.global.evidence-rule"]
+    },
+    {
+      "caseId": "project-isolation",
+      "query": { "prompt": "项目注入边界", "project": { "projectId": "project-a", "repositoryRoot": "/workspace/a", "branch": "main", "portable": true } },
+      "expectedRelevantAssetIds": ["knowledge.scope.project-boundary"],
+      "forbiddenAssetIds": ["knowledge.other.project"]
+    }
+  ]
+}

@@ -10,6 +10,7 @@
     { "path": "./packages/conversation-normalizer" },
     { "path": "./packages/episode-builder" },
     { "path": "./packages/knowledge-compiler" },
+    { "path": "./packages/model-codex-exec" },
     { "path": "./packages/candidate-repository" },
     { "path": "./packages/project-identity" },
     { "path": "./packages/scope-resolver" },

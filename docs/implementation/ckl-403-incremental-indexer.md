@@ -33,6 +33,8 @@ Projection 当前 version/contentHash/tombstone 与 Markdown 完全一致时不�
 
 默认 debounce 250ms，max wait 2s。重复路径进入 `Set`，一个 batch 每资产最多同步一次；持续文件风暴不能无限延迟。SQLite 操作为同步短事务，文件读取在事务外完成。
 
+Watcher 启动时先注册原生 watch，再同步扫描既有 canonical `assets/<id>/current.md` 并通知 Scheduler。这样启动窗口内的变化要么被原生事件捕获，要么被启动扫描读到，避免 macOS/FSEvents 在 `start()` 后立即写文件时偶发漏事件。扫描拒绝符号链接 assets 根并限制最多 100,000 个资产。
+
 ## 5. 备选方案
 
 ### A. Port + Node watcher + 确定性调度器（采用）
@@ -62,6 +64,7 @@ Projection 当前 version/contentHash/tombstone 与 Markdown 完全一致时不�
 | 风险 | 严重度 | 缓解 |
 |---|---|---|
 | watcher 重复/乱序 | 中 | Set 去重，最终以当前 Markdown/hash 为准 |
+| watcher 启动窗口漏事件 | 高 | 先注册 watch，再扫描并 reconcile 全部既有 current |
 | 持续事件饿死 flush | 高 | maxWait 定时器独立于 debounce |
 | 路径穿越映射错误资产 | 高 | root-relative 结构和 safe assetId 双校验 |
 | 手工 trust 提升自动 adoption | 高 | CKL-401 protected field gate，失败保留旧投影 |
@@ -72,7 +75,7 @@ Projection 当前 version/contentHash/tombstone 与 Markdown 完全一致时不�
 
 实现新增 20th workspace `@zhiloop/knowledge-indexer`，包含确定性 chunker、增量同步器、去抖/max-wait 调度器、路径映射和 Node recursive watcher。CKL-402 同步补充 `replaceAssetHistory`，将事件合并期间跨过的多个版本在一次事务中替换，不暴露中间投影。
 
-Chunk sink 与 SQLite 分离失败：SQLite/FTS 继续可用，sink contentHash 不推进；下一次相同文件事件只重试 chunks，不增加 indexVersion。单资产异常在 `syncMany` 内隔离，后续资产继续处理。Watcher 保留 lastError 并支持回调，调度器关闭会等待在途 batch。
+Chunk sink 与 SQLite 分离失败：SQLite/FTS 继续可用，sink contentHash 不推进；下一次相同文件事件只重试 chunks，不增加 indexVersion。单资产异常在 `syncMany` 内隔离，后续资产继续处理。Watcher 保留 lastError 并支持回调，调度器关闭会等待在途 batch。最终干净安装验收曾复现一次 `start` 后立即写入超时；加入启动 reconciliation 后，同一真实 watcher 专项连续 5 轮全部通过。
 
 | 检查项 | 结果 |
 |---|---|

@@ -52,7 +52,7 @@
 | CKL-604 | 完成 | `3142c0a` | Pending/Claim/Resolution SQLite、窄自然语言匹配、显式拒绝/纠正和 revision-fenced Effect | 550 项模块测试、43 项架构/Gate 测试；11 高/12 中风险，全部修复；专项行 97.58%、分支 89.02% |
 | CKL-605 | 完成 | `bd80f8b` | Scope feedback、pin/suppress 后置召回、L1-L3 复杂度学习和 MCP actual-use 关联 | 558 项模块测试、43 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 98.64%、分支 91.46% |
 | P6 Gate | 通过 | `27a1ee3` | 固定 100 Turn 交互、闭环、续跑与反馈联合验收 | 558 项模块测试、44 项架构/Gate 测试；5 高/6 中风险，全部修复；六项指标全部达标 |
-| CKL-701 | 完成 | `待本次提交` | App Server v2 最终态映射、turn.items 断线补偿和 Ledger 重连幂等 | 575 项模块测试、45 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 98.36%、分支 95.56% |
+| CKL-701 | 完成 | `d1eca77` | App Server v2 最终态映射、turn.items 断线补偿和 Ledger 重连幂等 | 575 项模块测试、45 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 98.36%、分支 95.56% |
 
 ## 2. P0 Gate 证据
 

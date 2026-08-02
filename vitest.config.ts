@@ -6,7 +6,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       provider: "v8",
-      include: ["packages/{domain,schemas,config,ingestion-codex,conversation-ledger,hook-runtime,conversation-normalizer,episode-builder,knowledge-compiler,candidate-repository,project-identity,scope-resolver,evidence-engine,evidence-policy,invalidation-engine,markdown-repository,knowledge-registry,knowledge-indexer}/src/**/*.ts"],
+      include: ["packages/{domain,schemas,config,ingestion-codex,conversation-ledger,hook-runtime,conversation-normalizer,episode-builder,knowledge-compiler,candidate-repository,project-identity,scope-resolver,evidence-engine,evidence-policy,invalidation-engine,markdown-repository,knowledge-registry,knowledge-indexer,vector-index}/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
       thresholds: {
         lines: 90,

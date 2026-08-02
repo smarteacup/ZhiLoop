@@ -165,6 +165,33 @@ function fuse(hits: readonly RankedHit[], rrfK: number, limit: number): Retrieve
     }));
 }
 
+function applyFeedback(items: readonly RetrievedKnowledge[], request: RetrievalRequest): RetrievedKnowledge[] {
+  if (request.feedback === undefined) return [...items];
+  const expectedScopeKey = request.context.taskId !== undefined
+    ? JSON.stringify({ level: "TASK", ...(request.context.project === undefined ? {} : { projectId: request.context.project.projectId }), taskId: request.context.taskId })
+    : request.context.project === undefined
+      ? JSON.stringify({ level: "GLOBAL" })
+      : JSON.stringify({ level: "PROJECT", projectId: request.context.project.projectId });
+  if (request.feedback.scopeKey !== expectedScopeKey
+    || request.feedback.assets.length > 10_000
+    || new Set(request.feedback.assets.map((item) => item.assetId)).size !== request.feedback.assets.length
+    || request.feedback.assets.some((item) => item.assetId.trim().length === 0 || item.assetId.length > 500
+      || !Number.isSafeInteger(item.relevant) || item.relevant < 0 || item.relevant > 1_000_000
+      || !Number.isSafeInteger(item.irrelevant) || item.irrelevant < 0 || item.irrelevant > 1_000_000
+      || item.score !== item.relevant - item.irrelevant || (item.pinned && item.suppressed))) {
+    throw new Error("retrieval feedback profile is invalid");
+  }
+  const feedback = new Map(request.feedback.assets.map((item) => [item.assetId, item]));
+  return items.filter((item) => feedback.get(item.asset.id)?.suppressed !== true)
+    .sort((left, right) => {
+      const leftFeedback = feedback.get(left.asset.id);
+      const rightFeedback = feedback.get(right.asset.id);
+      return Number(rightFeedback?.pinned === true) - Number(leftFeedback?.pinned === true)
+        || (rightFeedback?.score ?? 0) - (leftFeedback?.score ?? 0)
+        || left.rank - right.rank || (left.asset.id < right.asset.id ? -1 : left.asset.id > right.asset.id ? 1 : 0);
+    }).map((item, index) => ({ ...item, rank: index + 1 }));
+}
+
 export class MultiChannelRetrievalEngine {
   readonly #source: KnowledgeRetrievalSource;
   readonly #vector: VectorRetrievalDependencies | undefined;
@@ -278,7 +305,7 @@ export class MultiChannelRetrievalEngine {
     } else diagnostics.push({ code: "CHANNEL_DISABLED", channel: "RELATION", message: "Relation channel is disabled" });
 
     return freeze({
-      items: fuse(allHits, request.policy.fusion.rrfK, request.policy.rerank.candidates),
+      items: applyFeedback(fuse(allHits, request.policy.fusion.rrfK, request.policy.rerank.candidates), request),
       diagnostics,
     });
   }

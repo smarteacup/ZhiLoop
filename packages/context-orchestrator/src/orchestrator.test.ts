@@ -112,6 +112,28 @@ describe("ContextOrchestrator", () => {
     });
   });
 
+  it("uses exact-Scope feedback for L1-L3 depth without overriding explicit or high-risk gates", () => {
+    const value = candidate("knowledge.context.feedback", 1);
+    const feedback = {
+      scopeKey: JSON.stringify({ level: "TASK", projectId: "project-a", taskId: "task-context" }),
+      preferredLevel: "L1_POINTER" as const,
+      sampleCount: 2,
+      reasonCodes: ["IRRELEVANT_FEEDBACK_REDUCED_DEPTH"],
+    };
+    const learned = new ContextOrchestrator().orchestrate(request([value], { feedback }));
+    expect(learned.complexity).toMatchObject({
+      level: "L1_POINTER", reasonCodes: ["FEEDBACK_COMPLEXITY_LEVEL", "IRRELEVANT_FEEDBACK_REDUCED_DEPTH"],
+    });
+    expect(new ContextOrchestrator().orchestrate(request([value], { feedback, requestedLevel: "L2_COMPACT" })).complexity.level).toBe("L2_COMPACT");
+    expect(new ContextOrchestrator().orchestrate(request([value], { feedback, signals: { risk: "HIGH" } })).complexity.level).toBe("L3_EVIDENCED");
+    expect(() => new ContextOrchestrator().orchestrate(request([value], {
+      feedback: { ...feedback, scopeKey: JSON.stringify({ level: "PROJECT", projectId: "project-b" }) },
+    }))).toThrow("feedback hint");
+    expect(() => new ContextOrchestrator().orchestrate(request([value], {
+      feedback: { ...feedback, preferredLevel: "L3_EVIDENCED", sampleCount: 0 },
+    }))).toThrow("feedback hint");
+  });
+
   it("forbids automatic L4 and allows only explicit non-automatic Episode expansion", () => {
     const values = [candidate("knowledge.context.episode", 1)];
     const automatic = new ContextOrchestrator().orchestrate(request(values, { requestedLevel: "L4_EPISODE" }));

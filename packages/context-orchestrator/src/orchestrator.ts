@@ -150,8 +150,13 @@ function chooseLevel(
     reasons.add("NO_RETRIEVED_KNOWLEDGE");
     return "L0_NONE";
   }
-  let level = request.requestedLevel ?? request.policy.defaultLevel;
-  reasons.add(request.requestedLevel === undefined ? "DEFAULT_COMPLEXITY_LEVEL" : "REQUESTED_COMPLEXITY_LEVEL");
+  let level = request.requestedLevel ?? request.feedback?.preferredLevel ?? request.policy.defaultLevel;
+  reasons.add(request.requestedLevel !== undefined
+    ? "REQUESTED_COMPLEXITY_LEVEL"
+    : request.feedback !== undefined ? "FEEDBACK_COMPLEXITY_LEVEL" : "DEFAULT_COMPLEXITY_LEVEL");
+  if (request.requestedLevel === undefined && request.feedback !== undefined) {
+    for (const reason of request.feedback.reasonCodes) reasons.add(reason);
+  }
   const automatic = request.automatic ?? true;
   if (level === "L4_EPISODE" && (automatic || request.explicitEpisodeExpansion !== true)) {
     level = "L3_EVIDENCED";
@@ -224,6 +229,22 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
     if (request.requestedLevel !== undefined && !CONTEXT_COMPLEXITY_LEVELS.includes(request.requestedLevel)) {
       throw new Error("requestedLevel is invalid");
     }
+    const expectedFeedbackScopeKey = request.queryContext.taskId !== undefined
+      ? JSON.stringify({ level: "TASK", ...(request.queryContext.project === undefined ? {} : { projectId: request.queryContext.project.projectId }), taskId: request.queryContext.taskId })
+      : request.queryContext.project === undefined
+        ? JSON.stringify({ level: "GLOBAL" })
+        : JSON.stringify({ level: "PROJECT", projectId: request.queryContext.project.projectId });
+    if (request.feedback !== undefined && (request.feedback.scopeKey !== expectedFeedbackScopeKey
+      || !["L1_POINTER", "L2_COMPACT", "L3_EVIDENCED"].includes(request.feedback.preferredLevel)
+      || !Number.isSafeInteger(request.feedback.sampleCount) || request.feedback.sampleCount < 0
+      || request.feedback.reasonCodes.length < 1 || request.feedback.reasonCodes.length > 10
+      || !request.feedback.reasonCodes.every((reason) => /^[A-Z][A-Z0-9_]{0,99}$/u.test(reason))
+      || (request.feedback.preferredLevel === "L1_POINTER"
+        && (request.feedback.sampleCount < 2 || !request.feedback.reasonCodes.includes("IRRELEVANT_FEEDBACK_REDUCED_DEPTH")))
+      || (request.feedback.preferredLevel === "L3_EVIDENCED"
+        && (request.feedback.sampleCount < 3 || !request.feedback.reasonCodes.includes("RELEVANT_AND_USED_FEEDBACK_INCREASED_DEPTH"))))) {
+      throw new Error("feedback hint is invalid");
+    }
     const maxTokens = Math.min(request.maxTokens ?? request.policy.defaultMaxTokens, request.policy.defaultMaxTokens);
     if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4_000) throw new Error("maxTokens is invalid");
     const reasons = new Set<string>();
@@ -281,7 +302,9 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
     let envelope = draftEnvelope(request, level, reasons, maxTokens, selected, taskContract, truncated);
     if (envelope.budget.estimatedTokens > maxTokens && taskContract === undefined
       && reasons.has("TASK_CONTRACT_OMITTED_BY_BUDGET")) {
-      reasons.delete(request.requestedLevel === undefined ? "DEFAULT_COMPLEXITY_LEVEL" : "REQUESTED_COMPLEXITY_LEVEL");
+      reasons.delete(request.requestedLevel !== undefined
+        ? "REQUESTED_COMPLEXITY_LEVEL"
+        : request.feedback !== undefined ? "FEEDBACK_COMPLEXITY_LEVEL" : "DEFAULT_COMPLEXITY_LEVEL");
       envelope = draftEnvelope(request, level, reasons, maxTokens, selected, undefined, truncated);
     }
     while (envelope.budget.estimatedTokens > maxTokens && selected.length > 0) {

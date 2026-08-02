@@ -34,6 +34,21 @@ export interface RetrievalEngineOptions {
 export interface RetrievalRequest {
   readonly context: QueryContext;
   readonly policy: RetrievalPolicy;
+  readonly feedback?: RetrievalFeedbackProfile;
+}
+
+export interface RetrievalFeedbackAsset {
+  readonly assetId: string;
+  readonly relevant: number;
+  readonly irrelevant: number;
+  readonly score: number;
+  readonly pinned: boolean;
+  readonly suppressed: boolean;
+}
+
+export interface RetrievalFeedbackProfile {
+  readonly scopeKey: string;
+  readonly assets: readonly RetrievalFeedbackAsset[];
 }
 
 export interface RetrievalChannelContribution {

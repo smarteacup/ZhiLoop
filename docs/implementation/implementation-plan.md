@@ -511,7 +511,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-605：召回与注入反馈
 
 **依赖**：CKL-505、CKL-507  
-**交付物**：relevant/irrelevant/pin/suppress、复杂度反馈和按 Scope 反馈。  
+**状态**：已完成  
+**交付物**：`@zhiloop/feedback-engine`、Scope-bound relevant/irrelevant/pin/suppress、Retrieval 后置反馈、L1-L3 复杂度学习和 MCP expansion/usage 关联。  
 **验收条件**：
 
 - suppress 后相同 Scope 默认不再出现。

@@ -9,6 +9,13 @@ export interface ContextOrchestrationSignals {
   readonly conflicting?: boolean;
 }
 
+export interface ContextFeedbackHint {
+  readonly scopeKey: string;
+  readonly preferredLevel: "L1_POINTER" | "L2_COMPACT" | "L3_EVIDENCED";
+  readonly sampleCount: number;
+  readonly reasonCodes: readonly string[];
+}
+
 export interface ContextOrchestrationRequest {
   readonly runId: string;
   readonly queryContext: QueryContext;
@@ -20,6 +27,7 @@ export interface ContextOrchestrationRequest {
   readonly maxTokens?: number;
   readonly signals?: ContextOrchestrationSignals;
   readonly taskContract?: TaskContractBlock;
+  readonly feedback?: ContextFeedbackHint;
 }
 
 export interface ContextOrchestratorPort {

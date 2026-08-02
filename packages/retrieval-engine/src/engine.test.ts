@@ -228,6 +228,26 @@ describe("MultiChannelRetrievalEngine", () => {
     expect(embedding.embed).not.toHaveBeenCalled();
   });
 
+  it("applies scope-bound pin/suppress feedback only after status and Scope eligibility", async () => {
+    const first = asset("knowledge.feedback.first", { symbols: ["FeedbackSymbol"] });
+    const second = asset("knowledge.feedback.second", { symbols: ["FeedbackSymbol"] });
+    const proposed = asset("knowledge.feedback.proposed", { symbols: ["FeedbackSymbol"], status: "PROPOSED" });
+    const input = { ...request("symbol FeedbackSymbol"), feedback: {
+      scopeKey: JSON.stringify({ level: "PROJECT", projectId: "project-a" }),
+      assets: [
+        { assetId: first.asset.id, relevant: 0, irrelevant: 3, score: -3, pinned: false, suppressed: true },
+        { assetId: second.asset.id, relevant: 3, irrelevant: 0, score: 3, pinned: true, suppressed: false },
+        { assetId: proposed.asset.id, relevant: 999, irrelevant: 0, score: 999, pinned: true, suppressed: false },
+      ],
+    } };
+    const result = await new MultiChannelRetrievalEngine(
+      source([first, second, proposed]), undefined, { channels: { fts: false, vector: false, relation: false } },
+    ).retrieve(input);
+    expect(result.items.map((item) => item.asset.id)).toEqual([second.asset.id]);
+    const wrongScope = { ...input, feedback: { ...input.feedback, scopeKey: JSON.stringify({ level: "PROJECT", projectId: "project-b" }) } };
+    await expect(new MultiChannelRetrievalEngine(source([first])).retrieve(wrongScope)).rejects.toThrow("feedback profile");
+  });
+
   it("retrieves from 1,000 current assets below the local P95 budget", async () => {
     const values = Array.from({ length: 1_000 }, (_, index) => asset(`knowledge.retrieval.perf-${index}`, {
       symbols: index === 777 ? ["PerformanceSymbol"] : [],

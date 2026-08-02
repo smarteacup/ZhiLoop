@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P5 进行中（CKL-506 已完成，进入 CKL-507）  
+**当前里程碑**：P5 进行中（CKL-507 已完成，进入 P5 Gate）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -44,6 +44,7 @@
 | CKL-504 | 完成 | `de2e481` | ContextEnvelope Schema、L0～L4、Scope/Status/Authority 优先级、预算降级、独立 Task Contract | 461 项模块测试、40 项架构/Gate 测试；6 高/9 中风险，全部修复；专项行 93.43%、分支 88.88% |
 | CKL-505 | 完成 | `a964bab` | Retrieval Trace、四轴复杂度解释、Golden Runner、配置指纹、Recall/Precision 与完整注入 Gate | 471 项模块测试、40 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 98.01%、分支 89.89% |
 | CKL-506 | 完成 | `21de066` | Codex UserPrompt additionalContext、OFF/SHADOW/ACTIVE、500ms Abort、失败开放、运行中回滚 | 485 项模块测试、40 项架构/Gate 测试；8 高/9 中风险，全部修复；专项行 95.94%、分支 88.42% |
+| CKL-507 | 完成 | `f8c2681` | 四个运行中知识工具、current/Scope 复核、L2 增量与 L3 Delta、MCP/主动注入故障隔离 | 491 项模块测试、41 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.16%、分支 88.18% |
 
 ## 2. P0 Gate 证据
 
@@ -85,6 +86,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-507：实现 `ckl.search/get/related/check` 运行中知识 MCP、定向展开和增量去重。
+- 下一任务是 P5 Gate：用固定 Golden Dataset 执行全链 Recall/Precision、Trace、复杂度、Scope 隔离、失败开放和 L1/L2/L3 展开验收。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

@@ -4,6 +4,7 @@ import type {
   EventEnvelope,
   KnowledgeAsset,
   KnowledgeCandidate,
+  ContextEnvelope,
   KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
 
@@ -11,6 +12,7 @@ import eventSchema from "./json/event.schema.json" with { type: "json" };
 import knowledgeAssetSchema from "./json/knowledge-asset.schema.json" with { type: "json" };
 import knowledgeCandidateSchema from "./json/knowledge-candidate.schema.json" with { type: "json" };
 import knowledgeExtractionOutputSchema from "./json/knowledge-extraction-output.schema.json" with { type: "json" };
+import contextEnvelopeSchema from "./json/context-envelope.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
@@ -19,6 +21,7 @@ export const SCHEMA_NAMES = [
   "knowledge-candidate",
   "knowledge-extraction-output",
   "knowledge-asset",
+  "context-envelope",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -50,6 +53,7 @@ export const schemas = Object.freeze({
   "knowledge-candidate": knowledgeCandidateSchema,
   "knowledge-extraction-output": knowledgeExtractionOutputSchema,
   "knowledge-asset": knowledgeAssetSchema,
+  "context-envelope": contextEnvelopeSchema,
 });
 
 const ajv = new Ajv({ allErrors: true, strict: true });
@@ -59,6 +63,7 @@ const validators = {
   "knowledge-candidate": ajv.compile(knowledgeCandidateSchema),
   "knowledge-extraction-output": ajv.compile(knowledgeExtractionOutputSchema),
   "knowledge-asset": ajv.compile(knowledgeAssetSchema),
+  "context-envelope": ajv.compile(contextEnvelopeSchema),
 } satisfies Record<SchemaName, ValidateFunction>;
 
 function toIssues(errors: ErrorObject[] | null | undefined): readonly SchemaIssue[] {
@@ -171,5 +176,14 @@ export function parseKnowledgeAsset(input: unknown): ParseResult<KnowledgeAsset>
     validators["knowledge-asset"],
     input,
     Object.keys(knowledgeAssetSchema.properties),
+  );
+}
+
+export function parseContextEnvelope(input: unknown): ParseResult<ContextEnvelope> {
+  return parse(
+    "context-envelope",
+    validators["context-envelope"],
+    input,
+    Object.keys(contextEnvelopeSchema.properties),
   );
 }

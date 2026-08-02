@@ -4,10 +4,10 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-503 | 32 次 |
-| 耗时 | 480s | 14880s |
-| 高风险 | 6 | 119 |
-| 中风险 | 9 | 181 |
+| CR 标识/次数 | CKL-504 | 33 次 |
+| 耗时 | 420s | 15300s |
+| 高风险 | 6 | 125 |
+| 中风险 | 9 | 190 |
 | 低风险 | 0 | 0 |
 | 修复程度 | 15/15（100%） | 100% |
 
@@ -15,32 +15,32 @@
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | Port 返回未知/重复/缺失 ID 注入或删除候选 | 输出必须恰好覆盖输入 ID 集合且每个一次，否则完整 fallback。 |
-| 高 | Port 返回完整 Asset 篡改 Scope/Status/Evidence | Port 只返回 assetId/score/reason；最终 Asset 来自 CKL-502 原对象克隆。 |
-| 高 | Rerank 异常导致结果为空或顺序改变 | unavailable/error/timeout/invalid output 均按 originalRank fallback。 |
-| 高 | 超时后模型请求仍持续消耗 | deadline 触发 AbortController，Port 可立即取消底层调用。 |
-| 高 | 同 subject 多个 id 同时进入注入 | 最终排序后按 subjectKey 保留最高项，记录 kept/removed。 |
-| 高 | 将 body/Episode 正文发送给 Rerank 模型 | 输入只含 title/summary/边界/证据 ID/通道解释，不含 body/source episode。 |
-| 中 | NaN/Infinity/越界 score 破坏排序 | score 必须 finite 且在 [-1,1]。 |
-| 中 | 无理由的模型排序不可解释 | 每项强制 1～10 个受限 reason codes。 |
-| 中 | Port 接收超过 30 候选造成上下文膨胀 | originalRank 排序后硬截前 30，并输出 limit 诊断。 |
-| 中 | 超长 query 进入 Port | 20k 上限，超限原样 fallback。 |
-| 中 | deepFreeze 反向冻结调用者对象 | Port 输入和最终输出先 clone，再冻结副本。 |
-| 中 | score 并列导致非确定顺序 | originalRank 后 assetId 稳定 tie-break。 |
-| 中 | provider 错误包含控制字符/长正文 | diagnostic 去控制字符并截断 500。 |
-| 中 | timer 未释放造成进程滞留 | success/error/timeout 均在 finally clearTimeout。 |
-| 中 | 输出解释丢失 RRF 贡献 | 每项保留 originalRank、Scope/Status/Evidence 和 contributions。 |
+| 高 | 全部候选不合格时仍生成 L2 元数据 | 复杂度选择基于通过 Status 和 Scope 门禁的候选；空集固定 L0。 |
+| 高 | `scopeMatched=false` 候选被上游误传后注入 | Orchestrator 增设 Scope 防御过滤并记录不合格原因。 |
+| 高 | 自动注入 L4 泄露完整 Episode | 自动模式或未显式展开时硬降为 L3，并输出原因码。 |
+| 高 | Task Contract 挤掉动态项目知识 | Contract 只消耗剩余预算；超限优先省略 Contract。 |
+| 高 | 参考知识被渲染成规则 | 每项显式携带 Authority，Envelope 汇总 MIXED，不根据自然语言推断。 |
+| 高 | 超预算仍输出导致下游上下文膨胀 | 保守 token 估算、按优先级截断、L3/L2→L1→L0 降级，最终 Schema 前再次校验。 |
+| 中 | L1 携带正文或 Evidence 越层 | JSON Schema 按 detailLevel 使用字段门禁，越层字段验证失败。 |
+| 中 | Scope/Status/Authority 排序混淆 | 比较器固定 Scope > Status > Authority > Rerank rank > ID。 |
+| 中 | JSON Schema strict 模式未启动即失效 | 所有 conditional required 在同一子模式声明 properties，并由 AJV 严格编译测试覆盖。 |
+| 中 | 配置 YAML 与代码默认值漂移 | 读取仓库 `injection-policy.yaml` 并与 DEFAULT_CONFIGURATION 做契约测试。 |
+| 中 | Tokenizer 差异低估体积 | UTF-8 JSON 采用 3 bytes/token 保守估计，CKL-505 再审计真实复杂度。 |
+| 中 | Reason code 自身挤掉知识 | Contract 省略场景先移除普通 level 原因，保留异常原因和动态知识。 |
+| 中 | 调用者对象被递归冻结 | 输出在 schema parse 后 structuredClone，再 deep freeze。 |
+| 中 | 运行时非法 level/runId/budget 造成非确定错误 | 对公开请求边界做显式 level、文本和整数范围检查。 |
+| 中 | 顶层扩展破坏前向兼容 | 顶层保留 extension，嵌套信任结构拒绝未知字段。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | 15/15；Lines 100%、Branches 97.29% |
-| 全仓 | 446/446 模块；40/40 架构/Gate |
-| 整体覆盖率 | Lines 97.20%、Branches 90.35% |
-| Workspace | 25 个，依赖/import policy 通过 |
+| 专项 | Orchestrator 13/13；Lines 93.43%、Branches 88.88%；Schema 4/4 |
+| 全仓 | 461/461 模块；40/40 架构/Gate |
+| 整体覆盖率 | Lines 96.82%、Branches 90.05% |
+| Workspace | 26 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-503 三项验收满足，15 项风险全部修复，无遗留 actionable finding。可以进入 CKL-504。
+CKL-504 七项验收满足，15 项风险全部修复，无遗留 actionable finding。可以进入 CKL-505。

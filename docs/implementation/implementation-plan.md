@@ -395,6 +395,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-504：Context Orchestrator 与复杂度策略
 
 **依赖**：CKL-502、CKL-503  
+**状态**：已完成  
 **交付物**：`ContextEnvelope` 类型与 JSON Schema、L0-L4、Breadth/Depth/Authority/Evidence、Token Budget 和 `injection-policy.yaml`。  
 **验收条件**：
 

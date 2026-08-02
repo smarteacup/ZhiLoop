@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/context-envelope/v1",
+  "title": "ContextEnvelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "runId", "complexity", "budget", "items"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "taskId": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "complexity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "breadth", "depth", "authority", "evidence", "reasonCodes"],
+      "properties": {
+        "level": { "enum": ["L0_NONE", "L1_POINTER", "L2_COMPACT", "L3_EVIDENCED", "L4_EPISODE"] },
+        "breadth": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "depth": { "enum": ["NONE", "POINTER", "COMPACT", "EVIDENCED", "EPISODE"] },
+        "authority": { "enum": ["BINDING_RULE", "ACCEPTED_DECISION", "VERIFIED_FACT", "REFERENCE", "MIXED", "NONE"] },
+        "evidence": { "enum": ["NONE", "POINTER", "SUMMARY", "EPISODE"] },
+        "reasonCodes": {
+          "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,99}$" }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxTokens", "estimatedTokens", "truncated"],
+      "properties": {
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 4000 },
+        "estimatedTokens": { "type": "integer", "minimum": 1, "maximum": 4000 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "items": {
+      "type": "array", "maxItems": 8,
+      "items": { "$ref": "#/definitions/contextItem" }
+    },
+    "taskContract": { "$ref": "#/definitions/taskContract" }
+  },
+  "definitions": {
+    "scope": {
+      "oneOf": [
+        { "type": "object", "required": ["level", "taskId"], "properties": { "level": { "const": "TASK" }, "taskId": { "type": "string", "minLength": 1 }, "projectId": { "type": "string" }, "repositoryRemote": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId", "symbols"], "properties": { "level": { "const": "SYMBOL" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" }, "symbols": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId", "modulePaths"], "properties": { "level": { "const": "MODULE" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" }, "modulePaths": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "projectId"], "properties": { "level": { "const": "PROJECT" }, "projectId": { "type": "string", "minLength": 1 }, "repositoryRemote": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "userId"], "properties": { "level": { "const": "USER" }, "userId": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+        { "type": "object", "required": ["level", "teamId"], "properties": { "level": { "const": "TEAM" }, "teamId": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+        { "type": "object", "required": ["level"], "properties": { "level": { "const": "GLOBAL" } }, "additionalProperties": false }
+      ]
+    },
+    "contextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "subjectKey", "kind", "status", "scope", "authority", "detailLevel", "title", "summary", "retrievalRank"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 1 },
+        "subjectKey": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["FACT", "REQUIREMENT", "DESIGN", "DECISION", "IMPLEMENTATION", "EXPERIENCE", "RULE", "PREFERENCE", "OPEN_QUESTION"] },
+        "status": { "enum": ["ACCEPTED", "IMPLEMENTED", "VERIFIED"] },
+        "scope": { "$ref": "#/definitions/scope" },
+        "authority": { "enum": ["BINDING_RULE", "ACCEPTED_DECISION", "VERIFIED_FACT", "REFERENCE"] },
+        "detailLevel": { "enum": ["L1_POINTER", "L2_COMPACT", "L3_EVIDENCED", "L4_EPISODE"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "retrievalRank": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "applicability": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 1000 } },
+        "failurePaths": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 1000 } },
+        "symbols": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 1000 } },
+        "content": { "type": "string", "maxLength": 100000 },
+        "evidencePointers": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "evidenceSummary": {
+          "type": "array", "maxItems": 100,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["evidenceId", "verdict"],
+            "properties": { "evidenceId": { "type": "string", "minLength": 1 }, "verdict": { "enum": ["SUPPORTS", "CONTRADICTS", "INCONCLUSIVE"] } }
+          }
+        },
+        "sourceEpisodes": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "detailLevel": { "const": "L1_POINTER" } } },
+          "then": { "properties": { "applicability": false, "failurePaths": false, "symbols": false, "content": false, "evidencePointers": false, "evidenceSummary": false, "sourceEpisodes": false } }
+        },
+        {
+          "if": { "properties": { "detailLevel": { "const": "L2_COMPACT" } } },
+          "then": {
+            "required": ["applicability", "failurePaths", "symbols", "evidencePointers"],
+            "properties": { "applicability": true, "failurePaths": true, "symbols": true, "evidencePointers": true, "content": false, "evidenceSummary": false, "sourceEpisodes": false }
+          }
+        },
+        {
+          "if": { "properties": { "detailLevel": { "const": "L3_EVIDENCED" } } },
+          "then": {
+            "required": ["applicability", "failurePaths", "symbols", "content", "evidenceSummary"],
+            "properties": { "applicability": true, "failurePaths": true, "symbols": true, "content": true, "evidenceSummary": true, "evidencePointers": false, "sourceEpisodes": false }
+          }
+        },
+        {
+          "if": { "properties": { "detailLevel": { "const": "L4_EPISODE" } } },
+          "then": {
+            "required": ["applicability", "failurePaths", "symbols", "content", "evidenceSummary", "sourceEpisodes"],
+            "properties": { "applicability": true, "failurePaths": true, "symbols": true, "content": true, "evidenceSummary": true, "sourceEpisodes": true, "evidencePointers": false }
+          }
+        }
+      ]
+    },
+    "taskContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractId", "objective", "gates", "boundaries"],
+      "properties": {
+        "contractId": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "gates": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+        "boundaries": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+      }
+    }
+  }
+}

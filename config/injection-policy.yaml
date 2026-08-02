@@ -1,0 +1,28 @@
+defaultLevel: L2_COMPACT
+defaultMaxTokens: 800
+userPromptDeadlineMs: 500
+failOpenOnTimeout: true
+levels:
+  L1_POINTER:
+    maxItems: 3
+    evidence: NONE
+  L2_COMPACT:
+    maxItems: 5
+    evidence: POINTER
+  L3_EVIDENCED:
+    maxItems: 8
+    evidence: SUMMARY
+  L4_EPISODE:
+    automatic: false
+authorityOrder:
+  - BINDING_RULE
+  - ACCEPTED_DECISION
+  - VERIFIED_FACT
+  - REFERENCE
+expansion:
+  enabled: true
+  tools:
+    - ckl.search
+    - ckl.get
+    - ckl.related
+    - ckl.check

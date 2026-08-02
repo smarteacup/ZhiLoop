@@ -1,5 +1,6 @@
 export * from "./episode.js";
 export * from "./conversation.js";
+export * from "./context.js";
 export * from "./events.js";
 export * from "./evidence.js";
 export * from "./knowledge.js";

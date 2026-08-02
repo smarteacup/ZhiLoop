@@ -501,7 +501,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-604：自然对话确认回写
 
 **依赖**：CKL-204、CKL-603  
-**交付物**：后续用户回复与 ConfirmationRequest 的关联。  
+**状态**：已完成  
+**交付物**：`@zhiloop/confirmation-writeback`、SQLite Pending/Claim/Resolution、窄自然语言匹配、revision-fenced Effect Port 和版本化 `ConfirmationResolution`。  
 **验收条件**：
 
 - 明确选择能改变对应资产，不误改其他候选。

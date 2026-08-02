@@ -16,14 +16,14 @@
     "subjectIds": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } },
     "question": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\u0000\\r\\n]+$" },
     "options": {
-      "type": "array", "minItems": 2, "maxItems": 2,
+      "type": "array", "minItems": 2, "maxItems": 3,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["optionId", "label", "effect"],
         "properties": {
           "optionId": { "$ref": "#/definitions/id" },
           "label": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000\\r\\n]+$" },
-          "effect": { "enum": ["KEEP_PROPOSED", "KEEP_CURRENT", "ACCEPT_CANDIDATE", "KEEP_PROJECT", "PROMOTE_GLOBAL", "KEEP_RULE", "APPLY_OVERRIDE", "STOP_WITHOUT_EXPANSION", "CONTINUE_ORIGINAL_SCOPE"] }
+          "effect": { "enum": ["KEEP_PROPOSED", "KEEP_CURRENT", "REJECT_CANDIDATE", "ACCEPT_CANDIDATE", "KEEP_PROJECT", "PROMOTE_GLOBAL", "KEEP_RULE", "APPLY_OVERRIDE", "STOP_WITHOUT_EXPANSION", "CONTINUE_ORIGINAL_SCOPE"] }
         }
       }
     },

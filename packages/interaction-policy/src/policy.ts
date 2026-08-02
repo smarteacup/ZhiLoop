@@ -26,6 +26,7 @@ const KIND_RANK: Readonly<Record<ConfirmationKind, number>> = {
 const OPTIONS: Readonly<Record<Exclude<ConfirmationKind, "LOW_IMPACT_UNKNOWN">, readonly ConfirmationOption[]>> = {
   KNOWLEDGE_CONFLICT: [
     { optionId: "keep-proposed", label: "保持候选，不覆盖当前结论", effect: "KEEP_PROPOSED" },
+    { optionId: "reject-candidate", label: "明确拒绝该候选", effect: "REJECT_CANDIDATE" },
     { optionId: "accept-candidate", label: "采用该候选", effect: "ACCEPT_CANDIDATE" },
   ],
   SCOPE_PROMOTION: [
@@ -87,7 +88,7 @@ function safeEffect(kind: ConfirmationKind): ConfirmationEffect {
 function question(trigger: InteractionTrigger): string {
   const subject = JSON.stringify(trigger.summary);
   switch (trigger.kind) {
-    case "KNOWLEDGE_CONFLICT": return `候选知识 ${subject} 与当前结论冲突，要保持候选还是采用它？`;
+    case "KNOWLEDGE_CONFLICT": return `候选知识 ${subject} 与当前结论冲突，要暂不处理、明确拒绝还是采用它？`;
     case "SCOPE_PROMOTION": return `是否将 ${subject} 从当前项目范围提升为全局知识？`;
     case "RULE_OVERRIDE": return `本次请求将覆盖现有规则 ${subject}，是否允许？`;
     case "CLOSURE_ASK_USER": return `任务闭环信息 ${subject} 仍不确定，是否只按原任务范围继续？`;

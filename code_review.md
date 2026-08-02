@@ -4,50 +4,52 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-603 | 40 次 |
-| 耗时 | 750s | 18930s |
-| 高风险 | 10 | 179 |
-| 中风险 | 11 | 255 |
+| CR 标识/次数 | CKL-604 | 41 次 |
+| 耗时 | 900s | 19830s |
+| 高风险 | 11 | 190 |
+| 中风险 | 12 | 267 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 21/21（100%） | 100% |
+| 修复程度 | 23/23（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | 每个冲突各问一个问题导致确认洪泛 | 单次决策最多一个 Request，其余全部 defer。 |
-| 高 | 仅限制每 Turn 仍无法满足 P6 低频 Gate | 实现滚动 20 Turn 只允许一次提问。 |
-| 高 | 用户沉默被当作同意 GLOBAL 晋升 | Scope safe effect 固定 `KEEP_PROJECT`。 |
-| 高 | 用户沉默后执行规则覆盖或不可逆动作 | Rule safe effect 固定 `KEEP_RULE`；不可逆项只提升优先级，不改变默认。 |
-| 高 | 低影响 UNKNOWN 生成审核任务和人工债务 | 固定 `KEEP_PROPOSED`，`reviewTasksCreated=0`。 |
-| 高 | 不同 Adapter 自行解释 Evidence/Closure reason code | 提供 Evidence、Closure、Rule 三类受限 Trigger Adapter。 |
-| 高 | 外部输入绕过 TypeScript 传入未知 kind/impact | 运行时枚举、identity、ID、集合与组合约束验证。 |
-| 高 | Confirmation Schema 的显式选项 effect 越权 | 每类允许 effect 集合在 Domain 唯一定义，Parser 精确匹配两项。 |
-| 高 | 一个确认误改未声明 Candidate | Request 和所有 default 都携带精确、唯一、上限 20 的 subject IDs。 |
-| 高 | 同一 Trigger 跨 Turn 反复询问 | history 按 triggerId 永久去重，超过 20 Turn 也不重问。 |
-| 中 | 模型改写摘要绕过重复门禁 | Trigger ID 不包含展示摘要，只绑定来源/类型/目标。 |
-| 中 | subject 顺序变化产生不同 ID | 哈希前排序，Request/default 输出同步规范化。 |
-| 中 | `localeCompare` 在不同运行环境改变优先级 | 使用稳定 code-point 比较。 |
-| 中 | 配置降低冷却或打开审核队列 | 5 个 interaction 安全项全部使用 literal Schema。 |
-| 中 | Evidence Policy 与 Interaction 使用不同配置快照 | Evidence Policy 复核完整 interaction 安全字段。 |
-| 中 | 恶意 Proxy/Getter 令策略抛错 | 验证入口异常捕获，返回无问题的 DEFER。 |
-| 中 | 历史包含未来 Turn 干扰预算 | history ordinal 必须不大于当前 Turn。 |
-| 中 | safeDefaultOptionId 不存在或指向错误 effect | Schema Parser 做语义级 safeDefault 校验。 |
-| 中 | Option 嵌套扩展悄悄改变回写语义 | nested option `additionalProperties=false`。 |
-| 中 | 同优先级选择不稳定 | irreversible、impact、kind、triggerId 完整排序。 |
-| 中 | 调用方修改决策对象 | Request、Trigger Adapter 输出和 Policy 决策递归冻结。 |
+| 高 | 普通“好的”被推断为批准 | 只匹配完整 option/label/ordinal/锚定短语，普通对话 NO_MATCH。 |
+| 高 | 多个 Pending 时回复误关联 | 无显式 ID 必须恰好一个 Pending，否则 AMBIGUOUS_PENDING。 |
+| 高 | 显式 confirmation ID 跨 session 读取或应用 | Pending 查询和既有 Resolution 返回都复核 session。 |
+| 高 | 回复修改 Request 外 Candidate | subject 集合必须与 Request/target/relation 一一相等。 |
+| 高 | Request 后资产已更新仍应用旧选择 | 保存 expectedRevision，Effect 的 beforeRevision 必须一致。 |
+| 高 | 并发不同回复同时生效 | SQLite `BEGIN IMMEDIATE` 原子 claim，其他 resolution/event/hash 冲突。 |
+| 高 | crash 后重复执行 Effect | resolutionId 确定性、claim 可同事件重试、Port 强制幂等契约。 |
+| 高 | 沉默与明确拒绝都解释为 KEEP_PROPOSED | 新增独立 `REJECT_CANDIDATE` 与 REJECTS relation。 |
+| 高 | 纠正丢失原版本或改错目标 | CORRECTS 一一覆盖 target，保存 before/after revision 和 statement ref。 |
+| 高 | Schema 接受 effect/relation 语义错配 | Domain 唯一 effect→relation 映射，Parser 交叉验证。 |
+| 高 | Port 超时/错误消息泄露对话或秘密 | Abort deadline；诊断不透传 message，正文不写入本模块 DB。 |
+| 中 | “不是很确定”被误判纠正 | 否定后必须出现应该/改为等组合标记。 |
+| 中 | “不是这个意思”与纠正混淆 | 明确映射为 OPTION rejection，不创建 correction revision。 |
+| 中 | 同 Turn 或乱序事件抢答 | ordinal、Turn ID 和 occurredAt 三重后续门禁。 |
+| 中 | 同 ID 不同 Request 覆盖 Pending | canonical JSON + payload/target hash 冲突检查。 |
+| 中 | Resolution relation 少项、多项或重复 | Schema 与 Service 双层 exact coverage。 |
+| 中 | 非变更 relation 伪造新状态 | effect 对应 relation 固定；非 RETAINS/CONTINUES 必须产生新 revision。 |
+| 中 | Effect Port 夹带回复正文进诊断 | 固定诊断文本，仅 response hash/ref 持久化。 |
+| 中 | SQLite 文件暴露 | 非内存数据库 chmod 0600，WAL/foreign keys/busy timeout。 |
+| 中 | 新版本 DB 被旧程序打开 | migration version 前向拒绝。 |
+| 中 | Repository 已关闭仍继续使用 | 每个 public operation 做 open guard，close 幂等。 |
+| 中 | 同回复重放被视为新选择 | response event/hash/resolution ID 联合幂等。 |
+| 中 | Option label 恶意重复导致随机选择 | Matcher 返回 AMBIGUOUS，不按数组首项猜测。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| Interaction 专项 | 13/13；Lines 98.75%、Branches 88.61% |
-| Schema/Config/Evidence 联合回归 | 78/78 |
-| 全仓 | 526/526 模块；43/43 架构/Gate |
-| 整体覆盖率 | Lines 97.02%、Branches 90.14%、Functions 98.71% |
-| Workspace | 32 个，依赖/import policy 通过 |
+| CKL-604 专项 | 23/23；Statements 94.55%、Branches 89.02%、Lines 97.58% |
+| Confirmation Schema 联合 | safe option/effect/relation/correction/subject coverage 全通过 |
+| 全仓 | 550/550 模块；43/43 架构/Gate |
+| 整体覆盖率 | Lines 97.01%、Branches 90.12%、Functions 98.58% |
+| Workspace | 33 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-603 三项验收及 P6 的 20 Turn 低频约束均满足，21 项风险全部修复，无遗留 actionable finding。ConfirmationRequest 已具备 CKL-604 所需的精确 target、固定 option 和安全默认契约，可以进入自然对话确认回写。
+CKL-604 两项验收满足，23 项风险全部修复，无遗留 actionable finding。Effect Port 的生产实现必须按 resolutionId 幂等并遵守 AbortSignal；该约束已进入技术文档和 CKL-703 装配边界，可以进入 CKL-605。

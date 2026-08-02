@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P6 进行中（CKL-603 已完成，进入 CKL-604）  
+**当前里程碑**：P6 进行中（CKL-604 已完成，进入 CKL-605）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -49,6 +49,7 @@
 | CKL-601 | 完成 | `86ac991` | 结构化 Closure Result、确定性 Gate/Boundary 优先、精确 Context Retry、受限 Semantic Gate | 499 项模块测试、43 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 100%、分支 89.83% |
 | CKL-602 | 完成 | `c18c3a7` | Stop JSON Adapter、精确 context/correction delta、原子有限 counter、分层 deadline 与失败开放 | 509 项模块测试、43 项架构/Gate 测试；9 高/10 中风险，全部修复；专项行 97.64%、分支 90.52% |
 | CKL-603 | 完成 | `39c3601` | 类型化微确认、20 Turn 窗口、无人回答安全默认、Confirmation Schema 与上游 Adapter | 526 项模块测试、43 项架构/Gate 测试；10 高/11 中风险，全部修复；专项行 98.75%、分支 88.61% |
+| CKL-604 | 完成 | `待本次提交` | Pending/Claim/Resolution SQLite、窄自然语言匹配、显式拒绝/纠正和 revision-fenced Effect | 550 项模块测试、43 项架构/Gate 测试；11 高/12 中风险，全部修复；专项行 97.58%、分支 89.02% |
 
 ## 2. P0 Gate 证据
 
@@ -90,6 +91,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-604：实现后续用户自然语言回复与 Pending ConfirmationRequest 的精确关联、否定/纠正版本关系和幂等回写。
+- 下一任务是 CKL-605：实现 relevant/irrelevant/pin/suppress、按 Scope 的复杂度反馈，以及 MCP 展开后实际使用记录。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

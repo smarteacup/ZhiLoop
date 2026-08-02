@@ -49,16 +49,16 @@ flowchart TD
 
 ## 5. ConfirmationRequest 契约
 
-版本化 Schema `confirmation-request/v1` 包含 session/turn/ordinal、trigger、kind、精确 subject IDs、问题、两个固定语义选项、安全默认项和创建时间。顶层允许未来扩展，嵌套 option 严格拒绝未知字段。
+版本化 Schema `confirmation-request/v1` 包含 session/turn/ordinal、trigger、kind、精确 subject IDs、问题、类型固定的语义选项、安全默认项和创建时间。顶层允许未来扩展，嵌套 option 严格拒绝未知字段。
 
 | Kind | 无回答默认 effect | 显式可选 effect |
 |---|---|---|
-| `KNOWLEDGE_CONFLICT` | `KEEP_PROPOSED` | `ACCEPT_CANDIDATE` |
+| `KNOWLEDGE_CONFLICT` | `KEEP_PROPOSED` | `REJECT_CANDIDATE` / `ACCEPT_CANDIDATE` |
 | `SCOPE_PROMOTION` | `KEEP_PROJECT` | `PROMOTE_GLOBAL` |
 | `RULE_OVERRIDE` | `KEEP_RULE` | `APPLY_OVERRIDE` |
 | `CLOSURE_ASK_USER` | `STOP_WITHOUT_EXPANSION` | `CONTINUE_ORIGINAL_SCOPE` |
 
-Domain 同时定义每类完整 effect 集合与 safe effect。Schema Parser 不仅检查默认 option ID 存在，还要求两个 effect 与 kind 的允许集合精确一致，防止把 Scope 问题伪造成规则覆盖。
+Domain 同时定义每类完整 effect 集合与 safe effect。Schema Parser 不仅检查默认 option ID 存在，还要求全部 effect 与 kind 的允许集合精确一致，防止把 Scope 问题伪造成规则覆盖。
 
 ## 6. Defer 与无人回答
 

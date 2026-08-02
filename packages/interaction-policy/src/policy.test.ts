@@ -63,6 +63,7 @@ describe("Interaction Policy", () => {
     });
     expect(result.request?.options).toEqual([
       { optionId: "keep-proposed", label: "保持候选，不覆盖当前结论", effect: "KEEP_PROPOSED" },
+      { optionId: "reject-candidate", label: "明确拒绝该候选", effect: "REJECT_CANDIDATE" },
       { optionId: "accept-candidate", label: "采用该候选", effect: "ACCEPT_CANDIDATE" },
     ]);
     expect(result.request?.question).toContain(JSON.stringify("缓存实现方案"));

@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/confirmation-resolution/v1",
+  "title": "ConfirmationResolution",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "resolutionId", "confirmationId", "sessionId", "requestTurnId", "responseTurnId", "responseEventId", "responseKind", "responseTextHash", "selectedOptionId", "effect", "subjectIds", "relations", "resolvedAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "resolutionId": { "$ref": "#/definitions/id" },
+    "confirmationId": { "$ref": "#/definitions/id" },
+    "sessionId": { "$ref": "#/definitions/id" },
+    "requestTurnId": { "$ref": "#/definitions/id" },
+    "responseTurnId": { "$ref": "#/definitions/id" },
+    "responseEventId": { "$ref": "#/definitions/id" },
+    "responseKind": { "enum": ["OPTION", "CORRECTION"] },
+    "responseTextHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "selectedOptionId": { "$ref": "#/definitions/id" },
+    "effect": { "enum": ["KEEP_PROPOSED", "KEEP_CURRENT", "REJECT_CANDIDATE", "ACCEPT_CANDIDATE", "KEEP_PROJECT", "PROMOTE_GLOBAL", "KEEP_RULE", "APPLY_OVERRIDE", "STOP_WITHOUT_EXPANSION", "CONTINUE_ORIGINAL_SCOPE"] },
+    "subjectIds": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } },
+    "correctionStatementRef": { "$ref": "#/definitions/id" },
+    "relations": {
+      "type": "array", "minItems": 1, "maxItems": 20,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["subjectId", "relation", "beforeRevision", "afterRevision"],
+        "properties": {
+          "subjectId": { "$ref": "#/definitions/id" },
+          "relation": { "enum": ["RETAINS", "CONFIRMS", "REJECTS", "CORRECTS", "PROMOTES", "OVERRIDES", "CONTINUES"] },
+          "beforeRevision": { "$ref": "#/definitions/revision" },
+          "afterRevision": { "$ref": "#/definitions/revision" }
+        }
+      }
+    },
+    "resolvedAt": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "responseKind": { "const": "CORRECTION" } } },
+      "then": {
+        "properties": { "correctionStatementRef": { "$ref": "#/definitions/id" } },
+        "required": ["correctionStatementRef"]
+      },
+      "else": { "not": { "required": ["correctionStatementRef"] } }
+    }
+  ],
+  "definitions": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,499}$" },
+    "revision": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,499}$" }
+  }
+}

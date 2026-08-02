@@ -31,6 +31,7 @@
     { "path": "./packages/closure-verifier" },
     { "path": "./packages/stop-continuation" },
     { "path": "./packages/interaction-policy" },
+    { "path": "./packages/confirmation-writeback" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

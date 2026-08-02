@@ -3,13 +3,18 @@ import addFormatsModule from "ajv-formats";
 import type {
   ClosureVerificationResult,
   ConfirmationRequest,
+  ConfirmationResolution,
   EventEnvelope,
   KnowledgeAsset,
   KnowledgeCandidate,
   ContextEnvelope,
   KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
-import { CONFIRMATION_EFFECTS_BY_KIND, SAFE_CONFIRMATION_EFFECT_BY_KIND } from "@zhiloop/domain";
+import {
+  CONFIRMATION_EFFECTS_BY_KIND,
+  CONFIRMATION_RELATION_BY_EFFECT,
+  SAFE_CONFIRMATION_EFFECT_BY_KIND,
+} from "@zhiloop/domain";
 
 import eventSchema from "./json/event.schema.json" with { type: "json" };
 import knowledgeAssetSchema from "./json/knowledge-asset.schema.json" with { type: "json" };
@@ -18,6 +23,7 @@ import knowledgeExtractionOutputSchema from "./json/knowledge-extraction-output.
 import contextEnvelopeSchema from "./json/context-envelope.schema.json" with { type: "json" };
 import closureVerificationResultSchema from "./json/closure-verification-result.schema.json" with { type: "json" };
 import confirmationRequestSchema from "./json/confirmation-request.schema.json" with { type: "json" };
+import confirmationResolutionSchema from "./json/confirmation-resolution.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
@@ -29,6 +35,7 @@ export const SCHEMA_NAMES = [
   "context-envelope",
   "closure-verification-result",
   "confirmation-request",
+  "confirmation-resolution",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -63,6 +70,7 @@ export const schemas = Object.freeze({
   "context-envelope": contextEnvelopeSchema,
   "closure-verification-result": closureVerificationResultSchema,
   "confirmation-request": confirmationRequestSchema,
+  "confirmation-resolution": confirmationResolutionSchema,
 });
 
 const ajv = new Ajv({ allErrors: true, strict: true });
@@ -75,6 +83,7 @@ const validators = {
   "context-envelope": ajv.compile(contextEnvelopeSchema),
   "closure-verification-result": ajv.compile(closureVerificationResultSchema),
   "confirmation-request": ajv.compile(confirmationRequestSchema),
+  "confirmation-resolution": ajv.compile(confirmationResolutionSchema),
 } satisfies Record<SchemaName, ValidateFunction>;
 
 function toIssues(errors: ErrorObject[] | null | undefined): readonly SchemaIssue[] {
@@ -222,6 +231,7 @@ export function parseConfirmationRequest(input: unknown): ParseResult<Confirmati
   const selected = result.value.options.find((item) => item.optionId === result.value.safeDefaultOptionId);
   if (new Set(optionIds).size !== optionIds.length
     || new Set(effects).size !== effects.length
+    || effects.length !== allowedEffects.length
     || allowedEffects.some((effect) => !effects.includes(effect))
     || selected?.effect !== SAFE_CONFIRMATION_EFFECT_BY_KIND[result.value.kind]) {
     return {
@@ -235,6 +245,37 @@ export function parseConfirmationRequest(input: unknown): ParseResult<Confirmati
           keyword: "safeDefault",
           message: "must select the unique conservative option for the confirmation kind",
         }],
+      },
+    };
+  }
+  return result;
+}
+
+export function parseConfirmationResolution(input: unknown): ParseResult<ConfirmationResolution> {
+  const result = parse<ConfirmationResolution>(
+    "confirmation-resolution",
+    validators["confirmation-resolution"],
+    input,
+    Object.keys(confirmationResolutionSchema.properties),
+  );
+  if (!result.ok) return result;
+  const relationIds = result.value.relations.map((item) => item.subjectId);
+  const expectedRelation = result.value.responseKind === "CORRECTION"
+    ? "CORRECTS"
+    : CONFIRMATION_RELATION_BY_EFFECT[result.value.effect];
+  if (new Set(relationIds).size !== relationIds.length
+    || relationIds.length !== result.value.subjectIds.length
+    || result.value.subjectIds.some((id) => !relationIds.includes(id))
+    || result.value.relations.some((item) => item.relation !== expectedRelation)
+    || (result.value.responseKind === "CORRECTION"
+      && (result.value.effect !== "REJECT_CANDIDATE" || result.value.correctionStatementRef !== result.value.responseEventId))
+    || result.value.requestTurnId === result.value.responseTurnId) {
+    return {
+      ok: false,
+      error: {
+        code: "SCHEMA_VALIDATION_FAILED", schema: "confirmation-resolution",
+        message: "confirmation-resolution lineage is inconsistent",
+        issues: [{ instancePath: "/relations", keyword: "subjectCoverage", message: "must cover every subject exactly once" }],
       },
     };
   }

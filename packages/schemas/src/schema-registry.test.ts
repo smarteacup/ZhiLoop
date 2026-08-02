@@ -1,6 +1,7 @@
 import {
   ASSERTION_KINDS,
   CONFIRMATION_KINDS,
+  CONFIRMATION_RELATIONS,
   EVIDENCE_TYPES,
   EVENT_SOURCES,
   EVENT_TYPES,
@@ -13,12 +14,14 @@ import {
   type KnowledgeCandidate,
   type KnowledgeExtractionOutput,
   type ConfirmationRequest,
+  type ConfirmationResolution,
 } from "@zhiloop/domain";
 import { describe, expect, it } from "vitest";
 
 import {
   parseEventEnvelope,
   parseConfirmationRequest,
+  parseConfirmationResolution,
   parseKnowledgeAsset,
   parseKnowledgeCandidate,
   parseKnowledgeExtractionOutput,
@@ -120,6 +123,24 @@ const confirmationFixture = {
   safeDefaultOptionId: "keep-project",
   createdAt: "2026-08-02T03:00:00.000Z",
 } satisfies ConfirmationRequest;
+
+const confirmationResolutionFixture = {
+  schemaVersion: 1,
+  resolutionId: "resolution-1",
+  confirmationId: "confirmation-1",
+  sessionId: "session-1",
+  requestTurnId: "turn-20",
+  responseTurnId: "turn-21",
+  responseEventId: "event-reply",
+  responseKind: "CORRECTION",
+  responseTextHash: "a".repeat(64),
+  selectedOptionId: "reject-candidate",
+  effect: "REJECT_CANDIDATE",
+  subjectIds: ["knowledge-1"],
+  correctionStatementRef: "event-reply",
+  relations: [{ subjectId: "knowledge-1", relation: "CORRECTS", beforeRevision: "candidate-v1", afterRevision: "candidate-v2" }],
+  resolvedAt: "2026-08-02T03:01:00.000Z",
+} satisfies ConfirmationResolution;
 
 describe("schema registry", () => {
   it("parses an EventEnvelope and separates unknown fields", () => {
@@ -281,6 +302,26 @@ describe("schema registry", () => {
     }).ok).toBe(false);
   });
 
+  it("validates correction lineage and exact subject coverage", () => {
+    expect(parseConfirmationResolution(confirmationResolutionFixture).ok).toBe(true);
+    expect(parseConfirmationResolution({ ...confirmationResolutionFixture, correctionStatementRef: undefined }).ok).toBe(false);
+    expect(parseConfirmationResolution({ ...confirmationResolutionFixture, correctionStatementRef: "event-other" }).ok).toBe(false);
+    expect(parseConfirmationResolution({ ...confirmationResolutionFixture, responseTurnId: "turn-20" }).ok).toBe(false);
+    expect(parseConfirmationResolution({
+      ...confirmationResolutionFixture,
+      responseKind: "OPTION", correctionStatementRef: undefined,
+      relations: [{ ...confirmationResolutionFixture.relations[0], relation: "CONFIRMS" }],
+    }).ok).toBe(false);
+    const expanded = parseConfirmationResolution({
+      ...confirmationResolutionFixture,
+      relations: [...confirmationResolutionFixture.relations, {
+        subjectId: "knowledge-other", relation: "CORRECTS", beforeRevision: "v1", afterRevision: "v2",
+      }],
+    });
+    expect(expanded.ok).toBe(false);
+    if (!expanded.ok) expect(expanded.error.issues[0]?.keyword).toBe("subjectCoverage");
+  });
+
   it("keeps schema enums synchronized with Domain constants", () => {
     expect(schemas.event.properties.source.enum).toEqual(EVENT_SOURCES);
     expect(schemas.event.properties.eventType.enum).toEqual(EVENT_TYPES);
@@ -308,6 +349,9 @@ describe("schema registry", () => {
     );
     expect(schemas["confirmation-request"].properties.kind.enum).toEqual(
       CONFIRMATION_KINDS.filter((kind) => kind !== "LOW_IMPACT_UNKNOWN"),
+    );
+    expect(schemas["confirmation-resolution"].properties.relations.items.properties.relation.enum).toEqual(
+      CONFIRMATION_RELATIONS,
     );
   });
 });

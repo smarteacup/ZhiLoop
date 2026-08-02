@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P6 进行中（P5 Gate 已通过，进入 CKL-601）  
+**当前里程碑**：P6 进行中（CKL-601 已完成，进入 CKL-602）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -46,6 +46,7 @@
 | CKL-506 | 完成 | `21de066` | Codex UserPrompt additionalContext、OFF/SHADOW/ACTIVE、500ms Abort、失败开放、运行中回滚 | 485 项模块测试、40 项架构/Gate 测试；8 高/9 中风险，全部修复；专项行 95.94%、分支 88.42% |
 | CKL-507 | 完成 | `f8c2681` | 四个运行中知识工具、current/Scope 复核、L2 增量与 L3 Delta、MCP/主动注入故障隔离 | 491 项模块测试、41 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.16%、分支 88.18% |
 | P5 Gate | 通过 | `d43fb8e` | 10 Case 全链 Golden、ACTIVE Evidence、timeout 空输出、MCP L1/L2→L3 与项目隔离 | Recall@5/Precision@5/Traceability 100%；Scope/forbidden/over-budget/自动 L4 均为 0；491 模块、43 Gate 全通过 |
+| CKL-601 | 完成 | `86ac991` | 结构化 Closure Result、确定性 Gate/Boundary 优先、精确 Context Retry、受限 Semantic Gate | 499 项模块测试、43 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 100%、分支 89.83% |
 
 ## 2. P0 Gate 证据
 
@@ -87,6 +88,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-601：实现确定性 `ClosureVerifier`，检查实现、测试、Artifact 和未决问题，不扩大原始 Requirement。
+- 下一任务是 CKL-602：实现 Stop Hook Adapter、有限 continuation counter、context/correction delta、500ms/3s deadline 与失败开放。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

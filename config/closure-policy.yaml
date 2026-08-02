@@ -1,0 +1,12 @@
+enabled: true
+defaultMaxContinuations: 1
+highRiskMaxContinuations: 2
+deterministicDeadlineMs: 500
+semanticVerificationDeadlineMs: 3000
+decisions:
+  - PASS
+  - RETRY_WITH_CONTEXT
+  - RETRY_WITH_CORRECTION
+  - ASK_USER
+failOpenOnTimeout: true
+forbidRequirementExpansion: true

@@ -7,7 +7,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [
-        "packages/{domain,schemas,config,ingestion-codex,conversation-ledger,hook-runtime,conversation-normalizer,episode-builder,knowledge-compiler,candidate-repository,project-identity,scope-resolver,evidence-engine,evidence-policy,invalidation-engine,markdown-repository,knowledge-registry,knowledge-indexer,vector-index,knowledge-governance,query-context,retrieval-engine,knowledge-reranker,context-orchestrator,retrieval-evaluation,codex-context-injection,knowledge-mcp}/src/**/*.ts",
+        "packages/{domain,schemas,config,ingestion-codex,conversation-ledger,hook-runtime,conversation-normalizer,episode-builder,knowledge-compiler,candidate-repository,project-identity,scope-resolver,evidence-engine,evidence-policy,invalidation-engine,markdown-repository,knowledge-registry,knowledge-indexer,vector-index,knowledge-governance,query-context,retrieval-engine,knowledge-reranker,context-orchestrator,retrieval-evaluation,codex-context-injection,knowledge-mcp,closure-verifier}/src/**/*.ts",
         "apps/cli/src/knowledge-cli.ts",
       ],
       exclude: ["**/*.test.ts", "**/index.ts"],

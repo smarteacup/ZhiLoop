@@ -28,6 +28,7 @@
     { "path": "./packages/retrieval-evaluation" },
     { "path": "./packages/codex-context-injection" },
     { "path": "./packages/knowledge-mcp" },
+    { "path": "./packages/closure-verifier" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

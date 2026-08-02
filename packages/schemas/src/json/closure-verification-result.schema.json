@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zhiloop.dev/schemas/closure-verification-result/v1",
+  "title": "ClosureVerificationResult",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "verificationId", "taskId", "decision", "reasonCodes", "missingKnowledgeIds", "unmetGateIds", "violatedBoundaryIds", "gateResults"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "verificationId": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "taskId": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "decision": { "enum": ["PASS", "RETRY_WITH_CONTEXT", "RETRY_WITH_CORRECTION", "ASK_USER"] },
+    "reasonCodes": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/definitions/reasonCode" } },
+    "missingKnowledgeIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "unmetGateIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "violatedBoundaryIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "gateResults": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["gateId", "status", "reasonCodes", "evidenceRefs"],
+        "properties": {
+          "gateId": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "status": { "enum": ["SATISFIED", "UNSATISFIED", "UNKNOWN"] },
+          "reasonCodes": { "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/definitions/reasonCode" } },
+          "evidenceRefs": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+        }
+      }
+    }
+  },
+  "definitions": { "reasonCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,99}$" } }
+}

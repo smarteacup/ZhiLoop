@@ -1,6 +1,7 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import addFormatsModule from "ajv-formats";
 import type {
+  ClosureVerificationResult,
   EventEnvelope,
   KnowledgeAsset,
   KnowledgeCandidate,
@@ -13,6 +14,7 @@ import knowledgeAssetSchema from "./json/knowledge-asset.schema.json" with { typ
 import knowledgeCandidateSchema from "./json/knowledge-candidate.schema.json" with { type: "json" };
 import knowledgeExtractionOutputSchema from "./json/knowledge-extraction-output.schema.json" with { type: "json" };
 import contextEnvelopeSchema from "./json/context-envelope.schema.json" with { type: "json" };
+import closureVerificationResultSchema from "./json/closure-verification-result.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
@@ -22,6 +24,7 @@ export const SCHEMA_NAMES = [
   "knowledge-extraction-output",
   "knowledge-asset",
   "context-envelope",
+  "closure-verification-result",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -54,6 +57,7 @@ export const schemas = Object.freeze({
   "knowledge-extraction-output": knowledgeExtractionOutputSchema,
   "knowledge-asset": knowledgeAssetSchema,
   "context-envelope": contextEnvelopeSchema,
+  "closure-verification-result": closureVerificationResultSchema,
 });
 
 const ajv = new Ajv({ allErrors: true, strict: true });
@@ -64,6 +68,7 @@ const validators = {
   "knowledge-extraction-output": ajv.compile(knowledgeExtractionOutputSchema),
   "knowledge-asset": ajv.compile(knowledgeAssetSchema),
   "context-envelope": ajv.compile(contextEnvelopeSchema),
+  "closure-verification-result": ajv.compile(closureVerificationResultSchema),
 } satisfies Record<SchemaName, ValidateFunction>;
 
 function toIssues(errors: ErrorObject[] | null | undefined): readonly SchemaIssue[] {
@@ -185,5 +190,14 @@ export function parseContextEnvelope(input: unknown): ParseResult<ContextEnvelop
     validators["context-envelope"],
     input,
     Object.keys(contextEnvelopeSchema.properties),
+  );
+}
+
+export function parseClosureVerificationResult(input: unknown): ParseResult<ClosureVerificationResult> {
+  return parse(
+    "closure-verification-result",
+    validators["closure-verification-result"],
+    input,
+    Object.keys(closureVerificationResultSchema.properties),
   );
 }

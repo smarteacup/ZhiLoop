@@ -462,6 +462,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-601：Closure Verifier
 
 **依赖**：CKL-304、CKL-504、CKL-506  
+**状态**：已完成  
 **交付物**：`ClosureVerificationResult` 类型、`closure-verification-result.schema.json`、`closure-policy.yaml`，以及 `PASS`、`RETRY_WITH_CONTEXT`、`RETRY_WITH_CORRECTION`、`ASK_USER` 结构化决策。  
 **验收条件**：
 

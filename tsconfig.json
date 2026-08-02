@@ -22,6 +22,7 @@
     { "path": "./packages/vector-index" },
     { "path": "./packages/knowledge-governance" },
     { "path": "./packages/query-context" },
+    { "path": "./packages/retrieval-engine" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

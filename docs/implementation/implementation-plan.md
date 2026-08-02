@@ -372,6 +372,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-502：多路召回和 RRF
 
 **依赖**：CKL-404、CKL-501  
+**状态**：已完成  
 **交付物**：Exact、FTS、Vector、Scope、Relation 召回与融合。  
 **验收条件**：
 

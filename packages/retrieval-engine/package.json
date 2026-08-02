@@ -1,0 +1,25 @@
+{
+  "name": "@zhiloop/retrieval-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/config",
+      "@zhiloop/domain",
+      "@zhiloop/knowledge-registry",
+      "@zhiloop/query-context",
+      "@zhiloop/vector-index"
+    ],
+    "allowedExternalDependencies": []
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": {
+    "@zhiloop/config": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/knowledge-registry": "0.0.0",
+    "@zhiloop/query-context": "0.0.0",
+    "@zhiloop/vector-index": "0.0.0"
+  }
+}

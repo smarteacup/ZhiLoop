@@ -1,0 +1,16 @@
+{
+  "name": "@zhiloop/stop-continuation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": ["@zhiloop/closure-verifier", "@zhiloop/config", "@zhiloop/domain", "@zhiloop/knowledge-mcp"],
+    "allowedExternalDependencies": ["node:*"]
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": {
+    "@zhiloop/closure-verifier": "0.0.0", "@zhiloop/config": "0.0.0",
+    "@zhiloop/domain": "0.0.0", "@zhiloop/knowledge-mcp": "0.0.0"
+  }
+}

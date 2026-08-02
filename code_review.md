@@ -4,46 +4,48 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-601 | 38 次 |
-| 耗时 | 540s | 17580s |
-| 高风险 | 8 | 160 |
-| 中风险 | 10 | 234 |
+| CR 标识/次数 | CKL-602 | 39 次 |
+| 耗时 | 600s | 18180s |
+| 高风险 | 9 | 169 |
+| 中风险 | 10 | 244 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 18/18（100%） | 100% |
+| 修复程度 | 19/19（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | Semantic Verifier 新增任务外 Gate | 输出 Gate ID 必须与声明的 SEMANTIC 集合完全相等，否则 ASK_USER 且丢弃新 ID。 |
-| 高 | 模型语义 PASS 覆盖 Boundary/测试失败 | Boundary 和确定性 Gate 在任何 Semantic 调用前决策并返回。 |
-| 高 | 其他 task 的 Envelope 满足当前任务 | ContextEnvelope taskId 必须与 taskId 严格相等。 |
-| 高 | `../`/`./`/绝对路径绕过 Boundary | Diff/Gate/Boundary 全部要求 canonical repository-relative path。 |
-| 高 | 信息不足泛化为模糊重试 | 只返回原 requiredKnowledge 中缺失或 detail 不足的精确 ID。 |
-| 高 | Correction 无法区分 Gate 与 Boundary | Schema 独立输出 unmetGateIds 和 violatedBoundaryIds。 |
-| 高 | Semantic timeout 被 abort rejection 抢先误报 | catch 同时检查 error 和 AbortSignal.reason 的 Timeout 类型。 |
-| 高 | Final conclusion 明确未完成仍 PASS | claimedComplete=false 强制 RETRY_WITH_CORRECTION。 |
-| 中 | Tool/Test 重复 ID 选择首个造成歧义 | evidence 集合 ID 强制唯一。 |
-| 中 | 结果 reason/gate fields 漂移 | 版本化 JSON Schema，嵌套 Gate Result strict。 |
-| 中 | Semantic Port 读取完整对话引入隐式需求 | Port 输入只含 objective、声明 Gate、Envelope、Diff、Tool、Test、Conclusion。 |
-| 中 | Semantic 输出 unknown 被当 PASS | UNKNOWN 固定 ASK_USER。 |
-| 中 | Port 不可用伪造失败/成功 | 不可用固定 ASK_USER，不改变 Gate 事实。 |
-| 中 | Required L3 被 L1/L2 误满足 | detail level 数值比较并覆盖浅层测试。 |
-| 中 | Boundary 违规只给泛化文本 | 返回原始 boundaryId，可直接生成 correction delta。 |
-| 中 | Closure policy 文件与默认值漂移 | 仓库 YAML 与 DEFAULT_CONFIGURATION 契约测试。 |
-| 中 | 输出被调用者修改 | Schema parse 后 clone + recursive freeze。 |
-| 中 | 无界 evidence 集合拖慢 Stop | Gate/Boundary/Knowledge 100，Diff/Tool/Test 10k 硬限制。 |
+| 高 | Stop continuation 递归形成死循环 | `stop_hook_active` 前置短路，默认最多 1 次、高风险最多 2 次。 |
+| 高 | 并发 Stop 同时消费最后一次额度 | 输出前通过同步 `claim` 原子占用，竞争失败直接结束。 |
+| 高 | Verifier 新增任务外 Knowledge/Gate/Boundary | identity、完整 Gate 集合和三个 target 子集全部二次验证。 |
+| 高 | Verifier 返回 PASS 却携带失败或缺失目标 | decision、Gate status 与 target shape 交叉校验，矛盾结果 UNKNOWN。 |
+| 高 | Context Port 少给、多给或重复注入知识 | 返回 ID 必须与请求集合一一对应，重复项也拒绝。 |
+| 高 | CKL-601 把 UNKNOWN Gate 当作 unmet 引导错误修复 | unmet 现在只取 `UNSATISFIED`，并新增 Boundary + Semantic 回归。 |
+| 高 | CKL-601 生成无 Gate/Boundary target 的 correction | 全 Gate 满足但 completion 不确定时改为 ASK_USER。 |
+| 高 | 下游超时拖垮 Stop Hook | deterministic 500ms、semantic 3s 与外层剩余时间取最小并 Abort。 |
+| 高 | Hook 故障阻塞 Codex | 异常统一 UNKNOWN，Stop stdout 序列化为合法空对象 `{}`。 |
+| 中 | `session:turn` 字符串连接产生 counter key 碰撞 | 使用 JSON tuple 编码。 |
+| 中 | 验证器/上下文异常把秘密写进诊断 | diagnostic 去换行/NUL 并截断 500 字符；不进入 Stop reason。 |
+| 中 | Correction 重放完整任务导致重复工作 | 只序列化未满足 Gate 描述和违规 Boundary path。 |
+| 中 | Context retry 注入完整 Envelope | 只加载 verifier 指定 ID 的 L3 delta 与 trace ID。 |
+| 中 | Semantic 在不需要时增加延迟 | 仅 deterministic 返回 semantic unavailable 时调用可选端口。 |
+| 中 | 外层剩余时间为负仍调用下游 | deadline 在小于 1ms 时立即失败开放。 |
+| 中 | Context trace 无法追踪 | trace ID 强制非空、无控制字符且不超过 500 字符。 |
+| 中 | counter 早占用导致 Port 失败也损失额度 | 所有验证和 delta 成功后才 claim。 |
+| 中 | 用户/任务 identity 串线 | `turn_id` 必须与 Closure taskId 一致；counter 同时绑定 session/turn。 |
+| 中 | 短进程内存 counter 被误当持久保证 | Store 明确端口化，设计文档要求生产短进程装配持久实现。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | Closure Verifier 8/8；Lines 100%、Branches 89.83% |
-| 全仓 | 499/499 模块；43/43 架构/Gate |
-| 整体覆盖率 | Lines 97.06%、Branches 90.15% |
-| Workspace | 30 个，依赖/import policy 通过 |
+| Stop 专项 | 9/9；Lines 97.64%、Branches 90.52%、Functions 100% |
+| Closure + Stop 联合回归 | 18/18；Lines 98.92%、Branches 90.69% |
+| 全仓 | 509/509 模块；43/43 架构/Gate |
+| 整体覆盖率 | Lines 97.07%、Branches 90.18%、Functions 98.76% |
+| Workspace | 31 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-601 五项验收满足，18 项风险全部修复，无遗留 actionable finding。可以进入 CKL-602。
+CKL-602 七项验收满足，联合修复 CKL-601 两处目标语义缺口，19 项风险全部修复，无遗留 actionable finding。短进程部署必须使用持久化 `ContinuationCounterStore`，该约束属于 CKL-703 装配验收，不阻塞当前模块。可以进入 CKL-603。

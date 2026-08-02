@@ -29,6 +29,7 @@
     { "path": "./packages/codex-context-injection" },
     { "path": "./packages/knowledge-mcp" },
     { "path": "./packages/closure-verifier" },
+    { "path": "./packages/stop-continuation" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

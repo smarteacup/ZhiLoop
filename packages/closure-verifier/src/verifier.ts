@@ -30,7 +30,7 @@ function buildResult(
   const value: ClosureVerificationResult = {
     schemaVersion: 1, verificationId: input.verificationId, taskId: input.task.taskId,
     decision, reasonCodes: [...new Set(reasonCodes)], missingKnowledgeIds: [...new Set(missingKnowledgeIds)],
-    unmetGateIds: gateResults.filter((item) => item.status !== "SATISFIED").map((item) => item.gateId),
+    unmetGateIds: gateResults.filter((item) => item.status === "UNSATISFIED").map((item) => item.gateId),
     violatedBoundaryIds: [...new Set(violatedBoundaryIds)],
     gateResults,
   };
@@ -153,11 +153,14 @@ export class ClosureVerifier {
       boundaryViolations.map((item) => item.boundaryId),
     );
     const deterministicFailures = gateResults.filter((item) => item.status === "UNSATISFIED");
-    if (deterministicFailures.length > 0 || !input.finalConclusion.claimedComplete) {
+    if (deterministicFailures.length > 0) {
       return buildResult(input, "RETRY_WITH_CORRECTION", [
-        ...(deterministicFailures.length > 0 ? ["DETERMINISTIC_GATE_FAILED"] : []),
+        "DETERMINISTIC_GATE_FAILED",
         ...(!input.finalConclusion.claimedComplete ? ["FINAL_CONCLUSION_INCOMPLETE"] : []),
       ], gateResults);
+    }
+    if (!input.finalConclusion.claimedComplete) {
+      return buildResult(input, "ASK_USER", ["FINAL_CONCLUSION_INCOMPLETE"], gateResults);
     }
     const contextById = new Map(input.contextEnvelope.items.map((item) => [item.id, item]));
     const missingKnowledge = input.task.requiredKnowledge.filter((required) => {

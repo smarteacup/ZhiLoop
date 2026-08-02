@@ -475,7 +475,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-602：Stop Hook 有限续跑
 
 **依赖**：CKL-104、CKL-507、CKL-601  
-**交付物**：Stop Adapter、context delta、correction delta、continuation counter。  
+**状态**：已完成  
+**交付物**：`@zhiloop/stop-continuation` Stop Adapter、精确 context/correction delta、可替换 continuation counter、分层 deadline 和 Codex Stop JSON 序列化。  
 **验收条件**：
 
 - `PASS` 正常结束 Turn。

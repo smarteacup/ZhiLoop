@@ -77,7 +77,7 @@ describe("ClosureVerifier", () => {
     const result = await new ClosureVerifier(semantic).verify(value, DEFAULT_CONFIGURATION.closure);
     expect(result).toMatchObject({
       decision: "RETRY_WITH_CORRECTION", reasonCodes: ["DECLARED_BOUNDARY_VIOLATED"],
-      violatedBoundaryIds: ["boundary-secrets"],
+      unmetGateIds: [], violatedBoundaryIds: ["boundary-secrets"],
     });
     expect(semantic.verify).not.toHaveBeenCalled();
     expect(result.violatedBoundaryIds.every((id) => value.task.boundaries.some((boundary) => boundary.boundaryId === id))).toBe(true);
@@ -91,6 +91,16 @@ describe("ClosureVerifier", () => {
     expect(result.decision).toBe("RETRY_WITH_CORRECTION");
     expect(result.reasonCodes).toEqual(["DETERMINISTIC_GATE_FAILED", "FINAL_CONCLUSION_INCOMPLETE"]);
     expect(result.unmetGateIds).toEqual(["gate-test", "gate-open"]);
+  });
+
+  it("asks instead of creating a targetless correction when completion is uncertain", async () => {
+    const result = await new ClosureVerifier().verify(input({
+      finalConclusion: { claimedComplete: false, summary: "Uncertain completion.", openIssues: [] },
+    }), DEFAULT_CONFIGURATION.closure);
+    expect(result).toMatchObject({
+      decision: "ASK_USER", reasonCodes: ["FINAL_CONCLUSION_INCOMPLETE"],
+      missingKnowledgeIds: [], unmetGateIds: [], violatedBoundaryIds: [],
+    });
   });
 
   it("requests exact missing knowledge IDs when detail is absent or too shallow", async () => {

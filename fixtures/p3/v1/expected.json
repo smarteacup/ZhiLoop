@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "implementationStatus": "IMPLEMENTED",
+  "experienceStatus": "VERIFIED",
+  "modelErrorStatus": "PROPOSED",
+  "globalScope": "GLOBAL",
+  "insufficientGlobalScope": "PROJECT",
+  "unrelatedChangeAction": "UNCHANGED",
+  "relatedChangeStatus": "STALE",
+  "preserveBody": true
+}

@@ -1,9 +1,9 @@
 # ZhiLoop 实施计划
 
-**状态**：In Progress（P0、CKL-101/102/103 已完成）  
+**状态**：In Progress（P0～P3 已完成，进入 P4）  
 **版本**：0.3  
 **创建日期**：2026-08-01  
-**最近更新**：2026-08-01  
+**最近更新**：2026-08-02  
 **依据**：[ZhiLoop（Codex Knowledge Layer）技术设计](../design/codex-knowledge-layer-tdd.md)
 
 ## 1. 实施约束
@@ -282,9 +282,13 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 ### P3 Gate
 
+**状态**：通过  
+
 - 代码存在但无测试的 Fixture 达到 `IMPLEMENTED`。
 - 代码和关联测试均成立的 Fixture 达到 `VERIFIED`。
 - 两项目隔离测试和 Global 晋升测试通过。
+
+设计、Golden Fixture、测试与风险证据见 [P3 Gate 验证报告](p3-gate-report.md)。
 
 ## 7. P4：Markdown/SQLite 知识库
 

@@ -33,6 +33,7 @@
     { "path": "./packages/interaction-policy" },
     { "path": "./packages/confirmation-writeback" },
     { "path": "./packages/feedback-engine" },
+    { "path": "./packages/codex-backfill" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

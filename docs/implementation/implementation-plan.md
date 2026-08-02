@@ -547,7 +547,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-702：历史线程回填
 
 **依赖**：CKL-701、CKL-205  
-**交付物**：thread list/read 分页、断点续传、dry-run。  
+**状态**：已完成  
+**交付物**：`@zhiloop/codex-backfill`、thread list/read 分页、默认 dry-run、策略跳过、SQLite Thread/Page 断点和可恢复 Ledger 写入。  
 **验收条件**：
 
 - 默认 dry-run 显示线程数、预计数据量和 Scope。

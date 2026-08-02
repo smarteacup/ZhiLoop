@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：P7 进行中（P6 Gate 已通过，进入 CKL-701）  
+**当前里程碑**：P7 进行中（CKL-701 已完成，进入 CKL-702）  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -52,6 +52,7 @@
 | CKL-604 | 完成 | `3142c0a` | Pending/Claim/Resolution SQLite、窄自然语言匹配、显式拒绝/纠正和 revision-fenced Effect | 550 项模块测试、43 项架构/Gate 测试；11 高/12 中风险，全部修复；专项行 97.58%、分支 89.02% |
 | CKL-605 | 完成 | `bd80f8b` | Scope feedback、pin/suppress 后置召回、L1-L3 复杂度学习和 MCP actual-use 关联 | 558 项模块测试、43 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 98.64%、分支 91.46% |
 | P6 Gate | 通过 | `27a1ee3` | 固定 100 Turn 交互、闭环、续跑与反馈联合验收 | 558 项模块测试、44 项架构/Gate 测试；5 高/6 中风险，全部修复；六项指标全部达标 |
+| CKL-701 | 完成 | `待本次提交` | App Server v2 最终态映射、turn.items 断线补偿和 Ledger 重连幂等 | 575 项模块测试、45 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 98.36%、分支 95.56% |
 
 ## 2. P0 Gate 证据
 
@@ -93,6 +94,6 @@ npm run check
 
 - P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
 - 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- 下一任务是 CKL-701：实现 App Server thread/turn/item/diff 标准事件映射、最终状态权威和断线重放幂等。
+- 下一任务是 CKL-702：实现 thread list/read 分页、dry-run、策略跳过和可中断恢复的历史线程回填。
 - CKL-104 只提供 Hook 运行时端口和 Spool；尚未安装真实 Hook，也未修改 `~/.ckl`、Codex 或 CCM 配置。
 - P1 Gate 已通过，但这不等同于授权安装；真实 Hook/Daemon 装配仍按后续部署任务单独实施和回滚验证。

@@ -536,7 +536,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-701：App Server Event Adapter
 
 **依赖**：CKL-101、CKL-105  
-**交付物**：thread/turn/item/diff 到标准事件的映射。  
+**状态**：已完成  
+**交付物**：`CodexAppServerEventAdapter`、v2 thread/turn/item/diff 映射、`item/completed` 权威状态、turn.items 断线补偿和 Ledger 重连幂等。  
 **验收条件**：
 
 - `item/completed` 作为 Item 最终权威状态。

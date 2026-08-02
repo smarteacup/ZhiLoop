@@ -1,0 +1,10 @@
+{"method":"thread/started","params":{"thread":{"id":"session-fixture-1","sessionId":"session-fixture-1","createdAt":1785643200,"cwd":"/workspace/project","cliVersion":"0.144.4","modelProvider":"openai","ephemeral":false,"source":"appServer","futureField":"ignored"}}}
+{"method":"turn/started","params":{"threadId":"session-fixture-1","turn":{"id":"turn-fixture-1","status":"inProgress","items":[]}}}
+{"method":"item/started","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","startedAtMs":1785643200100,"item":{"type":"userMessage","id":"turn-fixture-1","content":[{"type":"text","text":"Implement the adapter."}]}}}
+{"method":"item/completed","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","completedAtMs":1785643200200,"item":{"type":"userMessage","id":"turn-fixture-1","content":[{"type":"text","text":"Implement the adapter.","text_elements":[]}]}}}
+{"method":"item/completed","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","completedAtMs":1785643200300,"item":{"type":"commandExecution","id":"tool-fixture-1","command":"npm test","cwd":"/workspace/project","commandActions":[],"status":"completed","aggregatedOutput":"ok","exitCode":0,"durationMs":120}}}
+{"method":"turn/diff/updated","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","diff":"diff --git a/a.ts b/a.ts\n+export {};\n"}}
+{"method":"item/agentMessage/delta","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","itemId":"agent-fixture-1","delta":"Done"}}
+{"method":"item/completed","params":{"threadId":"session-fixture-1","turnId":"turn-fixture-1","completedAtMs":1785643200400,"item":{"type":"agentMessage","id":"agent-fixture-1","text":"Done.","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"session-fixture-1","turn":{"id":"turn-fixture-1","status":"completed","items":[],"itemsView":"full","error":null,"startedAt":1785643200,"completedAt":1785643201,"durationMs":1000}}}
+{"method":"thread/closed","params":{"threadId":"session-fixture-1"}}

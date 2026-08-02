@@ -1,6 +1,6 @@
 # ZhiLoop 实施计划
 
-**状态**：In Progress（P0～P5 已完成，进入 P6）  
+**状态**：Completed（P0～P7、横切任务与 MVP 最终单流 Gate 全部通过）  
 **版本**：0.3  
 **创建日期**：2026-08-01  
 **最近更新**：2026-08-02  
@@ -589,6 +589,16 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - 子进程禁用 shell、显式只读沙箱，超时/取消能终止运行，临时文件最终清理。
 - 诊断不保留 Prompt、对话正文、命令、reasoning、结果或 stderr 原文。
 - Compiler/Domain 不依赖 Codex CLI 实现，替换 App Server 只需增加同端口 Adapter。
+
+### P7 Gate
+
+**状态**：已通过  
+**验收条件**：
+
+- Codex 插件、CCM 合并安装和卸载在临时沙箱完整 round-trip。
+- sidecar 缺失时 Hook 空输出失败开放，MCP/doctor 保持明确失败。
+- Plugin/sidecar/protocol/Hook/App Server 兼容规则由机器可读声明验证。
+- Plugin 只包装 Adapter 和启动方式，领域与应用源码不复制进插件。
 
 ## 11. 横切任务
 

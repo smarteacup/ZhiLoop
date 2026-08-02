@@ -1,6 +1,6 @@
 # ZhiLoop 实施进度与验证记录
 
-**当前里程碑**：MVP 源码基线完成并通过最终验收  
+**当前里程碑**：P0～P7 与 MVP 最终单流 Gate 全部完成  
 **记录日期**：2026-08-02  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
@@ -34,7 +34,7 @@
 | P3 Gate | 通过 | `e156f77` | 代码/测试 Evidence 生命周期、项目隔离、结构化 GLOBAL 晋升、ERROR 失败关闭、正文保留 STALE | 342 项模块测试、38 项架构/Gate 测试；4 高/5 中风险，全部修复；整体行覆盖率 96.97%、分支 90.36% |
 | CKL-401 | 完成 | `f83067e` | 严格 Front Matter、原子 current、不可覆盖版本、手工编辑 trust 门禁、tombstone 与旧版恢复 | 358 项模块测试、38 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.41%、分支 85.30%；原子发布 P95 22.819ms |
 | CKL-402 | 完成 | `c32570f` | COMMITTED Markdown 到 SQLite 资产/版本/关系/Evidence/FTS5、事务 indexVersion、删除后重建 | 371 项模块测试、38 项架构/Gate 测试；7 高/8 中风险，全部修复；专项行 94.00%、分支 89.09%；100 资产重建 157.151ms |
-| CKL-403 | 完成 | `be5128a` | contentHash 增量、稳定 chunkId、跨版本单资产事务、去抖/max-wait、Node watcher | 384 项模块测试、38 项架构/Gate 测试；6 高/9 中风险，全部修复；Indexer 行 97.98%、分支 92.85%；100 重复通知 P95 295.755ms |
+| CKL-403 | 完成 | `be5128a` + `7304795` | contentHash 增量、稳定 chunkId、跨版本单资产事务、去抖/max-wait、Node watcher 与启动 reconcile | 384 项模块测试、38 项架构/Gate 测试；启动窗口回归真实 watcher 连续 5 轮通过 |
 | CKL-404 | 完成 | `06d6f82` | 可关闭 VectorIndexPort、embeddingVersion/cache、内存 cosine 索引、原子 replace/remove | 390 项模块测试、38 项架构/Gate 测试；5 高/7 中风险，全部修复；专项行 98.92%、分支 91.30% |
 | CKL-405 | 完成 | `66e736e` | 八类治理命令、薄 CLI/复用服务、状态门禁、版本化审计/suppression、双源 doctor | 409 项模块测试、38 项架构/Gate 测试；6 高/9 中风险，全部修复；专项行 96.05%、分支 90.48% |
 | P4 Gate | 通过 | `1329968` | 对话→验证→Markdown→SQLite 全链、删除投影等价重建、500 例 Shadow Dataset | 409 项模块测试、40 项架构/Gate 测试；4 高/5 中风险，全部修复；错误自动确认率 0/300=0.00% |
@@ -57,6 +57,7 @@
 | CKL-703 | 完成 | `b0effbc` | Codex 原生插件、CCM 可逆 Hook 合并、sidecar 生命周期和兼容声明 | 604 项模块测试、47 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 94.98%、分支 88.93% |
 | CKL-704 | 完成 | `749e085` | Daemon 生命周期、Hook/MCP 快路径、Worker 单飞和结构化健康 | 614 项模块测试、48 项架构/Gate 测试；8 高/7 中风险，全部修复；专项行 100%、分支 94.11% |
 | CKL-705 | 完成 | `a2b5c00` | 默认 read-only `codex exec`、结构化 Schema/result、JSONL 脱敏诊断、取消和有界进程输出 | 623 项模块测试、50 项架构/Gate 测试；专项行 96.00%、分支 88.46%；O(n²) 输出统计瓶颈已修复 |
+| MVP Final Gate | 通过 | `06149cc` | 同一任务贯穿捕获、编译、Evidence、Markdown/SQLite、召回、L2 注入、MCP 展开和 Stop 一次续跑 | 623 项模块测试、51 项架构/Gate 测试；同流约 143～189ms；无间接拼接证据 |
 
 ## 2. P0 Gate 证据
 
@@ -96,8 +97,8 @@ npm run check
 
 ## 4. 已知边界与下一步
 
-- P0 只建立工程、领域、Schema 和配置能力，不采集真实 Codex 对话，不读写 `~/.ckl`。
-- 当前没有 SQLite、Hook、Daemon 运行时或模型调用，因此不存在生产数据迁移和后台资源占用。
-- P0-P7、横切任务和补充的 CKL-704 均完成；最终验收映射见 `mvp-final-acceptance-report.md`。
-- CKL-704 提供发行层可装配的 Daemon 应用核；真实 Hook/Daemon 安装仍未执行，也未修改 `~/.ckl`、Codex 或 CCM 配置。
-- 后续工作属于发行与部署阶段，不应在没有明确授权时自动创建用户目录、注册系统服务或迁移真实数据。
+- 当前已经具备 SQLite、Hook、Daemon 编排和默认 `codex exec` 模型适配能力；它们只在源码与临时目录测试中运行，未接入真实用户数据。
+- P0～P7、横切任务、CKL-704/705 和最终单流 Gate 均完成；逐任务审计见 `completion-audit.md`。
+- 真实 Hook/Daemon 安装仍未执行，也未修改 `~/.ckl`、Codex 或 CCM 配置。
+- 发行阶段需要提供平台相关 `zhiloop-sidecar` transport，并明确安装目录、服务管理方式和回滚窗口。
+- 不应在没有明确授权时自动创建用户目录、注册系统服务或迁移真实数据。

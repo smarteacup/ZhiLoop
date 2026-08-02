@@ -26,6 +26,7 @@
     { "path": "./packages/knowledge-reranker" },
     { "path": "./packages/context-orchestrator" },
     { "path": "./packages/retrieval-evaluation" },
+    { "path": "./packages/codex-context-injection" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

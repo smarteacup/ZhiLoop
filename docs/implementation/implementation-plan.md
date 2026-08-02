@@ -422,6 +422,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-506：UserPromptSubmit 主动注入
 
 **依赖**：CKL-104、CKL-504、CKL-505  
+**状态**：已完成  
 **交付物**：`ContextEnvelope -> additionalContext` Adapter、超时和失败开放。  
 **验收条件**：
 

@@ -4,44 +4,45 @@
 
 | 指标 | 当前 | 累计 |
 |---|---:|---:|
-| CR 标识/次数 | CKL-505 | 34 次 |
-| 耗时 | 480s | 15780s |
-| 高风险 | 7 | 132 |
-| 中风险 | 9 | 199 |
+| CR 标识/次数 | CKL-506 | 35 次 |
+| 耗时 | 480s | 16260s |
+| 高风险 | 8 | 140 |
+| 中风险 | 9 | 208 |
 | 低风险 | 0 | 0 |
-| 修复程度 | 16/16（100%） | 100% |
+| 修复程度 | 17/17（100%） | 100% |
 
 ## 风险矩阵
 
 | 风险 | 问题 | 修复结果 |
 |---|---|---|
-| 高 | Trace 从 Rerank 结果复制 Scope/Evidence/来源导致解释被污染 | 信任字段和通道贡献固定取 Retrieval 原结果，只接收 Rerank 排名解释。 |
-| 高 | Executor 返回其他 Golden Query 的 Trace 冒充结果 | Trace 记录 prompt SHA-256；Runner 校验 prompt/project/task 身份。 |
-| 高 | 跨 Case 重复 Trace ID 破坏追溯唯一性 | Runner 维护本次 Trace ID 集合，重复按 Case ERROR。 |
-| 高 | 调用方伪造配置指纹掩盖算法变化 | Runner 内部 canonical JSON + SHA-256，不接收外部指纹声明。 |
-| 高 | 指标达标但 Scope 泄漏或自动 L4 仍开启默认注入 | `defaultInjectionAllowed` 绑定完整 Gate，而非仅质量阈值。 |
-| 高 | forbidden 命中未影响门禁 | 单独累计 forbiddenHits，任何命中使完整 Gate 失败。 |
-| 高 | 单 Case 异常终止整份评估 | Case 级隔离为 ERROR；相关 expected 仍进入 Recall 分母。 |
-| 中 | Recall/Precision 分母定义随实现漂移 | 固定 micro top-K 公式并输出 hits/relevant/returned totals。 |
-| 中 | 空或重复 relevant ID 产生虚高指标 | Dataset 要求每 Case 至少一个、唯一且合法 relevant ID。 |
-| 中 | relevant 与 forbidden 重叠形成不可满足 Case | 加载时要求两集合不相交。 |
-| 中 | 非 JSON、循环、非 finite 配置哈希不稳定 | canonicalizer 显式拒绝并覆盖攻击型测试。 |
-| 中 | Rerank rank/版本/候选集合不一致 | 校验唯一连续 rank、original rank、ID 子集与版本。 |
-| 中 | 错误文本泄露控制字符或无限增长 | 去 NUL/换行并限制 500 字符。 |
-| 中 | 复杂度选择缺少风险/歧义/冲突/预算解释 | Trace 强制生成四个 reason-code 轴，Runner 统计缺失数。 |
-| 中 | P95/空数据边界不确定 | 固定 nearest-rank P95；无成功 Trace 时复杂度统计为 0。 |
-| 中 | Runner 并发造成结果顺序不稳定 | 当前离线顺序执行并保持 Dataset Case 顺序。 |
+| 高 | 项目 A Envelope 注入项目 B | Prompt fingerprint、project/task、每项 Scope 与 Trace 双重一致性校验。 |
+| 高 | 500ms 超时或 Provider 异常阻断原始 prompt | 所有失败结果无 hook output；序列化为空 stdout，Codex 继续。 |
+| 高 | Provider 响应 Abort 的 rejection 抢先导致误分类 | timeout flag 在 Abort 前设置，catch 以该 flag 为准。 |
+| 高 | OFF 回滚后在途 Provider 迟到仍注入 | 请求完成前重读 revision/mode；变化即 ROLLED_BACK。 |
+| 高 | 未通过 Golden Gate 直接启用 ACTIVE | ACTIVE 强制 passing Evidence、dataset version 和 SHA-256 config fingerprint。 |
+| 高 | REFERENCE 中 instruction-like 文本被当成命令 | 显式 Authority 语义、JSON 数据边界和用户/高优先级指令优先声明。 |
+| 高 | Envelope 与 Trace 注入集合被替换 | ID/版本/Scope/Authority/detailLevel 顺序完全一致才渲染。 |
+| 高 | Hook 输出使用错误 Codex 事件契约 | 对照当前官方 Manual，仅输出支持的 `continue` 和 `hookSpecificOutput.additionalContext`。 |
+| 中 | Rollout Evidence 可由调用者事后修改 | activate 时 structuredClone，快照与嵌套 Evidence 递归 freeze。 |
+| 中 | 非法 Hook input 进入 Provider | 校验事件、session/turn/cwd/prompt、permission/model/transcript 边界。 |
+| 中 | Provider error 含控制字符或长敏感正文 | diagnostic 去 NUL/换行、限制 500，且不序列化到 stdout。 |
+| 中 | timer 保持进程或完成后误触发 | timer `unref` 并在 finally 清理。 |
+| 中 | 空 Envelope 产生无意义 developer context | 无知识且无 Task Contract 时返回 NO_CONTEXT。 |
+| 中 | Task Contract 被误当成动态知识替代品 | 仍是独立 JSON 区块；没有知识时可单独注入。 |
+| 中 | Feature revision 回退或重复 | revision 必须为递增安全整数。 |
+| 中 | Trace/Run ID 包含控制字符污染日志 | 输出前按有限单行文本校验。 |
+| 中 | Renderer 字段顺序不稳定影响快照与调试 | 对对象 key 做稳定排序后 JSON 序列化。 |
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 专项 | Retrieval Evaluation 8/8；Lines 98.01%、Branches 89.89% |
-| 全仓 | 471/471 模块；40/40 架构/Gate |
-| 整体覆盖率 | Lines 97.06%、Branches 90.27% |
-| Workspace | 27 个，依赖/import policy 通过 |
+| 专项 | Codex Context Injection 14/14；Lines 95.94%、Branches 88.42% |
+| 全仓 | 485/485 模块；40/40 架构/Gate |
+| 整体覆盖率 | Lines 97.04%、Branches 90.21% |
+| Workspace | 28 个，依赖/import policy 通过 |
 | 供应链 | 0 vulnerabilities |
 
 ## Review 结论
 
-CKL-505 四项验收满足，16 项风险全部修复，无遗留 actionable finding。可以进入 CKL-506。
+CKL-506 七项验收满足，17 项风险全部修复，无遗留 actionable finding。可以进入 CKL-507。

@@ -66,6 +66,9 @@ injection:
 
   it.each([
     ["verification", loadVerificationPolicy, { globalPromotion: { minVerifiedProjects: 1 } }],
+    ["interaction question rate", loadVerificationPolicy, { interaction: { questionWindowTurns: 1 } }],
+    ["interaction review queue", loadVerificationPolicy, { interaction: { createReviewTasks: true } }],
+    ["interaction unanswered expansion", loadVerificationPolicy, { interaction: { unansweredBehavior: "ASK_USER" } }],
     [
       "implementation status escalation",
       loadVerificationPolicy,

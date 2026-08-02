@@ -30,6 +30,7 @@
     { "path": "./packages/knowledge-mcp" },
     { "path": "./packages/closure-verifier" },
     { "path": "./packages/stop-continuation" },
+    { "path": "./packages/interaction-policy" },
     { "path": "./apps/daemon" },
     { "path": "./apps/cli" }
   ]

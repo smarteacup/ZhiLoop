@@ -490,7 +490,8 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 ### CKL-603：Interaction Policy
 
 **依赖**：CKL-304、CKL-601、CKL-602  
-**交付物**：冲突、Scope 晋升、规则覆盖和 `ASK_USER` 的微确认策略。  
+**状态**：已完成  
+**交付物**：`@zhiloop/interaction-policy`、版本化 `ConfirmationRequest`、Evidence/Closure/Rule Trigger Adapter、20 Turn 微确认窗口和无人回答安全默认值。  
 **验收条件**：
 
 - 每 Turn 最多一个确认问题。

@@ -65,7 +65,10 @@ export const verificationPolicySchema = z.strictObject({
   }),
   interaction: z.strictObject({
     maxQuestionsPerTurn: z.literal(1),
+    questionWindowTurns: z.literal(20),
     defaultScope: z.literal("PROJECT"),
+    unansweredBehavior: z.literal("SAFE_DEFAULT"),
+    createReviewTasks: z.literal(false),
   }),
 });
 
@@ -273,7 +276,13 @@ export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
       },
     },
     globalPromotion: { minVerifiedProjects: 2 },
-    interaction: { maxQuestionsPerTurn: 1, defaultScope: "PROJECT" },
+    interaction: {
+      maxQuestionsPerTurn: 1,
+      questionWindowTurns: 20,
+      defaultScope: "PROJECT",
+      unansweredBehavior: "SAFE_DEFAULT",
+      createReviewTasks: false,
+    },
   },
   retrieval: {
     topK: { exact: 30, fts: 30, vector: 30, relation: 20 },

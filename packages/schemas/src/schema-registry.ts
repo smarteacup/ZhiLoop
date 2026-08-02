@@ -2,12 +2,14 @@ import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import addFormatsModule from "ajv-formats";
 import type {
   ClosureVerificationResult,
+  ConfirmationRequest,
   EventEnvelope,
   KnowledgeAsset,
   KnowledgeCandidate,
   ContextEnvelope,
   KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
+import { CONFIRMATION_EFFECTS_BY_KIND, SAFE_CONFIRMATION_EFFECT_BY_KIND } from "@zhiloop/domain";
 
 import eventSchema from "./json/event.schema.json" with { type: "json" };
 import knowledgeAssetSchema from "./json/knowledge-asset.schema.json" with { type: "json" };
@@ -15,6 +17,7 @@ import knowledgeCandidateSchema from "./json/knowledge-candidate.schema.json" wi
 import knowledgeExtractionOutputSchema from "./json/knowledge-extraction-output.schema.json" with { type: "json" };
 import contextEnvelopeSchema from "./json/context-envelope.schema.json" with { type: "json" };
 import closureVerificationResultSchema from "./json/closure-verification-result.schema.json" with { type: "json" };
+import confirmationRequestSchema from "./json/confirmation-request.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
@@ -25,6 +28,7 @@ export const SCHEMA_NAMES = [
   "knowledge-asset",
   "context-envelope",
   "closure-verification-result",
+  "confirmation-request",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -58,6 +62,7 @@ export const schemas = Object.freeze({
   "knowledge-asset": knowledgeAssetSchema,
   "context-envelope": contextEnvelopeSchema,
   "closure-verification-result": closureVerificationResultSchema,
+  "confirmation-request": confirmationRequestSchema,
 });
 
 const ajv = new Ajv({ allErrors: true, strict: true });
@@ -69,6 +74,7 @@ const validators = {
   "knowledge-asset": ajv.compile(knowledgeAssetSchema),
   "context-envelope": ajv.compile(contextEnvelopeSchema),
   "closure-verification-result": ajv.compile(closureVerificationResultSchema),
+  "confirmation-request": ajv.compile(confirmationRequestSchema),
 } satisfies Record<SchemaName, ValidateFunction>;
 
 function toIssues(errors: ErrorObject[] | null | undefined): readonly SchemaIssue[] {
@@ -200,4 +206,37 @@ export function parseClosureVerificationResult(input: unknown): ParseResult<Clos
     input,
     Object.keys(closureVerificationResultSchema.properties),
   );
+}
+
+export function parseConfirmationRequest(input: unknown): ParseResult<ConfirmationRequest> {
+  const result = parse<ConfirmationRequest>(
+    "confirmation-request",
+    validators["confirmation-request"],
+    input,
+    Object.keys(confirmationRequestSchema.properties),
+  );
+  if (!result.ok) return result;
+  const optionIds = result.value.options.map((item) => item.optionId);
+  const effects = result.value.options.map((item) => item.effect);
+  const allowedEffects = CONFIRMATION_EFFECTS_BY_KIND[result.value.kind];
+  const selected = result.value.options.find((item) => item.optionId === result.value.safeDefaultOptionId);
+  if (new Set(optionIds).size !== optionIds.length
+    || new Set(effects).size !== effects.length
+    || allowedEffects.some((effect) => !effects.includes(effect))
+    || selected?.effect !== SAFE_CONFIRMATION_EFFECT_BY_KIND[result.value.kind]) {
+    return {
+      ok: false,
+      error: {
+        code: "SCHEMA_VALIDATION_FAILED",
+        schema: "confirmation-request",
+        message: "confirmation-request has an invalid or unsafe default option",
+        issues: [{
+          instancePath: "/safeDefaultOptionId",
+          keyword: "safeDefault",
+          message: "must select the unique conservative option for the confirmation kind",
+        }],
+      },
+    };
+  }
+  return result;
 }

@@ -71,7 +71,10 @@ function validateInput(input: EvidencePolicyInput): boolean {
     || ![...implementationRule.requiredAssertions, ...experienceRule.requiredAssertions]
       .every((kind) => ASSERTION_KINDS.includes(kind))
     || input.verificationPolicy.interaction.maxQuestionsPerTurn !== 1
-    || input.verificationPolicy.interaction.defaultScope !== "PROJECT") return false;
+    || input.verificationPolicy.interaction.questionWindowTurns !== 20
+    || input.verificationPolicy.interaction.defaultScope !== "PROJECT"
+    || input.verificationPolicy.interaction.unansweredBehavior !== "SAFE_DEFAULT"
+    || input.verificationPolicy.interaction.createReviewTasks !== false) return false;
   if ("projectId" in input.resolvedScope && input.resolvedScope.projectId !== undefined
     && input.resolvedScope.projectId !== input.projectScope.projectId) return false;
   const assertions = new Map(input.candidate.assertions.map((assertion) => [assertion.assertionId, assertion]));

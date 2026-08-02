@@ -1,5 +1,6 @@
 import {
   ASSERTION_KINDS,
+  CONFIRMATION_KINDS,
   EVIDENCE_TYPES,
   EVENT_SOURCES,
   EVENT_TYPES,
@@ -11,11 +12,13 @@ import {
   type KnowledgeAsset,
   type KnowledgeCandidate,
   type KnowledgeExtractionOutput,
+  type ConfirmationRequest,
 } from "@zhiloop/domain";
 import { describe, expect, it } from "vitest";
 
 import {
   parseEventEnvelope,
+  parseConfirmationRequest,
   parseKnowledgeAsset,
   parseKnowledgeCandidate,
   parseKnowledgeExtractionOutput,
@@ -99,6 +102,24 @@ const extractionFixture = {
     evidenceHints: [{ type: "USER_STATEMENT", sourceRef: "event-1" }],
   }],
 } satisfies KnowledgeExtractionOutput;
+
+const confirmationFixture = {
+  schemaVersion: 1,
+  confirmationId: "confirmation-1",
+  sessionId: "session-1",
+  turnId: "turn-20",
+  turnOrdinal: 20,
+  triggerId: "trigger-1",
+  kind: "SCOPE_PROMOTION",
+  subjectIds: ["knowledge-1"],
+  question: "是否提升为全局知识？",
+  options: [
+    { optionId: "keep-project", label: "仅保留在当前项目", effect: "KEEP_PROJECT" },
+    { optionId: "promote-global", label: "提升为全局知识", effect: "PROMOTE_GLOBAL" },
+  ],
+  safeDefaultOptionId: "keep-project",
+  createdAt: "2026-08-02T03:00:00.000Z",
+} satisfies ConfirmationRequest;
 
 describe("schema registry", () => {
   it("parses an EventEnvelope and separates unknown fields", () => {
@@ -245,6 +266,21 @@ describe("schema registry", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("validates a ConfirmationRequest and rejects unsafe or ambiguous defaults", () => {
+    expect(parseConfirmationRequest(confirmationFixture).ok).toBe(true);
+    const unsafe = parseConfirmationRequest({ ...confirmationFixture, safeDefaultOptionId: "promote-global" });
+    expect(unsafe.ok).toBe(false);
+    if (!unsafe.ok) expect(unsafe.error.issues[0]?.keyword).toBe("safeDefault");
+    expect(parseConfirmationRequest({
+      ...confirmationFixture,
+      options: [confirmationFixture.options[0], confirmationFixture.options[0]],
+    }).ok).toBe(false);
+    expect(parseConfirmationRequest({
+      ...confirmationFixture,
+      options: [confirmationFixture.options[0], { optionId: "apply-override", label: "覆盖规则", effect: "APPLY_OVERRIDE" }],
+    }).ok).toBe(false);
+  });
+
   it("keeps schema enums synchronized with Domain constants", () => {
     expect(schemas.event.properties.source.enum).toEqual(EVENT_SOURCES);
     expect(schemas.event.properties.eventType.enum).toEqual(EVENT_TYPES);
@@ -269,6 +305,9 @@ describe("schema registry", () => {
     expect(schemas["knowledge-asset"].properties.status.enum).toEqual(KNOWLEDGE_STATUSES);
     expect(schemas["knowledge-asset"].properties.relations.items.properties.type.enum).toEqual(
       KNOWLEDGE_RELATION_TYPES,
+    );
+    expect(schemas["confirmation-request"].properties.kind.enum).toEqual(
+      CONFIRMATION_KINDS.filter((kind) => kind !== "LOW_IMPACT_UNKNOWN"),
     );
   });
 });

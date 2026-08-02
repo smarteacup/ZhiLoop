@@ -319,6 +319,15 @@ describe("IncrementalKnowledgeIndexer", () => {
     const watcher = new NodeMarkdownKnowledgeWatcher(linked, scheduler);
     expect(() => watcher.start()).toThrow("real directory");
     watcher.close();
+
+    const nestedRoot = path.join(temporaryRoot, "nested-watch-root");
+    const nestedTarget = path.join(temporaryRoot, "nested-assets-target");
+    await mkdir(nestedRoot);
+    await mkdir(nestedTarget);
+    await symlink(nestedTarget, path.join(nestedRoot, "assets"));
+    const nestedWatcher = new NodeMarkdownKnowledgeWatcher(nestedRoot, scheduler);
+    expect(() => nestedWatcher.start()).toThrow("assets root must be a real directory");
+    nestedWatcher.close();
     await scheduler.close(false);
   });
 });

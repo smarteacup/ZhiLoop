@@ -1,4 +1,4 @@
-import { lstatSync, watch, type FSWatcher } from "node:fs";
+import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import path from "node:path";
 
 import type { DebouncedKnowledgeIndexer } from "./scheduler.js";
@@ -6,6 +6,36 @@ import type { NodeKnowledgeWatcherOptions } from "./types.js";
 
 const SAFE_ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 const VERSION_FILE = /^\d{8}\.md$/;
+const MAX_STARTUP_ASSETS = 100_000;
+
+function missing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function existingAssetIds(rootDirectory: string): readonly string[] {
+  const assetsDirectory = path.join(rootDirectory, "assets");
+  let metadata: ReturnType<typeof lstatSync>;
+  try {
+    metadata = lstatSync(assetsDirectory);
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error("knowledge assets root must be a real directory");
+  const assetIds: string[] = [];
+  for (const entry of readdirSync(assetsDirectory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !SAFE_ASSET_ID.test(entry.name)) continue;
+    const currentPath = path.join(assetsDirectory, entry.name, "current.md");
+    try {
+      const current = lstatSync(currentPath);
+      if (current.isFile() && !current.isSymbolicLink()) assetIds.push(entry.name);
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+    if (assetIds.length > MAX_STARTUP_ASSETS) throw new Error(`watch startup assets exceed ${MAX_STARTUP_ASSETS}`);
+  }
+  return assetIds.sort();
+}
 
 export function assetIdFromKnowledgePath(rootDirectory: string, changedPath: string): string | undefined {
   const root = path.resolve(rootDirectory);
@@ -54,6 +84,15 @@ export class NodeMarkdownKnowledgeWatcher {
       this.#lastError = error;
       this.#onError?.(error);
     });
+    try {
+      // The watch is registered before the scan. Existing assets are then reconciled,
+      // so a change during native watcher startup is either observed or read by this scan.
+      for (const assetId of existingAssetIds(this.#rootDirectory)) this.#scheduler.notifyAsset(assetId);
+    } catch (error) {
+      this.#watcher.close();
+      this.#watcher = undefined;
+      throw error;
+    }
   }
 
   close(): void {

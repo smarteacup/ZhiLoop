@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  evaluateSidecarCompatibility,
+  HookConfigurationInstaller,
   mergeHookConfigurations,
   ZHILOOP_HOOK_CONFIGURATION,
 } from "../packages/plugin-runtime/dist/index.js";
@@ -13,7 +17,7 @@ import {
 const execute = promisify(execFile);
 const pluginRoot = new URL("../plugins/zhiloop/", import.meta.url);
 
-test("CKL-703: plugin hooks, MCP startup wrapper, fail-open launcher, and package boundary stay aligned", async () => {
+test("P7 Gate: plugin sandbox round-trip, compatibility, fail-open startup, and package boundary stay aligned", async () => {
   const pluginHooks = JSON.parse(await readFile(new URL("hooks/hooks.json", pluginRoot), "utf8"));
   assert.deepEqual(pluginHooks, ZHILOOP_HOOK_CONFIGURATION);
 
@@ -44,4 +48,32 @@ test("CKL-703: plugin hooks, MCP startup wrapper, fail-open launcher, and packag
   assert.deepEqual(sourceFiles, [], "plugin wrapper must not copy application or domain source");
   const runtimeManifest = JSON.parse(await readFile(new URL("../packages/plugin-runtime/package.json", import.meta.url), "utf8"));
   assert.deepEqual(runtimeManifest.zhiloop.allowedWorkspaceDependencies, []);
+
+  const root = await mkdtemp(join(tmpdir(), "zhiloop-p7-gate-"));
+  const target = join(root, "ccm-hooks.json");
+  const receipt = join(root, "zhiloop-install.json");
+  const original = ' {"description":"CCM","hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"ccm capture"}]}]}}\n';
+  const installer = new HookConfigurationInstaller();
+  try {
+    await writeFile(target, original);
+    const installed = await installer.install({ targetPath: target, receiptPath: receipt });
+    assert.equal(installed.state, "ACTIVE");
+    assert.equal(installed.inserted.length, 4);
+    assert.match(await readFile(target, "utf8"), /ccm capture/u);
+    assert.deepEqual(evaluateSidecarCompatibility({
+      schemaVersion: 1,
+      status: "READY",
+      pluginVersion: compatibility.pluginVersion,
+      sidecarVersion: compatibility.minimumSidecarVersion,
+      protocolVersion: compatibility.protocolVersion,
+      hookSchemaVersion: compatibility.hookSchemaVersion,
+      appServerSchemaVersion: compatibility.appServerSchemaVersion,
+      startedAt: "2026-08-02T12:00:00.000Z",
+    }, compatibility), { compatible: true, issues: [] });
+    const uninstalled = await installer.uninstall(target, receipt);
+    assert.deepEqual(uninstalled, { status: "REMOVED", restoredExactOriginal: true, removedEntries: 4, conflicts: 0 });
+    assert.equal(await readFile(target, "utf8"), original);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

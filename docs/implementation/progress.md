@@ -47,7 +47,7 @@
 | CKL-507 | 完成 | `f8c2681` | 四个运行中知识工具、current/Scope 复核、L2 增量与 L3 Delta、MCP/主动注入故障隔离 | 491 项模块测试、41 项架构/Gate 测试；7 高/9 中风险，全部修复；专项行 97.16%、分支 88.18% |
 | P5 Gate | 通过 | `d43fb8e` | 10 Case 全链 Golden、ACTIVE Evidence、timeout 空输出、MCP L1/L2→L3 与项目隔离 | Recall@5/Precision@5/Traceability 100%；Scope/forbidden/over-budget/自动 L4 均为 0；491 模块、43 Gate 全通过 |
 | CKL-601 | 完成 | `86ac991` | 结构化 Closure Result、确定性 Gate/Boundary 优先、精确 Context Retry、受限 Semantic Gate | 499 项模块测试、43 项架构/Gate 测试；8 高/10 中风险，全部修复；专项行 100%、分支 89.83% |
-| CKL-602 | 完成 | `待本次提交` | Stop JSON Adapter、精确 context/correction delta、原子有限 counter、分层 deadline 与失败开放 | 509 项模块测试、43 项架构/Gate 测试；9 高/10 中风险，全部修复；专项行 97.64%、分支 90.52% |
+| CKL-602 | 完成 | `c18c3a7` | Stop JSON Adapter、精确 context/correction delta、原子有限 counter、分层 deadline 与失败开放 | 509 项模块测试、43 项架构/Gate 测试；9 高/10 中风险，全部修复；专项行 97.64%、分支 90.52% |
 
 ## 2. P0 Gate 证据
 

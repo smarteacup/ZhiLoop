@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "pluginVersion": "0.1.0",
+  "minimumSidecarVersion": "0.1.0",
+  "sidecarMajorVersion": 0,
+  "protocolVersion": 1,
+  "hookSchemaVersion": "codex-hooks-v1",
+  "appServerSchemaVersion": "codex-app-server-v2",
+  "codexCli": {
+    "minimumTested": "0.144.4",
+    "interfaces": ["plugin-v1", "hooks-v1", "app-server-v2"]
+  },
+  "failureMode": "fail-open"
+}

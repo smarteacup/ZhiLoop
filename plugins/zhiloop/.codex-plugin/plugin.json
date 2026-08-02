@@ -1,0 +1,19 @@
+{
+  "name": "zhiloop",
+  "version": "0.1.0",
+  "description": "Dynamic, scoped knowledge retrieval and closed-loop verification for Codex",
+  "author": {
+    "name": "ZhiLoop"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Zhiloop",
+    "shortDescription": "Scoped knowledge and closed-loop checks for Codex.",
+    "longDescription": "ZhiLoop captures reusable conclusions, injects minimal task-relevant knowledge, exposes deeper retrieval through MCP, and verifies closure without replacing existing Codex or CCM hooks.",
+    "developerName": "ZhiLoop",
+    "category": "Productivity",
+    "capabilities": ["knowledge-retrieval", "lifecycle-hooks", "closure-verification"],
+    "defaultPrompt": "Use ZhiLoop knowledge only when it is relevant to the current task, respect its scope and gates, and expand details through ZhiLoop MCP tools only when needed."
+  },
+  "mcpServers": "./.mcp.json"
+}

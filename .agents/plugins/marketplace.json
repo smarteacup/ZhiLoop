@@ -1,0 +1,20 @@
+{
+  "name": "zhiloop",
+  "interface": {
+    "displayName": "ZhiLoop"
+  },
+  "plugins": [
+    {
+      "name": "zhiloop",
+      "source": {
+        "source": "local",
+        "path": "./plugins/zhiloop"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

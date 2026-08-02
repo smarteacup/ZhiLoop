@@ -1,0 +1,56 @@
+{
+  "description": "ZhiLoop knowledge capture, controlled injection, and closure verification",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/zhiloop-sidecar\" hook",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\zhiloop-sidecar.cmd\" hook",
+            "timeout": 1,
+            "statusMessage": "Loading relevant ZhiLoop knowledge",
+            "additionalContextLimit": 12000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/zhiloop-sidecar\" hook",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\zhiloop-sidecar.cmd\" hook",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/zhiloop-sidecar\" hook",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\zhiloop-sidecar.cmd\" hook",
+            "timeout": 3,
+            "statusMessage": "Checking ZhiLoop task closure"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/zhiloop-sidecar\" hook",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\zhiloop-sidecar.cmd\" hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

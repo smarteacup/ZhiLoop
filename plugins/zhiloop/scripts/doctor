@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if ! command -v zhiloop-sidecar >/dev/null 2>&1; then
+  printf '%s\n' 'ZhiLoop sidecar: unavailable'
+  exit 1
+fi
+
+exec zhiloop-sidecar health --json

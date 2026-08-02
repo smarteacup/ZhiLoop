@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if command -v zhiloop-sidecar >/dev/null 2>&1; then
+  exec zhiloop-sidecar "$@"
+fi
+
+if [ "${1:-}" = "hook" ]; then
+  exit 0
+fi
+
+printf '%s\n' 'ZhiLoop sidecar is not installed or not on PATH.' >&2
+exit 127

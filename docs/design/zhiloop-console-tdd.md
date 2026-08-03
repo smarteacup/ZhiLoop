@@ -1,8 +1,9 @@
 # ZhiLoop Console 本地控制台技术设计
 
 **状态**：Proposed  
-**版本**：0.1  
+**版本**：0.2  
 **创建日期**：2026-08-03  
+**最后更新**：2026-08-03  
 **目标读者**：产品设计者、实现者、维护者、测试与安全评审者  
 **关联文档**：
 
@@ -75,6 +76,18 @@ ZhiLoop Console 是面向本机用户的可交互控制台。它不是 SQLite �
 | ACTIVE 模式 | 已有领域能力 | 部署配置只允许 SHADOW | 只读显示，开关禁用 |
 | 可观测控制面 | 只有 health/日志/CLI | 未实现 | 本设计交付范围 |
 | Linux/Windows、跨机器同步 | 未部署 | 未接通 | “部署与同步”页显示不支持 |
+
+### 4.1 交互需求推演结论
+
+| 需求 | 0.1 设计结论 | 0.2 调整后的结论 | 必须新增的后端契约 |
+|---|---|---|---|
+| 类似 Codex 的只读会话列表 | 部分支持，只定义了已发现/已采集会话 | 支持；列表覆盖所有可发现 Codex 会话，明确只读 | Session Catalog、稳定排序、增量扫描 |
+| 会话注入、手动提取和追溯 | 部分支持，注入在独立 Trace 页面 | 支持；会话详情增加注入和提取页签 | session→turn→run→trace、extraction snapshot |
+| 修改或移除不满意知识 | 原则支持，但写操作排在后期 | 支持；基础治理前移到知识生产阶段 | versioned edit、suppress/restore、impact preview |
+| 上下文、频率、重试和告警配置 | 只有配置分类，没有字段级契约 | 支持；增加字段、作用域、边界和生效方式 | scheduler/retry/alert schemas |
+| 自然语言召回并由本地 Codex 处理 | 只支持确定性 dry-run | 支持；增加“搜索”和“问 ZhiLoop”两种模式 | read-only Codex query adapter、answer citations |
+
+这里的“支持”指架构和页面契约能够实现，不代表当前 SHADOW 发行已经具备这些运行能力。
 
 ## 5. 产品信息架构
 
@@ -199,6 +212,10 @@ flowchart LR
 
 #### 会话列表
 
+会话列表采用与 Codex 相似的信息密度、时间分组和最近活动排序，但不复制 Codex 私有 UI，也不承诺依赖其非公开展示字段。数据来自只读 Session Catalog：优先使用稳定 App Server 会话元数据；不可用时扫描 `~/.codex/sessions` 的版本化 transcript adapter。Catalog 与 Ledger 分离，因此未采集的会话同样可见。
+
+控制台对 Codex 会话严格只读：不发送消息、不继续任务、不归档、不重命名、不删除 transcript，也不修改 Codex 的会话状态。ZhiLoop 自己产生的提取、标签和知识治理状态写入 ZhiLoop 存储，不回写 Codex。
+
 字段：
 
 - 会话 ID、标题摘要、来源、项目、cwd
@@ -209,6 +226,13 @@ flowchart LR
 - 知识生产链当前阶段
 
 过滤器：项目、时间、来源、采集状态、阶段状态、是否存在错误、是否漏采。
+
+展示规则：
+
+- 默认按“今天 / 昨天 / 最近 7 天 / 更早”分组，并按 `lastActivityAt DESC, sessionId ASC` 稳定排序。
+- 标题优先使用 Codex 可观察元数据；缺失时由首条脱敏用户消息生成本地摘要，不调用模型阻塞列表。
+- 区分 `DISCOVERED_NOT_CAPTURED`、`CAPTURED_PARTIAL`、`CAPTURED_CURRENT` 和 `SOURCE_UNAVAILABLE`。
+- Catalog 扫描失败只影响列表完整性，不影响已有 Ledger 和 Hook。
 
 操作：
 
@@ -222,10 +246,35 @@ flowchart LR
 
 - **生产链时间轴**：每阶段开始、结束、处理数量、原因码和关联 job。
 - **Turn 时间轴**：用户消息与最终助手结论的脱敏摘要；默认不展示原始 payload。
+- **注入记录**：按 Turn 展示 `OFF / SHADOWED / INJECTED / NO_CONTEXT / TIMEOUT / ERROR`，并展示实际或影子 Context Envelope、token、知识版本和未注入原因。
+- **按需展开记录**：展示该会话内 MCP search/get/related/check 的知识指针、展开级别和使用关联。
 - **事件视图**：事件类型、sequence、source、correlation ID、hash、redaction count。
 - **游标与文件身份**：transcript path 的安全别名、锚点、offset、最后扫描时间。
 - **提炼结果**：关联 Episode、Candidate、Knowledge Asset；未编译时显示明确原因。
 - **覆盖说明**：当前未采集的工具细节、子 Agent 等事件类型必须列出，避免用户误以为完整。
+
+注入可追溯关系固定为：
+
+```text
+sessionId -> turnId -> injectionAttempt -> runId -> retrievalTraceId
+          -> ContextEnvelope.items[] -> knowledgeId@version
+```
+
+`SHADOWED` 只能标记为“计划注入”，`INJECTED` 才能标记为“实际进入模型上下文”。如果 Hook 超时或返回失败，即使检索已完成也不得显示为已注入。
+
+#### 会话级手动提取
+
+会话详情提供“提取当前快照”操作：
+
+1. 先确保 transcript 增量采集到 Ledger。
+2. 固定 `sourceSequenceTo`、transcript identity 和 cursor，形成不可变 extraction snapshot。
+3. 对该快照执行 normalize → episode → compile → scope → evidence。
+4. 先展示 Candidate 预览，不因点击按钮直接发布为可召回知识。
+5. 用户选择“按策略提交”后，Evidence Policy 决定发布、保留 PROPOSED 或请求微确认。
+
+正在进行的 Codex 会话允许提取，但结果标记 `PARTIAL_SNAPSHOT`；后续新消息通过新 snapshot 增量提取，不能静默改写旧结果。重复提取同一 snapshot 与 compiler/policy 版本必须幂等。
+
+会话与知识的双向追溯为 P1 数据契约、P2 界面跳转：即使首版尚未实现点击跳转，ID、版本和 source reference 也必须从第一天保存。
 
 #### 自动采集
 
@@ -271,6 +320,24 @@ flowchart LR
 - 中风险：修改 Scope、状态、关系，必须展示影响范围。
 - 高风险：提升为 GLOBAL、压制 Binding Rule、强制发布，必须经过门禁，不能由 UI 绕过策略。
 
+#### 修改、移除与恢复
+
+“移除”必须让用户选择语义，禁止一个含糊的删除按钮：
+
+- **停止召回（默认）**：创建 suppression/tombstone revision，使该知识立即退出默认召回；历史、来源和审计仍保留，可恢复。
+- **替代**：新知识版本或另一资产通过 `SUPERSEDES` 关系替代旧知识；旧版本不可参与默认召回。
+- **隐私删除**：仅用于敏感正文清除，执行 payload purge 和知识正文清理；必须单独确认并保留无正文 tombstone 审计。
+
+修改知识不会原地覆盖：
+
+1. 基于 `expectedVersion` 创建草稿 revision。
+2. 显示正文、Scope、关键词、关系、证据和召回影响 diff。
+3. 重新运行 Schema、Scope 和 Evidence 检查。
+4. 如果修改使原 Evidence 不再支持结论，状态降为 `PROPOSED` 或 `STALE`。
+5. 原子发布新 Markdown 版本并更新投影；失败保持旧 current。
+
+`RULE`、`GLOBAL` 和已实际注入的知识修改必须额外展示 blast radius；UI 不能强制绕过 Binding 和 Global Promotion 门禁。
+
 所有写操作最终写入权威 Markdown/Registry，并产生不可变审计记录；禁止前端直接更新投影表。
 
 ### 7.4 召回与注入
@@ -301,6 +368,26 @@ flowchart LR
 3. 展示最终 Context Envelope。
 4. 展示 L0-L4 复杂度、预计 token、裁剪项和原因。
 5. 对比“当前策略”和“草稿策略”，但不得将实验结果写入真实反馈。
+
+#### 自然语言知识查询
+
+召回页面提供两个明确模式：
+
+1. **搜索知识**：不调用模型，直接执行 Exact/FTS/Vector/Relation 混合召回，返回可解释的知识列表。适合查类名、配置、错误码和精确事实。
+2. **问 ZhiLoop**：先执行相同的 Scope 受限召回，再调用本地 Codex 对结果进行只读综合，返回答案、引用知识版本和不确定性。适合“结合已有方案告诉我应该怎么做”一类问题。
+
+“问 ZhiLoop”不是新的可写 Codex 对话，也不能执行工具或修改项目。它通过单独的 `CodexKnowledgeQueryModel` 端口调用本地 `codex exec --sandbox read-only --ephemeral`，输入仅包括用户问题、QueryContext 和有界的已召回知识。现有 `CodexExecStructuredGenerationModel` 可以复用进程隔离、输出 Schema、超时和 token 诊断，但需要新增面向问答的 prompt 与响应 Schema，不能复用“知识提取 worker”提示词。
+
+回答结构至少包含：
+
+- `answer`
+- `citations[]`：knowledge ID、version、支持的 answer span
+- `unknowns[]`
+- `conflicts[]`
+- `retrievalTraceId`
+- `modelRunId`、模型名、耗时和 token usage
+
+本地 Codex 不可用、未登录、超时或限流时降级为“搜索知识”的结果，不阻塞控制台。模型回答不自动成为知识，也不写入 Codex 会话；用户后续若要沉淀，必须通过独立“保存为候选知识”流程。
 
 #### 注入与按需展开
 
@@ -369,6 +456,19 @@ flowchart LR
 - **存储与隐私**：正文保留、日志轮转、数据路径只读展示。
 - **高级**：原始配置编辑器，仅允许已知 Schema 字段。
 
+首版字段级配置至少包含：
+
+| 配置组 | 配置项 | 约束与生效方式 |
+|---|---|---|
+| 注入 | 自动注入开关、`defaultMaxTokens`、L1-L3 `maxItems`、Hook deadline、MCP expansion | token 1..4000；ACTIVE 当前不可激活；deadline 不超过 500ms |
+| 后台调度 | 会话扫描间隔、follow debounce、Worker poll interval、编译 batch size、空闲后提取延迟 | 使用区间和抖动，禁止 0ms busy loop；支持项目 override |
+| 重试 | 按 capture/compile/model/index 分类的 max attempts、base/max backoff、jitter、不可重试错误 | 指数退避；认证和 Schema 错误默认不可重试 |
+| 告警 | 总开关、严重度、spool/cursor lag/job failure/Hook silence 阈值、静默时间 | 首版支持控制台内告警；macOS 通知为可选适配器 |
+| Codex 查询 | 启用、模型、timeout、最大召回条数、输入/输出 token 预算、并发上限 | read-only/ephemeral；模型名白名单校验 |
+| 保留与隐私 | 原始事件天数、日志天数、是否允许显式查看脱敏正文 | 降低保留期需影响预览；不允许保存未脱敏正文 |
+
+配置具有 `GLOBAL_DEFAULT` 和 `PROJECT_OVERRIDE` 两级；会话详情必须展示本轮实际解析出的 effective configuration hash，确保注入和提取结果可以重放。告警的“关闭”只停止通知，不停止记录 `DEGRADED/FAILED` 状态。
+
 配置项必须带来源：`DEFAULT / FILE / ENV / RUNTIME_OVERRIDE`。尚未接通的配置项可编辑为草稿，但不能激活；页面说明阻塞它的 capability。
 
 ### 7.8 部署与能力
@@ -410,6 +510,7 @@ flowchart LR
     DB["SQLite\nLedger / Jobs / Projections / Traces"]
     MD["Markdown Knowledge"]
     CX["Codex Hooks / Sessions"]
+    CE["Local Codex Exec\nread-only / ephemeral"]
 
     B -->|"authenticated same-origin HTTP"| G
     B <-->|"SSE 状态事件"| G
@@ -417,6 +518,7 @@ flowchart LR
     CX -->|"fail-open critical path"| S
     S --> DB
     S --> MD
+    S -->|"bounded knowledge query"| CE
 ```
 
 关键隔离：
@@ -530,6 +632,7 @@ sequenceDiagram
 | GET | `/sessions/{id}` | 会话、游标和生产链 |
 | GET | `/sessions/{id}/events` | 脱敏事件元数据分页 |
 | GET | `/sessions/{id}/knowledge` | Episode/Candidate/Asset 关联 |
+| GET | `/sessions/{id}/injections` | Turn 级实际/影子注入与 MCP 展开 |
 | GET | `/knowledge` | Scope/类型/状态组合查询 |
 | GET | `/knowledge/{id}` | 当前版本详情 |
 | GET | `/knowledge/{id}/versions` | 历史与 diff |
@@ -550,10 +653,15 @@ sequenceDiagram
 | Method | Path | 约束 |
 |---|---|---|
 | POST | `/capture-jobs` | dry-run 优先；正式请求绑定 preview revision |
+| POST | `/sessions/{id}/extraction-jobs` | 固定 snapshot；preview 与按策略提交分离 |
 | POST | `/jobs/{id}/retry` | 仅 retryable terminal job |
 | POST | `/jobs/{id}/cancel` | 仅 cancellable 状态 |
 | POST | `/retrieval/simulate` | 只读，不写真实反馈 |
+| POST | `/knowledge-queries` | 自然语言问题；search-only 或 Codex-assisted |
 | POST | `/retrieval-runs/{id}/replay` | 固定输入，生成新 trace |
+| POST | `/knowledge/{id}/revisions` | expected version、影响预览、重新验证 |
+| POST | `/knowledge/{id}/suppress` | 默认可恢复停止召回 |
+| POST | `/knowledge/{id}/restore` | 恢复前重新检查 current 与 Evidence |
 | POST | `/config/validate` | 无副作用 |
 | POST | `/config/activate` | expected revision + audit |
 | POST | `/config/rollback` | 生成新 revision，不覆盖历史 |
@@ -584,9 +692,12 @@ SSE 只发布轻量失效通知，不携带知识正文：
 |---|---|
 | `capability_snapshots` | 记录组件能力、配置和真实验证状态 |
 | `session_projections` | 聚合会话计数、完整性和最后活动 |
+| `session_catalog` | 只读投影 Codex 可发现会话，不表示已采集 |
 | `stage_runs` | 记录实体各阶段状态、原因和证据引用 |
 | `jobs` / `job_attempts` | 后台任务、checkpoint、重试和 lease |
 | `retrieval_traces` | 保存可解释召回与注入决策 |
+| `injection_attempts` | 关联 session/turn/run/trace 和实际投递状态 |
+| `knowledge_query_runs` | 保存自然语言查询状态、引用和 Codex 诊断，不复制正文 |
 | `closure_traces` | 保存 Gate、decision 和 continuation |
 | `configuration_revisions` | 草稿来源、有效配置 hash、激活和回滚结果 |
 | `operator_audit` | 记录控制台命令，不保存 prompt/正文 |
@@ -679,8 +790,9 @@ SSE 只发布轻量失效通知，不携带知识正文：
 
 - [ ] Console Gateway、loopback 认证和静态资源托管
 - [ ] Web Shell、总览、能力矩阵
-- [ ] 会话列表/详情、事件元数据、游标
+- [ ] 只读 Session Catalog、类似 Codex 的会话列表/详情、事件元数据、游标
 - [ ] 手动 capture dry-run/commit
+- [ ] session→turn→injection trace 数据契约和禁用态展示
 - [ ] 任务队列与诊断页
 - [ ] 配置只读视图
 - [ ] 未接通阶段的 disabled capability 展示
@@ -693,12 +805,15 @@ SSE 只发布轻量失效通知，不携带知识正文：
 - [ ] 扩展事件覆盖与子 Agent 归并状态
 - [ ] 组合 normalize → episode → compile → scope → evidence → publish → index Worker
 - [ ] 知识列表、详情、版本、Evidence 和关系
+- [ ] 会话级 snapshot 提取、结果预览和双向追溯
+- [ ] 知识 versioned edit、suppress/restore 和影响预览
 - [ ] 生产链任务 retry 与 checkpoint
 
 ### Phase C3：召回、注入与闭环
 
 - [ ] 组合 retrieval/rerank/context orchestration
 - [ ] Retrieval Trace 与实验室
+- [ ] “搜索知识”和 Codex-assisted“问 ZhiLoop”自然语言查询
 - [ ] MCP transport 和按需展开视图
 - [ ] Stop closure、continuation 和反馈组合
 - [ ] 闭环页、影子注入对比和质量指标
@@ -755,6 +870,10 @@ Review 必须检查：
 | 未授权 loopback 写请求拒绝率 | 无 | 100% | 安全测试 |
 | 正文/凭证进入日志数量 | 0 目标 | 0 | canary secret 扫描 |
 | 召回结果可解释率 | 模块测试存在，未部署 | 100% 注入项可追溯 | Trace audit |
+| Session Catalog 可见会话覆盖率 | 仅指定 ID 采集 | ≥99% 可解析本地 Codex 主会话 | fixture + 本机验收 |
+| 会话注入归属准确率 | 未部署 | 100% 关联到 session/turn/trace | Contract + E2E |
+| 知识 suppress 生效延迟 P95 | 无 | <1s 退出默认召回 | 治理 E2E |
+| Codex-assisted 回答引用率 | 无 | 100% 事实段有知识版本引用 | Answer Schema audit |
 | 可访问性 | 无 | 关键流程无严重违规 | axe + 键盘测试 |
 
 ## 18. 风险与缓解
@@ -771,6 +890,11 @@ Review 必须检查：
 | 大量 disabled 页面降低信任 | 中 | 高 | 显示原因、依赖和实施阶段，不展示无效按钮 |
 | 控制台先于流水线实现造成重复返工 | 中 | 中 | 先冻结 Control API 和状态模型，页面只依赖版本化 View Model |
 | ACTIVE 被误开启 | 高 | 低 | 当前 Schema 拒绝，UI 只读，后端资格门禁和回滚独立实现 |
+| Codex transcript/App Server 格式变化导致会话缺失 | 高 | 中 | 版本化 adapter、capability 降级、覆盖率验收、不写源文件 |
+| 活跃会话手动提取遗漏后续内容 | 中 | 高 | 固定 snapshot、PARTIAL 标识、增量 snapshot 和幂等键 |
+| 用户把“移除”误认为物理删除 | 高 | 中 | 分离 suppress/supersede/privacy purge，展示可恢复性和影响 |
+| Codex-assisted 查询生成无依据结论 | 高 | 中 | 先召回后综合、结构化 citations/unknowns、无引用不展示为事实 |
+| 后台频率或重试配置造成调用风暴 | 高 | 中 | 最小间隔、指数退避、jitter、并发上限和熔断 |
 
 ## 19. 待确认但不阻塞设计的问题
 
@@ -786,8 +910,9 @@ Review 必须检查：
 - 用户可以打开受认证的本地控制台。
 - 总览准确区分 READY、NOT_VERIFIED、DISABLED、FAILED。
 - 可以查看会话、游标、事件元数据并执行 dry-run 后的主动采集。
+- 会话目录来自只读 Catalog，能区分未采集、部分采集和已追平；不能在控制台对话或修改 Codex 会话。
+- 会话详情能展示注入的禁用态或真实 session/turn/trace 关联，不能把 SHADOW 误标为实际注入。
 - 可以看到后台任务、spool、Ledger、Worker 和部署诊断。
 - 当前所有未接通能力在对应页面有真实 capability 状态和原因。
 - Console 停止、刷新、断线和高负载均不影响 Codex Hook。
 - 自动化测试、性能 Gate、安全 review 和代码 review 全部通过。
-

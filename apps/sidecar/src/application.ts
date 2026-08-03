@@ -14,17 +14,21 @@ import {
   type CaptureSessionRequest,
   type TranscriptCursor,
 } from "@zhiloop/codex-session-capture";
-import type { CapabilitySnapshot, ControlRequest, ControlResponse } from "@zhiloop/control-api";
+import { CONTROL_API_SCHEMA_VERSION, type CapabilitySnapshot, type ControlRequest, type ControlResponse, type P2ControlRequest } from "@zhiloop/control-api";
 import { SqliteConfigurationService, type ConsoleConfiguration } from "@zhiloop/configuration-service";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { ZhiLoopDaemonRuntime, type DaemonHealthSnapshot, type DaemonWorkerCycle } from "@zhiloop/daemon";
 import { CodexHookHandler, LocalEventSpool, type HookCaptureResult, type HookEventSink } from "@zhiloop/hook-runtime";
+import { ExtractionConflictError, ExtractionStaleRevisionError } from "@zhiloop/session-extraction";
 
 import type { SidecarConfig } from "./config.js";
 import { SidecarControlPlane, type CaptureExecutionPort } from "./control-plane.js";
 import { SafeDiagnosticLog } from "./diagnostic-log.js";
 import { SIDECAR_COMPATIBILITY, SIDECAR_VERSION } from "./metadata.js";
 import { P1SidecarRuntime, type P1RuntimeConfiguration } from "./p1-runtime.js";
+import { P2SidecarRuntime } from "./p2-runtime.js";
+import { P2ProductionComposition } from "./p2-production.js";
+import { P2ConsoleRuntime, type P2ConsoleRequest } from "./p2-console.js";
 
 export interface SidecarHealthReport extends DaemonHealthSnapshot {
   readonly rolloutMode: "SHADOW";
@@ -68,6 +72,9 @@ export class SidecarApplication {
   #acceptanceCoordinator: RealCodexAcceptanceCoordinator | undefined;
   #controlPlane: SidecarControlPlane | undefined;
   #p1Runtime: P1SidecarRuntime | undefined;
+  #p2Runtime: P2SidecarRuntime | undefined;
+  #p2Production: P2ProductionComposition | undefined;
+  #p2Console: P2ConsoleRuntime | undefined;
   #closed = false;
   #captureTail: Promise<void> = Promise.resolve();
   #workerTail: Promise<void> = Promise.resolve();
@@ -205,12 +212,14 @@ export class SidecarApplication {
     let configuration: SqliteConfigurationService | undefined;
     let application: SidecarApplication | undefined;
     let p1Runtime: P1SidecarRuntime | undefined;
+    let p2Runtime: P2SidecarRuntime | undefined;
+    let p2Production: P2ProductionComposition | undefined;
     try {
       acceptanceEvidence = new SqliteRealCodexAcceptanceEvidenceStore(join(dirname(config.ledgerPath), "real-codex-acceptance.sqlite"));
       configuration = new SqliteConfigurationService(join(dirname(config.ledgerPath), "configuration.sqlite"), {
         capabilities: () => ({
           "context.injection": "DISABLED",
-          "knowledge.compile": "DISABLED",
+          "knowledge.compile": p2Production === undefined ? "DISABLED" : "READY",
           "codex.query": "DISABLED",
         }),
         components: [{
@@ -253,6 +262,12 @@ export class SidecarApplication {
             return await p1Runtime.retryJob(request);
           },
         },
+        extraction: {
+          handle: async (request) => {
+            if (p2Runtime === undefined) throw new Error("P2 runtime is not composed");
+            return await p2Runtime.handle(request);
+          },
+        },
       });
       composedApplication.#acceptanceCoordinator = new RealCodexAcceptanceCoordinator({
         evidence: acceptanceEvidence,
@@ -288,8 +303,126 @@ export class SidecarApplication {
         },
       });
       composedApplication.#p1Runtime = p1Runtime;
+      p2Production = await P2ProductionComposition.create({
+        stateDirectory: dirname(config.ledgerPath),
+        ledger,
+        extraction: () => {
+          if (p2Runtime === undefined) throw new Error("P2 extraction runtime is not composed");
+          return p2Runtime.service();
+        },
+        compilerTimeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
+        compilerBatchSize: configuration.get().effective.future.compilerBatchSize,
+      });
+      p2Runtime = await P2SidecarRuntime.create({
+        stateDirectory: dirname(config.ledgerPath),
+        pollIntervalMs: configuration.get().effective.runtime.workerPollIntervalMs,
+        projectJob: (snapshot) => { composedApplication.#controlPlane?.projectJob(snapshot); },
+        knowledgeWorker: p2Production.worker,
+        snapshotSource: {
+          observe: async (request) => {
+            const source = await composedApplication.#controlPlane?.inspectTranscriptSource(request.sessionId);
+            if (source === undefined
+              || source.transcriptIdentityHash !== request.transcriptIdentityHash
+              || source.cursor.byteOffset !== request.cursor.byteOffset
+              || source.cursor.lineNumber !== request.cursor.lineNumber) {
+              throw new ExtractionStaleRevisionError("transcript identity or cursor changed before snapshot creation");
+            }
+            if (configuration?.get().hash !== request.configurationHash) {
+              throw new ExtractionStaleRevisionError("configuration changed before snapshot creation");
+            }
+            const captureRevision = ledger.count();
+            const previousCandidate = p2Runtime?.service().listSnapshots({ sessionId: request.sessionId, limit: 1 }).items[0];
+            const previous = previousCandidate !== undefined
+              && previousCandidate.transcriptIdentityHash === request.transcriptIdentityHash
+              && previousCandidate.compilerVersion === request.compilerVersion
+              && previousCandidate.policyHash === request.policyHash
+              && previousCandidate.configurationHash === request.configurationHash
+              && previousCandidate.sourceSequence.to < request.sourceSequence.from
+              ? previousCandidate
+              : undefined;
+            const sourceReferences: Array<{ eventId: string; turnId?: string; sourceSequence: number }> = [];
+            if (!(request.sourceSequence.from === 0 && request.sourceSequence.to === 0)) {
+              let after = Math.max(0, request.sourceSequence.from - 1);
+              while (after < request.sourceSequence.to) {
+                const records = ledger.readAfter(after, Math.min(1_000, request.sourceSequence.to - after));
+                if (records.length === 0) break;
+                for (const record of records) {
+                  if (record.sequence > request.sourceSequence.to) break;
+                  if (record.sequence >= request.sourceSequence.from && record.event.sessionId === request.sessionId) {
+                    sourceReferences.push({
+                      eventId: record.event.eventId,
+                      sourceSequence: record.sequence,
+                      ...(record.event.turnId === undefined ? {} : { turnId: record.event.turnId }),
+                    });
+                    if (sourceReferences.length > 10_000) throw new Error("snapshot source reference limit exceeded");
+                  }
+                }
+                const last = records.at(-1);
+                if (last === undefined || last.sequence <= after) break;
+                after = last.sequence;
+              }
+            }
+            if (!(request.sourceSequence.from === 0 && request.sourceSequence.to === 0)
+              && (request.sourceSequence.from < 1 || request.sourceSequence.to > captureRevision)) {
+              throw new ExtractionConflictError("snapshot source range is outside the Ledger revision");
+            }
+            const uncoveredEarlierStart = previous?.sourceSequence.to ?? 0;
+            if (captureRevision - uncoveredEarlierStart > 1_000_000) {
+              throw new ExtractionConflictError("snapshot validation exceeds the bounded Ledger scan window");
+            }
+            let uncoveredEarlier = false;
+            let laterSessionEvent = false;
+            for (let after = uncoveredEarlierStart, pages = 0;
+              after < request.sourceSequence.from - 1 && pages < 1_000;
+              pages += 1) {
+              const records = ledger.readAfter(after, Math.min(1_000, request.sourceSequence.from - 1 - after));
+              if (records.length === 0) break;
+              if (records.some((record) => record.event.sessionId === request.sessionId)) uncoveredEarlier = true;
+              const last = records.at(-1);
+              if (last === undefined || last.sequence <= after) break;
+              after = last.sequence;
+            }
+            for (let after = request.sourceSequence.to, pages = 0; after < captureRevision && pages < 1_000; pages += 1) {
+              const records = ledger.readAfter(after, Math.min(1_000, captureRevision - after));
+              if (records.length === 0) break;
+              if (records.some((record) => record.event.sessionId === request.sessionId)) laterSessionEvent = true;
+              const last = records.at(-1);
+              if (last === undefined || last.sequence <= after) break;
+              after = last.sequence;
+            }
+            const sourceClosed = !uncoveredEarlier && !laterSessionEvent && sourceReferences.length > 0
+              && ledger.readAfter(sourceReferences.at(-1)!.sourceSequence - 1, 1)[0]?.event.eventType === "session.ended";
+            const unsupportedEventTypes = source.ignoredRecords === 0 ? [] : ["unsupported_transcript_record"];
+            if (request.completeness.sourceClosed !== sourceClosed
+              || JSON.stringify([...request.completeness.unsupportedEventTypes].sort()) !== JSON.stringify(unsupportedEventTypes)) {
+              throw new ExtractionConflictError("snapshot completeness does not match the inspected transcript");
+            }
+            return Object.freeze({
+              captureRevision,
+              sourceReferences,
+              ...(previous === undefined ? {} : { previousSnapshotId: previous.snapshotId }),
+              observedAt: new Date().toISOString(),
+            });
+          },
+        },
+      });
+      composedApplication.#p2Runtime = p2Runtime;
+      composedApplication.#p2Production = p2Production;
+      composedApplication.#p2Console = new P2ConsoleRuntime({
+        runtime: p2Runtime,
+        production: p2Production,
+        ledger,
+        inspectTranscriptSource: async (sessionId) => {
+          const source = await composedApplication.#controlPlane?.inspectTranscriptSource(sessionId);
+          if (source === undefined) throw new Error("Control plane is unavailable");
+          return source;
+        },
+        configurationHash: () => configuration?.get().hash ?? "",
+      });
       return composedApplication;
     } catch (error) {
+      await p2Runtime?.close().catch(() => undefined);
+      p2Production?.close();
       await p1Runtime?.close().catch(() => undefined);
       if (application !== undefined) await application.#controlPlane?.close().catch(() => undefined);
       await configuration?.close().catch(() => undefined);
@@ -302,6 +435,9 @@ export class SidecarApplication {
   async start(): Promise<void> {
     await this.#runtime.start();
     try {
+      await this.#p2Runtime?.start();
+      const p2State = this.#p2Runtime?.state();
+      if (p2State !== undefined) this.#controlPlane?.setP2RuntimeReady(p2State.knowledgeCompile === "READY");
       if (await this.#p1Runtime?.start()) this.#controlPlane?.setAutomaticIngestionReady();
     } catch (error) {
       await this.#runtime.stop();
@@ -321,7 +457,9 @@ export class SidecarApplication {
   }
 
   async runWorkerOnce(): Promise<DaemonWorkerCycle> {
-    return this.#runtime.runWorkerOnce();
+    const cycle = await this.#runtime.runWorkerOnce();
+    await this.#p2Runtime?.runJobWorkerOnce();
+    return cycle;
   }
 
   async captureSession(request: CaptureSessionRequest): Promise<CaptureSessionReport> {
@@ -362,9 +500,32 @@ export class SidecarApplication {
     }
   }
 
-  async handleControl(request: ControlRequest): Promise<ControlResponse> {
+  async handleControl(request: ControlRequest | P2ControlRequest): Promise<ControlResponse> {
     if (!this.#controlPlane) throw new Error("control plane is not initialized");
     return this.#controlPlane.handle(request);
+  }
+
+  async handleP2Console(request: P2ConsoleRequest): Promise<ControlResponse> {
+    const observedAt = new Date().toISOString();
+    try {
+      if (this.#p2Console === undefined) throw Object.assign(new Error("P2 Console is unavailable"), { code: "CAPABILITY_UNAVAILABLE" });
+      return { schemaVersion: CONTROL_API_SCHEMA_VERSION, requestId: request.requestId, observedAt, ok: true, result: await this.#p2Console.handle(request) };
+    } catch (error) {
+      const raw = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "INTERNAL_ERROR";
+      const code = raw === "NOT_FOUND" ? "NOT_FOUND"
+        : raw === "STALE_REVISION" ? "STALE_REVISION"
+          : raw === "CONFLICT" || raw === "MANUAL_MARKDOWN_CONFLICT" || raw === "PROJECTION_NOT_CURRENT" ? "CONFLICT"
+            : raw === "INVALID_REQUEST" || raw === "REVALIDATION_FAILED" || raw === "RESTORE_REVALIDATION_FAILED" ? "INVALID_REQUEST"
+              : raw === "CAPABILITY_UNAVAILABLE" || raw === "HIGH_RISK_GOVERNANCE_DISABLED" ? "CAPABILITY_UNAVAILABLE"
+                : "INTERNAL_ERROR";
+      return {
+        schemaVersion: CONTROL_API_SCHEMA_VERSION,
+        requestId: request.requestId,
+        observedAt,
+        ok: false,
+        error: { code, message: "P2 Console request failed", retryable: raw === "OUTBOX_FAILED" },
+      };
+    }
   }
 
   async verifyRealCodexIngestion(request: RealCodexAcceptanceRequest): Promise<PersistedRealCodexAcceptance> {
@@ -385,6 +546,8 @@ export class SidecarApplication {
     await this.#captureTail;
     await this.#workerTail;
     await this.#p1Runtime?.close();
+    await this.#p2Runtime?.close();
+    this.#p2Production?.close();
     await this.#runtime.stop();
     this.#flushAcceptanceEvidence();
     await this.#acceptanceTail;

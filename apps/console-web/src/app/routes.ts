@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 export type RouteName = "overview" | "sessions" | "knowledge" | "retrieval" | "closure" | "operations" | "jobs" | "diagnostics" | "configuration" | "deployment";
-export interface ConsoleRoute { readonly name: RouteName; readonly sessionId?: string }
+export interface ConsoleRoute { readonly name: RouteName; readonly sessionId?: string; readonly knowledgeId?: string }
 
 const routeNames = new Set<RouteName>([
   "overview", "sessions", "knowledge", "retrieval", "closure", "operations", "jobs", "diagnostics", "configuration", "deployment",
@@ -13,6 +13,13 @@ export function parseRoute(hash: string): ConsoleRoute {
   if (name === "sessions" && id !== undefined && id.length > 0) {
     try {
       return { name, sessionId: decodeURIComponent(id) };
+    } catch {
+      return { name: "overview" };
+    }
+  }
+  if (name === "knowledge" && id !== undefined && id.length > 0) {
+    try {
+      return { name, knowledgeId: decodeURIComponent(id) };
     } catch {
       return { name: "overview" };
     }

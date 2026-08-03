@@ -16,6 +16,11 @@ import {
   jobPageSchema,
   jobCommandResultSchema,
   overviewSchema,
+  p2IndexRecoveryResultSchema,
+  p2KnowledgeDetailViewSchema,
+  p2KnowledgeEditImpactSchema,
+  p2KnowledgeListViewSchema,
+  p2SessionExtractionViewSchema,
   sessionDetailSchema,
   sessionPageSchema,
   type ControlRequest,
@@ -143,6 +148,50 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
     return this.execute(this.request("job.retry", { ...command }), jobCommandResultSchema, options);
   }
 
+  public getSessionExtraction(sessionId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.session.get", { sessionId }), p2SessionExtractionViewSchema, options);
+  }
+
+  public startSessionExtraction(command: { readonly sessionId: string; readonly expectedRevision: number; readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.session.preview", { ...command }), p2SessionExtractionViewSchema, options);
+  }
+
+  public commitSessionExtraction(command: { readonly sessionId: string; readonly previewId: string; readonly expectedPreviewRevision: number; readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.session.commit", { ...command }), p2SessionExtractionViewSchema, options);
+  }
+
+  public listKnowledge(filter: Readonly<Record<string, unknown>>, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.list", { filter, limit: 50 }), p2KnowledgeListViewSchema, options);
+  }
+
+  public getKnowledge(knowledgeId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.get", { knowledgeId }), p2KnowledgeDetailViewSchema, options);
+  }
+
+  public previewKnowledgeEdit(command: Readonly<Record<string, unknown>>, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.edit.preview", command), p2KnowledgeEditImpactSchema, options);
+  }
+
+  public commitKnowledgeEdit(command: Readonly<Record<string, unknown>>, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.edit.commit", command), p2KnowledgeDetailViewSchema, options);
+  }
+
+  public suppressKnowledge(command: Readonly<Record<string, unknown>>, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.suppress", command), p2KnowledgeDetailViewSchema, options);
+  }
+
+  public restoreKnowledge(command: Readonly<Record<string, unknown>>, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.restore", command), p2KnowledgeDetailViewSchema, options);
+  }
+
+  public recoverKnowledgeIndex(knowledgeId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("p2.knowledge.index.recover", { knowledgeId }), p2IndexRecoveryResultSchema, options);
+  }
+
+  private p2Request(type: string, fields: Readonly<Record<string, unknown>>) {
+    return { schemaVersion: CONTROL_API_SCHEMA_VERSION, requestId: randomUUID(), type, ...fields };
+  }
+
   private request<T extends ControlRequest["type"]>(type: T, fields: Record<string, unknown> = {}): ControlRequest {
     return {
       schemaVersion: CONTROL_API_SCHEMA_VERSION,
@@ -152,7 +201,7 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
     } as ControlRequest;
   }
 
-  private execute<T>(requestBody: ControlRequest, resultSchema: OutputSchema<T>, options: QueryOptions): Promise<T> {
+  private execute<T>(requestBody: ControlRequest | { readonly schemaVersion: 1; readonly requestId: string; readonly type: string }, resultSchema: OutputSchema<T>, options: QueryOptions): Promise<T> {
     const serialized = `${JSON.stringify(requestBody)}\n`;
     if (Buffer.byteLength(serialized) > MAX_CONTROL_MESSAGE_BYTES) {
       return Promise.reject(new ControlClientError("Control request exceeded the byte limit", "PROTOCOL"));

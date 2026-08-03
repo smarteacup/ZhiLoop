@@ -2,9 +2,16 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
-import { parseControlRequestText, type ControlRequest } from "@zhiloop/control-api";
+import {
+  p2ControlRequestSchema,
+  parseControlRequestText,
+  parseP2ContractText,
+  type ControlRequest,
+  type P2ControlRequest,
+} from "@zhiloop/control-api";
 
 import type { SidecarApplication } from "./application.js";
+import { parseP2ConsoleRequest, type P2ConsoleRequest } from "./p2-console.js";
 
 const MAX_TRANSPORT_BYTES = 5_500_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
@@ -15,7 +22,9 @@ export type SidecarRequest =
   | { readonly type: "worker" }
   | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean }
   | { readonly type: "acceptance.verify"; readonly sessionId: string; readonly taskCreatedAt: string }
-  | ControlRequest;
+  | ControlRequest
+  | P2ControlRequest
+  | P2ConsoleRequest;
 
 interface SidecarResponse {
   readonly ok: boolean;
@@ -74,6 +83,16 @@ function parseRequest(value: unknown): SidecarRequest {
   }
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new Error("invalid request");
+  if (typeof type === "string" && type.startsWith("p2.")) return parseP2ConsoleRequest(value);
+  if (typeof type === "string" && type.startsWith("extraction.")) {
+    const parsed = parseP2ContractText(serialized, p2ControlRequestSchema);
+    if (!parsed.ok) {
+      const error = new Error("invalid P2 control request") as Error & { code: string };
+      error.code = parsed.code;
+      throw error;
+    }
+    return parsed.value;
+  }
   const parsed = parseControlRequestText(serialized);
   if (!parsed.ok) {
     const error = new Error("invalid control request") as Error & { code: string };
@@ -139,7 +158,9 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
             ? await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun })
             : request.type === "acceptance.verify"
               ? await application.verifyRealCodexIngestion({ sessionId: request.sessionId, taskCreatedAt: request.taskCreatedAt })
-            : await application.handleControl(request);
+            : request.type.startsWith("p2.")
+              ? await application.handleP2Console(request as P2ConsoleRequest)
+            : await application.handleControl(request as ControlRequest | P2ControlRequest);
     response = { ok: true, result };
   } catch (error) {
     const lineNumber = error instanceof Error && "lineNumber" in error && typeof error.lineNumber === "number" && Number.isSafeInteger(error.lineNumber)

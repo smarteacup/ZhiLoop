@@ -19,6 +19,8 @@ import {
   type JobSnapshot,
   type JobCommandResult,
   type Overview,
+  type P2KnowledgeFilter,
+  type P2KnowledgeListView,
   type SessionDetail,
   type SessionSummary,
 } from "@zhiloop/control-api";
@@ -195,6 +197,10 @@ class FakeQueryPort implements ControlQueryPort {
 
   public getConfiguration(projectId: string | undefined, options: QueryOptions): Promise<ConfigurationState> {
     return this.result(`configuration:${projectId ?? "GLOBAL"}`, configurationState, options);
+  }
+
+  public listKnowledge(_filter: P2KnowledgeFilter, options: QueryOptions): Promise<P2KnowledgeListView> {
+    return this.result("knowledge", { revision: 0, items: [], indexStatus: "READY", indexReasonCode: "INDEX_CURRENT", retryable: false }, options);
   }
 
   private result<T>(call: string, value: T, options: QueryOptions): Promise<T> {
@@ -758,6 +764,16 @@ describe("Console Gateway security boundary", () => {
       headers: { ...headers, "x-zhiloop-csrf": "forged-token-that-is-long-enough" },
       body: JSON.stringify({ expectedRevision: 3, idempotencyKey: "operator:cancel:gateway:three" }),
     })).status).toBe(403);
+  });
+
+  it("rejects malformed P2 filters and percent-encoded targets at the HTTP boundary", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = authorizedHeaders(browser);
+    expect((await fetch(`${address?.origin}/api/v1/knowledge?eligible=yes`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/knowledge?version=0`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/knowledge/%E0%A4%A`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/sessions/%E0%A4%A/extraction`, { headers })).status).toBe(400);
   });
 
   it("preserves stale-preview conflicts without reflecting Sidecar details", async () => {

@@ -8,6 +8,7 @@ import { SqliteRealCodexAcceptanceEvidenceStore } from "@zhiloop/automatic-inges
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { CONTROL_API_SCHEMA_VERSION, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
 import { resolveDeploymentPaths } from "@zhiloop/local-deployment";
+import { snapshotIdempotencyKey } from "@zhiloop/session-extraction";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidecarApplication } from "./application.js";
@@ -443,7 +444,7 @@ describe("sidecar service", () => {
     await application.close();
   });
 
-  it("serves strict bounded Control API views while retaining honest disabled capabilities", async () => {
+  it("serves strict bounded Control API views with composed P2 and disabled automatic injection", async () => {
     const { config } = await temporaryConfig();
     await writeRollout(config, "session-control-view");
     const application = await SidecarApplication.create(config);
@@ -456,7 +457,10 @@ describe("sidecar service", () => {
         type: "overview.get",
       }, 1_000)) as { capabilities: Array<{ capabilityId: string; status: string; reasonCode: string }> };
       expect(overview.capabilities).toEqual(expect.arrayContaining([
-        expect.objectContaining({ capabilityId: "knowledge.compile", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED" }),
+        expect.objectContaining({ capabilityId: "session.extraction", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "knowledge.provenance", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "knowledge.compile", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "knowledge.automatic-compile", status: "DISABLED", reasonCode: "CAPABILITY_DISABLED" }),
         expect.objectContaining({ capabilityId: "context.injection", status: "DISABLED" }),
         expect.objectContaining({ capabilityId: "knowledge.mcp", status: "DISABLED", reasonCode: "MCP_TRANSPORT_NOT_ENABLED" }),
       ]));
@@ -490,6 +494,90 @@ describe("sidecar service", () => {
         requestId: "diagnostics-request",
         type: "diagnostics.get",
       }, 1_000))).toMatchObject({ ledgerSequence: 0, spoolDepth: 0 });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
+  it("creates a source-validated manual P2 snapshot and rejects a mismatched preview identity", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-p2-manual");
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      const captured = await requestSidecar(config.socketPath, {
+        type: "capture-session",
+        sessionId: "session-p2-manual",
+        dryRun: false,
+      }, 1_000) as { appendedEvents: number };
+      const source = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "p2-source-preview",
+        type: "capture.preview",
+        sessionId: "session-p2-manual",
+      }, 1_000)) as { transcriptIdentityHash: string; cursor: { byteOffset: number; lineNumber: number }; ignoredRecords: number };
+      const configuration = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "p2-config-view",
+        type: "config.get",
+      }, 1_000)) as { view: { hash: string } };
+      const command = {
+        schemaVersion: 1 as const,
+        requestId: "p2-snapshot-create",
+        type: "extraction.snapshot.create" as const,
+        sessionId: "session-p2-manual",
+        expectedCaptureRevision: captured.appendedEvents,
+        transcriptIdentityHash: source.transcriptIdentityHash,
+        sourceSequence: { from: 1, to: captured.appendedEvents },
+        cursor: source.cursor,
+        completeness: {
+          status: "PARTIAL_SNAPSHOT" as const,
+          sourceClosed: false,
+          unsupportedEventTypes: source.ignoredRecords === 0 ? [] : ["unsupported_transcript_record"],
+        },
+        compilerVersion: "compiler-v1",
+        policyHash: "a".repeat(64),
+        configurationHash: configuration.view.hash,
+      };
+      const snapshot = controlResult(await requestSidecar(config.socketPath, {
+        ...command,
+        idempotencyKey: snapshotIdempotencyKey(command),
+      }, 1_000)) as { status: string; snapshot: { snapshotId: string; identityHash: string; revision: 1 } };
+      expect(snapshot).toMatchObject({ status: "CREATED", snapshot: { revision: 1 } });
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "p2-snapshot-list",
+        type: "extraction.snapshots.list",
+        sessionId: "session-p2-manual",
+        limit: 10,
+      }, 1_000))).toMatchObject({ items: [expect.objectContaining({ snapshotId: snapshot.snapshot.snapshotId })] });
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "p2-provenance-get",
+        type: "extraction.provenance.get",
+        root: { type: "SNAPSHOT", snapshotId: snapshot.snapshot.snapshotId, revision: 1 },
+        limit: 20,
+      }, 1_000))).toMatchObject({ root: { type: "SNAPSHOT" }, upstream: expect.any(Array) });
+
+      const previewResponse = await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "p2-preview-conflict",
+        type: "extraction.candidates.preview",
+        snapshot: {
+          snapshotId: snapshot.snapshot.snapshotId,
+          revision: snapshot.snapshot.revision,
+          identityHash: snapshot.snapshot.identityHash,
+        },
+        compilerVersion: "compiler-v1",
+        policyHash: "a".repeat(64),
+        idempotencyKey: `candidate:preview:${"b".repeat(64)}`,
+      }, 1_000) as ControlResponse;
+      expect(previewResponse).toMatchObject({
+        ok: false,
+        error: { code: "CONFLICT", retryable: false },
+      });
     } finally {
       await stopSidecarServer(server, config.socketPath);
       await application.close();
@@ -606,7 +694,7 @@ describe("sidecar service", () => {
       expect(first).toMatchObject({
         appendedEvents: 3,
         duplicateEvents: 0,
-        knowledgeCompileStage: { status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED" },
+        knowledgeCompileStage: { status: "PENDING", reasonCode: "NOT_APPLICABLE" },
       });
       const replay = controlResult(await requestSidecar(config.socketPath, { ...commit, requestId: "commit-request-retry" }, 1_000));
       expect(replay).toEqual(first);

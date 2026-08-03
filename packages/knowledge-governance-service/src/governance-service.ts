@@ -101,7 +101,11 @@ function assertOrdinaryProject(asset: KnowledgeAsset, nextScope = asset.scope): 
 
 function statusAfterRevalidation(current: KnowledgeStatus, validation: RevalidationResult): KnowledgeStatus {
   if (validation.scopeValid && validation.evidenceSupported) return current;
-  return current === "IMPLEMENTED" || current === "VERIFIED" ? "STALE" : "PROPOSED";
+  // Once knowledge has entered the authoritative repository, a failed
+  // revalidation is represented as STALE. Downgrading an ACCEPTED asset back
+  // to PROPOSED would make the immutable Markdown revision unpublishable and
+  // strand the governance outbox between validation and persistence.
+  return current === "ACCEPTED" || current === "IMPLEMENTED" || current === "VERIFIED" ? "STALE" : "PROPOSED";
 }
 
 function fieldChanges(before: KnowledgeAsset, after: KnowledgeAsset): readonly KnowledgeFieldChange[] {

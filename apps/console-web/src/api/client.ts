@@ -30,6 +30,22 @@ import {
   type SessionSummary,
 } from "@zhiloop/control-api";
 import { z } from "zod";
+import {
+  sessionExtractionViewSchema,
+  knowledgeListViewSchema,
+  knowledgeDetailViewSchema,
+  knowledgeEditImpactSchema,
+} from "./p2.js";
+import type {
+  KnowledgeDetailView,
+  KnowledgeEditCommand,
+  KnowledgeEditImpact,
+  KnowledgeFilter,
+  KnowledgeLifecycleCommand,
+  KnowledgeListView,
+  SessionExtractionView,
+  StartSessionExtractionCommand,
+} from "./p2.js";
 
 export interface ConsoleApi {
   overview(signal?: AbortSignal): Promise<Overview>;
@@ -49,6 +65,15 @@ export interface ConsoleApi {
   rollbackConfiguration?(command: ConfigurationRollbackCommand, signal?: AbortSignal): Promise<ConfigurationMutationResult>;
   openInvalidations?(handlers: InvalidationHandlers, signal?: AbortSignal): InvalidationSubscription;
   pollInvalidations?(afterRevision: number, signal?: AbortSignal): Promise<InvalidationPollResult>;
+  sessionExtraction?(sessionId: string, signal?: AbortSignal): Promise<SessionExtractionView>;
+  startSessionExtraction?(command: StartSessionExtractionCommand, signal?: AbortSignal): Promise<SessionExtractionView>;
+  commitSessionExtraction?(command: { readonly sessionId: string; readonly previewId: string; readonly expectedPreviewRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal): Promise<SessionExtractionView>;
+  knowledgeList?(filter: KnowledgeFilter, signal?: AbortSignal): Promise<KnowledgeListView>;
+  knowledgeDetail?(knowledgeId: string, signal?: AbortSignal): Promise<KnowledgeDetailView>;
+  previewKnowledgeEdit?(command: KnowledgeEditCommand, signal?: AbortSignal): Promise<KnowledgeEditImpact>;
+  commitKnowledgeEdit?(command: KnowledgeEditCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
+  suppressKnowledge?(command: KnowledgeLifecycleCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
+  restoreKnowledge?(command: KnowledgeLifecycleCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
 }
 
 export interface CaptureCommitCommand {
@@ -286,6 +311,39 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
     const query = new URLSearchParams({ afterRevision: String(afterRevision), limit: "100" });
     return await request(`/invalidations/poll?${query.toString()}`, invalidationPollResultSchema, { signal });
   },
+  sessionExtraction: async (sessionId: string, signal?: AbortSignal) => await request(
+    `/sessions/${encodeURIComponent(sessionId)}/extraction`, sessionExtractionViewSchema, { signal },
+  ),
+  startSessionExtraction: async (command: StartSessionExtractionCommand, signal?: AbortSignal) => await request(
+    `/sessions/${encodeURIComponent(command.sessionId)}/extraction/preview`, sessionExtractionViewSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  commitSessionExtraction: async (command: { readonly sessionId: string; readonly previewId: string; readonly expectedPreviewRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/sessions/${encodeURIComponent(command.sessionId)}/extraction/commit`, sessionExtractionViewSchema,
+    { signal, body: { previewId: command.previewId, expectedPreviewRevision: command.expectedPreviewRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  knowledgeList: async (filter: KnowledgeFilter, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filter)) if (value !== undefined) query.set(key, String(value));
+    return await request(`/knowledge${query.size === 0 ? "" : `?${query.toString()}`}`, knowledgeListViewSchema, { signal });
+  },
+  knowledgeDetail: async (knowledgeId: string, signal?: AbortSignal) => await request(`/knowledge/${encodeURIComponent(knowledgeId)}`, knowledgeDetailViewSchema, { signal }),
+  previewKnowledgeEdit: async (command: KnowledgeEditCommand, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(command.knowledgeId)}/edit-preview`, knowledgeEditImpactSchema,
+    { signal, body: { expectedVersion: command.expectedVersion, idempotencyKey: command.idempotencyKey, draft: command.draft } },
+  ),
+  commitKnowledgeEdit: async (command: KnowledgeEditCommand, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(command.knowledgeId)}/edit-commit`, knowledgeDetailViewSchema,
+    { signal, body: { expectedVersion: command.expectedVersion, idempotencyKey: command.idempotencyKey, draft: command.draft } },
+  ),
+  suppressKnowledge: async (command: KnowledgeLifecycleCommand, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(command.knowledgeId)}/suppress`, knowledgeDetailViewSchema,
+    { signal, body: { expectedVersion: command.expectedVersion, idempotencyKey: command.idempotencyKey, reason: command.reason } },
+  ),
+  restoreKnowledge: async (command: KnowledgeLifecycleCommand, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(command.knowledgeId)}/restore`, knowledgeDetailViewSchema,
+    { signal, body: { expectedVersion: command.expectedVersion, idempotencyKey: command.idempotencyKey, reason: command.reason } },
+  ),
 });
 
 export type { CaptureCommitResult, CapturePreview, SessionSummary };

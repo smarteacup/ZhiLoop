@@ -78,8 +78,8 @@ describe("Console application shell", () => {
     const link = screen.getByRole("link", { name: "知识库" });
     link.focus();
     await user.keyboard("{Enter}");
-    expect(await screen.findByRole("heading", { name: "知识库尚未接通" })).toBeTruthy();
-    expect(screen.getByText(/KNOWLEDGE_WORKER_NOT_COMPOSED/)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "知识查询不可用" })).toBeTruthy();
+    expect(screen.getByText(/CAPABILITY_NOT_REPORTED/)).toBeTruthy();
   });
 
   it("shows read-only event metadata without rendering raw payload", async () => {

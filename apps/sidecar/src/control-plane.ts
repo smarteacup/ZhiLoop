@@ -15,6 +15,7 @@ import {
   type EventMetadata,
   type JobCommandResult,
   type JobSnapshot,
+  type P2ControlRequest,
   type SessionSummary,
   type StageSnapshot,
   eventMetadataSchema,
@@ -42,6 +43,11 @@ import {
   JobStaleRevisionError,
   JobStateConflictError,
 } from "@zhiloop/job-runtime";
+import {
+  ExtractionConflictError,
+  ExtractionNotFoundError,
+  ExtractionStaleRevisionError,
+} from "@zhiloop/session-extraction";
 
 import type { SidecarConfig } from "./config.js";
 import type { SidecarHealthReport } from "./application.js";
@@ -83,6 +89,10 @@ export interface JobCommandExecutionPort {
   retryJob(request: { readonly jobId: string; readonly expectedRevision: number; readonly idempotencyKey: string }): Promise<JobCommandResult>;
 }
 
+export interface P2ControlExecutionPort {
+  handle(request: P2ControlRequest): Promise<unknown>;
+}
+
 export interface SidecarControlPlaneOptions {
   readonly config: SidecarConfig;
   readonly ledger: SqliteEventLedger;
@@ -90,6 +100,7 @@ export interface SidecarControlPlaneOptions {
   readonly health: () => Promise<SidecarHealthReport>;
   readonly configuration?: SqliteConfigurationService;
   readonly jobCommands?: JobCommandExecutionPort;
+  readonly extraction?: P2ControlExecutionPort;
   readonly clock?: () => Date;
 }
 
@@ -254,6 +265,7 @@ export class SidecarControlPlane {
   readonly #health: () => Promise<SidecarHealthReport>;
   readonly #configuration: SqliteConfigurationService | undefined;
   readonly #jobCommands: JobCommandExecutionPort | undefined;
+  readonly #extraction: P2ControlExecutionPort | undefined;
   readonly #clock: () => Date;
   readonly #readModel: SqliteOperationalReadModel;
   readonly #catalog: ReadOnlySessionCatalog;
@@ -270,6 +282,7 @@ export class SidecarControlPlane {
   #lastHookEventAt: string | undefined;
   #previousAlerts: readonly PreviousAlertState[] = [];
   #alertCount = 0;
+  #p2KnowledgeConfigured = false;
 
   private constructor(
     options: SidecarControlPlaneOptions,
@@ -284,6 +297,7 @@ export class SidecarControlPlane {
     this.#health = options.health;
     this.#configuration = options.configuration;
     this.#jobCommands = options.jobCommands;
+    this.#extraction = options.extraction;
     this.#clock = options.clock ?? (() => new Date());
     this.#readModel = readModel;
     this.#catalog = catalog;
@@ -357,7 +371,11 @@ export class SidecarControlPlane {
       capability("configuration", "READY", "COMPONENT_READY", observedAt),
       capability("observability.alerts", "READY", "COMPONENT_READY", observedAt),
       capability("session.relations", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Compose an observable parent/child relation source"),
-      capability("knowledge.compile", "DISABLED", "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt, false, "Compose the production knowledge worker"),
+      capability("session.extraction", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.provenance", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.compile", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.governance", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.automatic-compile", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Manual extraction is the only enabled SHADOW trigger"),
       capability("knowledge.retrieval", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Compose the retrieval runtime"),
       capability("context.injection", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Complete SHADOW quality gates before injection"),
       capability("knowledge.mcp", "DISABLED", "MCP_TRANSPORT_NOT_ENABLED", observedAt, false, "Enable the local knowledge MCP transport"),
@@ -455,6 +473,27 @@ export class SidecarControlPlane {
     const observedAt = timestamp(this.#clock);
     this.#readModel.projectCapability(capability("durable.jobs", "READY", "COMPONENT_READY", observedAt));
     this.#readModel.projectCapability(capability("automatic.ingestion", "READY", "COMPONENT_READY", observedAt));
+  }
+
+  public setP2RuntimeReady(knowledgeConfigured: boolean): void {
+    this.#p2KnowledgeConfigured = knowledgeConfigured;
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability(capability("session.extraction", "READY", "COMPONENT_READY", observedAt));
+    this.#readModel.projectCapability(capability("knowledge.provenance", "READY", "COMPONENT_READY", observedAt));
+    this.#readModel.projectCapability(knowledgeConfigured
+      ? capability("knowledge.compile", "READY", "COMPONENT_READY", observedAt)
+      : capability("knowledge.compile", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the production knowledge worker"));
+    this.#readModel.projectCapability(knowledgeConfigured
+      ? capability("knowledge.governance", "READY", "COMPONENT_READY", observedAt)
+      : capability("knowledge.governance", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the production knowledge stores"));
+    this.#readModel.projectCapability(capability(
+      "knowledge.automatic-compile",
+      "DISABLED",
+      "CAPABILITY_DISABLED",
+      observedAt,
+      false,
+      "Manual extraction is the only enabled SHADOW trigger",
+    ));
   }
 
   async #refreshSession(sessionId: string): Promise<SessionSummary | undefined> {
@@ -662,18 +701,23 @@ export class SidecarControlPlane {
     return value;
   }
 
+  /** Read-only source inspection used by manual P2 snapshot validation. */
+  public async inspectTranscriptSource(sessionId: string): Promise<CapturePreview> {
+    return await this.#preview(sessionId);
+  }
+
   #knowledgeCompileStage(sessionId: string, observedAt: string): StageSnapshot {
     return {
       schemaVersion: CONTROL_API_SCHEMA_VERSION,
       entityId: sessionId,
       stage: "KNOWLEDGE_COMPILE",
-      status: "DISABLED",
-      reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED",
+      status: this.#p2KnowledgeConfigured ? "PENDING" : "DISABLED",
+      reasonCode: this.#p2KnowledgeConfigured ? "NOT_APPLICABLE" : "KNOWLEDGE_WORKER_NOT_COMPOSED",
       observedAt,
       lastTransitionAt: observedAt,
       retryable: false,
       evidenceRefs: [],
-      nextAction: "Compose the production knowledge worker",
+      nextAction: this.#p2KnowledgeConfigured ? "Start a manual session extraction preview" : "Compose the production knowledge worker",
     };
   }
 
@@ -750,7 +794,7 @@ export class SidecarControlPlane {
     await this.#refreshSession(report.sessionId);
   }
 
-  public async handle(request: ControlRequest): Promise<ControlResponse> {
+  public async handle(request: ControlRequest | P2ControlRequest): Promise<ControlResponse> {
     const observedAt = timestamp(this.#clock);
     try {
       let result: unknown;
@@ -833,6 +877,17 @@ export class SidecarControlPlane {
           if (this.#configuration === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
           result = await this.#configuration.rollback(request.expectedRevision, request.targetRevision, request.idempotencyKey);
           break;
+        case "extraction.snapshot.create":
+        case "extraction.candidates.preview":
+        case "extraction.candidates.commit":
+        case "extraction.snapshot.get":
+        case "extraction.snapshots.list":
+        case "extraction.candidates.get":
+        case "extraction.policy-commit.get":
+        case "extraction.provenance.get":
+          if (this.#extraction === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = await this.#extraction.handle(request);
+          break;
       }
       return successResponse(request.requestId, result, timestamp(this.#clock));
     } catch (error) {
@@ -840,10 +895,18 @@ export class SidecarControlPlane {
         ? error.code
         : error instanceof JobNotFoundError
           ? "NOT_FOUND"
+          : error instanceof ExtractionNotFoundError
+            ? "NOT_FOUND"
           : error instanceof JobStaleRevisionError
             ? "STALE_REVISION"
+            : error instanceof ExtractionStaleRevisionError
+              ? "STALE_REVISION"
             : error instanceof JobIdempotencyConflictError || error instanceof JobStateConflictError
               ? "CONFLICT"
+              : error instanceof ExtractionConflictError
+                ? "CONFLICT"
+                : error instanceof Error && error.name === "P2CapabilityUnavailableError"
+                  ? "CAPABILITY_UNAVAILABLE"
         : error instanceof InvalidOperationalCursorError
           ? "INVALID_CURSOR"
           : error instanceof Error && "code" in error && error.code === "SESSION_NOT_FOUND"

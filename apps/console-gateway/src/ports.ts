@@ -12,6 +12,12 @@ import type {
   ConfigurationMutationResult,
   ConfigurationState,
   ConfigurationValidationResult,
+  P2KnowledgeDetailView,
+  P2KnowledgeEditImpact,
+  P2KnowledgeFilter,
+  P2KnowledgeListView,
+  P2SessionExtractionView,
+  P2IndexRecoveryResult,
 } from "@zhiloop/control-api";
 
 export interface Page<T> {
@@ -37,6 +43,9 @@ export interface ControlQueryPort {
   listJobs(page: PageQuery, options: QueryOptions): Promise<Page<JobSnapshot>>;
   getDiagnostics(options: QueryOptions): Promise<Diagnostics>;
   getConfiguration(projectId: string | undefined, options: QueryOptions): Promise<ConfigurationState>;
+  getSessionExtraction?(sessionId: string, options: QueryOptions): Promise<P2SessionExtractionView>;
+  listKnowledge?(filter: P2KnowledgeFilter, options: QueryOptions): Promise<P2KnowledgeListView>;
+  getKnowledge?(knowledgeId: string, options: QueryOptions): Promise<P2KnowledgeDetailView>;
 }
 
 export interface CaptureCommitCommand {
@@ -80,4 +89,11 @@ export interface ControlCommandPort {
   rollbackConfiguration(command: ConfigurationRollbackCommand, options: QueryOptions): Promise<ConfigurationMutationResult>;
   cancelJob?(command: JobOperatorCommand, options: QueryOptions): Promise<JobCommandResult>;
   retryJob?(command: JobOperatorCommand, options: QueryOptions): Promise<JobCommandResult>;
+  startSessionExtraction?(command: { readonly sessionId: string; readonly expectedRevision: number; readonly idempotencyKey: string }, options: QueryOptions): Promise<P2SessionExtractionView>;
+  commitSessionExtraction?(command: { readonly sessionId: string; readonly previewId: string; readonly expectedPreviewRevision: number; readonly idempotencyKey: string }, options: QueryOptions): Promise<P2SessionExtractionView>;
+  previewKnowledgeEdit?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeEditImpact>;
+  commitKnowledgeEdit?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeDetailView>;
+  suppressKnowledge?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeDetailView>;
+  restoreKnowledge?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeDetailView>;
+  recoverKnowledgeIndex?(knowledgeId: string, options: QueryOptions): Promise<P2IndexRecoveryResult>;
 }

@@ -313,6 +313,19 @@ describe("UnixSocketControlClient", () => {
     await expect(client.getOverview({ signal: new AbortController().signal })).rejects.toMatchObject({ code: "PROTOCOL" });
   });
 
+  it("rejects P2 Sidecar response drift instead of passing unknown objects through", async () => {
+    const socketPath = await serve((request) => ({
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      requestId: request.requestId,
+      observedAt: NOW,
+      ok: true,
+      result: { sessionId: "session-1", stages: "not-an-array", injectedUnknownField: true },
+    }));
+    const client = new UnixSocketControlClient({ socketPath });
+    await expect(client.getSessionExtraction("session-1", { signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "PROTOCOL" });
+  });
+
   it("rejects typed result violations and safe remote errors", async () => {
     const invalidResultSocket = await serve((request) => ({
       schemaVersion: CONTROL_API_SCHEMA_VERSION,

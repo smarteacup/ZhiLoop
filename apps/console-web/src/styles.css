@@ -16,10 +16,10 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 1024px; min-height: 100vh; background: radial-gradient(circle at 72% 0%, #18211c 0, #0b0e12 32rem); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 a { color: inherit; }
-button, input, select, a { outline: none; }
-button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { box-shadow: 0 0 0 3px #0b0e12, 0 0 0 5px var(--accent); border-radius: 4px; }
+button, input, select, textarea, a { outline: none; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { box-shadow: 0 0 0 3px #0b0e12, 0 0 0 5px var(--accent); border-radius: 4px; }
 
 .app-shell { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
 .sidebar { position: sticky; top: 0; height: 100vh; padding: 28px 18px; border-right: 1px solid var(--line); background: rgba(9, 12, 15, .92); display: flex; flex-direction: column; }
@@ -118,5 +118,39 @@ main { min-width: 0; padding: 48px clamp(32px, 5vw, 76px) 80px; }
 .capture-stage { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 12px; background: rgba(8, 14, 11, .55); border-radius: 8px; }
 .capture-stage > div { display: grid; gap: 4px; }
 .capture-stage small { color: var(--muted); }
+.p2-grid, .detail-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.snapshot-card, .candidate-list article, .fact-row, .impact-preview { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); background: #0e1318; border-radius: 9px; }
+.snapshot-card h3, .extraction-panel h3, .candidate-list p, .fact-row p { margin: 0; }
+.candidate-list { display: grid; gap: 10px; }
+.candidate-list article > div:first-child, .fact-row > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.candidate-list small, .fact-row small, .policy-result small { color: var(--muted); }
+.policy-result { display: grid; gap: 4px; padding: 10px; border-left: 3px solid var(--accent-dark); background: #151b16; }
+.provenance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.provenance-grid div { min-width: 0; padding: 10px; background: #0e1318; border-radius: 7px; }
+.provenance-grid dt { color: var(--muted); font-size: 11px; }
+.provenance-grid dd { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 0; overflow-wrap: anywhere; }
+.provenance-grid a { color: var(--accent); }
+.filter-grid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.filter-grid label, .edit-grid label, .governance-panel > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.filter-grid input, .filter-grid select, .edit-grid input, .edit-grid textarea, .governance-panel > label input, .section-heading select { min-width: 0; width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; color: #fff; background: var(--panel-raised); }
+.knowledge-list { display: grid; gap: 8px; }
+.knowledge-list > a { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; color: inherit; text-decoration: none; }
+.knowledge-list > a:hover { border-color: var(--accent-dark); background: #151b16; }
+.knowledge-list > a > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.knowledge-list p { margin: 0; }
+.knowledge-list small { color: var(--muted); }
+.markdown-preview, .diff-preview { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #090d10; color: #dce7d3; }
+.diff-preview { color: #c7d7e7; }
+.fact-row { margin-bottom: 8px; color: inherit; text-decoration: none; }
+.edit-grid { display: grid; gap: 12px; }
+.edit-grid textarea { resize: vertical; }
+.governance-panel hr { border: 0; border-top: 1px solid var(--line); margin: 22px 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; } }
+@media (max-width: 1180px) {
+  .app-shell { grid-template-columns: 210px 1fr; }
+  main { padding-inline: 28px; }
+  .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .session-row { grid-template-columns: minmax(220px, 1fr) auto 150px; }
+}

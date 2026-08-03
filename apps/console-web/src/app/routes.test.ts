@@ -10,5 +10,7 @@ describe("console routes", () => {
     expect(parseRoute("#/jobs")).toEqual({ name: "jobs" });
     expect(parseRoute("#/diagnostics")).toEqual({ name: "diagnostics" });
     expect(parseRoute("#/configuration")).toEqual({ name: "configuration" });
+    expect(parseRoute("#/knowledge/rule%3Acompiler")).toEqual({ name: "knowledge", knowledgeId: "rule:compiler" });
+    expect(parseRoute("#/knowledge/%ZZ")).toEqual({ name: "overview" });
   });
 });

@@ -19,6 +19,16 @@ import {
   jobIdSchema,
   jobPageSchema,
   overviewSchema,
+  p2IndexRecoveryResultSchema,
+  p2KnowledgeDetailViewSchema,
+  p2KnowledgeEditCommandBodySchema,
+  p2KnowledgeEditImpactSchema,
+  p2KnowledgeFilterSchema,
+  p2KnowledgeLifecycleCommandBodySchema,
+  p2KnowledgeListViewSchema,
+  p2SessionCommitCommandSchema,
+  p2SessionExtractionViewSchema,
+  p2SessionPreviewCommandSchema,
   pageRequestSchema,
   sessionDetailSchema,
   sessionIdSchema,
@@ -55,6 +65,8 @@ const MAX_SSE_PENDING_BYTES = 2 * 1_048_576;
 interface OutputSchema<T> {
   safeParse(value: unknown): { success: true; data: T } | { success: false };
 }
+
+const SAFE_KNOWLEDGE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,499}$/u;
 
 export interface ConsoleGatewayOptions {
   readonly queryPort: ControlQueryPort;
@@ -151,6 +163,11 @@ function hasExactBodyFields(value: unknown, required: readonly string[], optiona
   const keys = Object.keys(value);
   const allowed = new Set([...required, ...optional]);
   return required.every((key) => key in value) && keys.every((key) => allowed.has(key));
+}
+
+function decodePathSegment(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try { return decodeURIComponent(value); } catch { return undefined; }
 }
 
 function parsePage(searchParams: URLSearchParams): PageQuery | undefined {
@@ -528,6 +545,78 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
           : url.pathname === `${CONSOLE_HTTP_API_PREFIX}${CONFIGURATION_HTTP_PATHS.rollback}`
             ? "config.rollback"
             : undefined;
+      const extractionMatch = /^\/api\/v1\/sessions\/([^/]+)\/extraction(?:\/(preview|commit))?$/u.exec(url.pathname);
+      if (extractionMatch !== null) {
+        const parsedSession = sessionIdSchema.safeParse(decodePathSegment(extractionMatch[1]));
+        const actionName = extractionMatch[2];
+        if (!parsedSession.success || url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "Invalid extraction target"); return; }
+        if (actionName === undefined) {
+          if (request.method !== "GET" || options.queryPort.getSessionExtraction === undefined) { safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Extraction query is unavailable"); return; }
+          await executeView(response, p2SessionExtractionViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => options.queryPort.getSessionExtraction!(parsedSession.data, queryOptions));
+          return;
+        }
+        if (request.method !== "POST" || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") { safeError(response, 405, "INVALID_REQUEST", "Extraction command requires JSON POST"); return; }
+        const commandPort = options.commandPort;
+        if (commandPort?.startSessionExtraction === undefined || commandPort.commitSessionExtraction === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Extraction command is unavailable"); return; }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          const parsedBody = actionName === "preview" ? p2SessionPreviewCommandSchema.safeParse(body) : p2SessionCommitCommandSchema.safeParse(body);
+          if (!parsedBody.success) { safeError(response, 400, "INVALID_REQUEST", "Invalid extraction command"); return; }
+          await executeCommand(response, p2SessionExtractionViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => actionName === "preview"
+            ? commandPort.startSessionExtraction!({ sessionId: parsedSession.data, ...(parsedBody.data as { expectedRevision: number; idempotencyKey: string }) }, queryOptions)
+            : commandPort.commitSessionExtraction!({ sessionId: parsedSession.data, ...(parsedBody.data as { previewId: string; expectedPreviewRevision: number; idempotencyKey: string }) }, queryOptions));
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid extraction command"); }
+        return;
+      }
+      if (url.pathname === "/api/v1/knowledge" && request.method === "GET") {
+        if (options.queryPort.listKnowledge === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Knowledge query is unavailable"); return; }
+        const filter: Record<string, unknown> = {};
+        const allowed = new Set(["scope", "projectId", "kind", "status", "subject", "symbol", "keyword", "evidenceVerdict", "version", "eligible"]);
+        for (const [key, value] of url.searchParams) {
+          if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) { safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge filter"); return; }
+          if (key === "eligible" && value !== "true" && value !== "false") { safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge filter"); return; }
+          filter[key] = key === "version" ? Number(value) : key === "eligible" ? value === "true" : value;
+        }
+        const parsedFilter = p2KnowledgeFilterSchema.safeParse(filter);
+        if (!parsedFilter.success) { safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge filter"); return; }
+        await executeView(response, p2KnowledgeListViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => options.queryPort.listKnowledge!(parsedFilter.data, queryOptions));
+        return;
+      }
+      const knowledgeMatch = /^\/api\/v1\/knowledge\/([^/]+)(?:\/(edit-preview|edit-commit|suppress|restore|index-recover))?$/u.exec(url.pathname);
+      if (knowledgeMatch !== null) {
+        const knowledgeId = decodePathSegment(knowledgeMatch[1]);
+        const actionName = knowledgeMatch[2];
+        if (knowledgeId === undefined || !SAFE_KNOWLEDGE_ID.test(knowledgeId) || url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge target"); return; }
+        if (actionName === undefined) {
+          if (request.method !== "GET" || options.queryPort.getKnowledge === undefined) { safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Knowledge detail is unavailable"); return; }
+          await executeView(response, p2KnowledgeDetailViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => options.queryPort.getKnowledge!(knowledgeId, queryOptions));
+          return;
+        }
+        if (request.method !== "POST" || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") { safeError(response, 405, "INVALID_REQUEST", "Knowledge command requires JSON POST"); return; }
+        const commandPort = options.commandPort;
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (actionName === "index-recover") {
+            if (!hasExactBodyFields(body, []) || commandPort?.recoverKnowledgeIndex === undefined) throw new Error("invalid");
+            await executeCommand(response, p2IndexRecoveryResultSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => commandPort.recoverKnowledgeIndex!(knowledgeId, queryOptions));
+            return;
+          }
+          const edit = actionName === "edit-preview" || actionName === "edit-commit";
+          const parsedBody = edit ? p2KnowledgeEditCommandBodySchema.safeParse(body) : p2KnowledgeLifecycleCommandBodySchema.safeParse(body);
+          if (!parsedBody.success) throw new Error("invalid");
+          const command = { knowledgeId, ...parsedBody.data };
+          if (actionName === "edit-preview") {
+            if (commandPort?.previewKnowledgeEdit === undefined) throw new Error("unavailable");
+            await executeCommand(response, p2KnowledgeEditImpactSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => commandPort.previewKnowledgeEdit!(command, queryOptions));
+          } else {
+            const method = actionName === "edit-commit" ? commandPort?.commitKnowledgeEdit
+              : actionName === "suppress" ? commandPort?.suppressKnowledge : commandPort?.restoreKnowledge;
+            if (method === undefined) throw new Error("unavailable");
+            await executeCommand(response, p2KnowledgeDetailViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => method.call(commandPort, command, queryOptions));
+          }
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge command"); }
+        return;
+      }
       const jobCommandMatch = /^\/api\/v1\/jobs\/([^/]+)\/(cancel|retry)$/u.exec(url.pathname);
       if (jobCommandMatch !== null) {
         if (request.method !== "POST" || url.searchParams.size !== 0 || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {

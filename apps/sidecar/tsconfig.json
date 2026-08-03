@@ -12,15 +12,26 @@
     { "path": "../../packages/automatic-ingestion" },
     { "path": "../../packages/codex-session-capture" },
     { "path": "../../packages/control-api" },
+    { "path": "../../packages/config" },
     { "path": "../../packages/configuration-service" },
     { "path": "../../packages/conversation-ledger" },
     { "path": "../../packages/daemon-runtime" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/evidence-engine" },
     { "path": "../../packages/hook-runtime" },
     { "path": "../../packages/job-runtime" },
+    { "path": "../../packages/knowledge-worker-runtime" },
+    { "path": "../../packages/knowledge-compiler" },
+    { "path": "../../packages/knowledge-governance-service" },
+    { "path": "../../packages/knowledge-indexer" },
+    { "path": "../../packages/knowledge-registry" },
+    { "path": "../../packages/markdown-repository" },
+    { "path": "../../packages/model-codex-exec" },
     { "path": "../../packages/local-deployment" },
     { "path": "../../packages/operational-read-model" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/plugin-runtime" },
-    { "path": "../../packages/session-catalog" }
+    { "path": "../../packages/session-catalog" },
+    { "path": "../../packages/session-extraction" }
   ]
 }

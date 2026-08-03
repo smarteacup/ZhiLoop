@@ -83,7 +83,7 @@ export function formatConsoleRuntimeAnnouncement(
 export async function runConsoleGateway(argv: readonly string[]): Promise<void> {
   const options = parseConsoleRuntimeOptions(argv);
   const paths = resolveConsoleRuntimePaths(options.home);
-  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath });
+  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath, timeoutMs: 5_000 });
   const gateway = await createConsoleGateway({
     queryPort: controlClient,
     commandPort: controlClient,

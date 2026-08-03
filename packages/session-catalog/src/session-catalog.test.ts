@@ -132,6 +132,11 @@ describe("TranscriptSessionCatalogSource", () => {
     await writeFile(join(directory, "child.jsonl"), jsonl(
       sessionMeta("session-child", "2026-08-03T11:00:00.000Z", { parent_thread_id: "session-v1" }),
     ));
+    await writeFile(join(directory, "nested-child.jsonl"), `${jsonl(
+      sessionMeta("session-nested-child", "2026-08-03T11:00:00.000Z", {
+        source: { subagent: { thread_spawn: { parent_thread_id: "session-v1" } } },
+      }),
+    )}${"x".repeat(2 * 1024 * 1024)}`);
 
     const result = await new TranscriptSessionCatalogSource(directory, { clock: () => now }).scan();
     expect(result.capability.status).toBe("AVAILABLE");
@@ -140,7 +145,7 @@ describe("TranscriptSessionCatalogSource", () => {
       ["session-v2", "codex-rollout-jsonl-v2"],
     ]);
     expect(result.sessions[0]?.sourceTurnCount).toBe(1);
-    expect(result.scanStats).toEqual({ filesVisited: 3, filesRead: 3, filesReused: 0 });
+    expect(result.scanStats).toEqual({ filesVisited: 4, filesRead: 4, filesReused: 0 });
   });
 
   it("reuses unchanged files, discovers appends, and never mutates the source", async () => {
@@ -152,7 +157,8 @@ describe("TranscriptSessionCatalogSource", () => {
     const beforeContent = await readFile(path);
     const beforeStat = await lstat(path);
 
-    const first = await scanner.scan();
+    const [first, concurrent] = await Promise.all([scanner.scan(), scanner.scan()]);
+    expect(concurrent).toBe(first);
     const unchanged = await scanner.scan();
     expect(first.changed).toBe(true);
     expect(unchanged.changed).toBe(false);
@@ -179,7 +185,10 @@ describe("TranscriptSessionCatalogSource", () => {
     await symlink(join(outside, "outside.jsonl"), join(directory, "link.jsonl"));
     await writeFile(join(directory, "unknown.jsonl"), jsonl(sessionMeta("unknown", "2026-08-03T08:00:00.000Z", { format_version: 99 })));
     await writeFile(join(directory, "malformed.jsonl"), `${jsonl(sessionMeta("malformed", "2026-08-03T08:00:00.000Z"))}not-json\n`);
-    await writeFile(join(directory, "large.jsonl"), `${"x".repeat(600)}\n`);
+    await writeFile(join(directory, "large.jsonl"), jsonl(
+      sessionMeta("large", "2026-08-03T08:00:00.000Z"),
+      event("2026-08-03T08:01:00.000Z", { type: "user_message", message: "x".repeat(600) }),
+    ));
     await writeFile(join(directory, "long-line.jsonl"), `${"x".repeat(350)}\n`);
     await mkdir(join(directory, "one", "two"), { recursive: true });
     await writeFile(join(directory, "one", "two", "deep.jsonl"), jsonl(sessionMeta("deep", "2026-08-03T08:00:00.000Z")));

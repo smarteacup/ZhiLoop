@@ -128,7 +128,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.1.5",
+      sidecarVersion: "0.1.6",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });

@@ -78,8 +78,10 @@ function formatVersion(payload: Record<string, unknown>): string | undefined {
 
 function primary(payload: Record<string, unknown>): boolean {
   if (payload["parent_thread_id"] !== undefined || payload["parent_session_id"] !== undefined || payload["parent_id"] !== undefined) return false;
+  const structuredSource = payload["source"];
+  if (object(structuredSource) && (object(structuredSource["subagent"]) || object(structuredSource["collaboration"]))) return false;
   const role = text(payload["agent_role"])?.toLowerCase();
-  const source = text(payload["source"])?.toLowerCase();
+  const source = text(structuredSource)?.toLowerCase();
   const originator = text(payload["originator"])?.toLowerCase();
   return role !== "subagent" && source !== "subagent" && source !== "collaboration" && !originator?.includes("subagent");
 }
@@ -94,6 +96,25 @@ async function readStableFile(handle: FileHandle, expectedSize: number): Promise
   }
   if (offset !== expectedSize) throw new Error("file changed during bounded read");
   return buffer.subarray(0, offset);
+}
+
+async function inspectTranscriptHeader(
+  handle: FileHandle,
+  expectedSize: number,
+  safeAlias: string,
+  maxLineBytes: number,
+): Promise<ParsedFile> {
+  const maximum = Math.min(expectedSize, maxLineBytes + 1);
+  const buffer = Buffer.alloc(maximum);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  const newline = buffer.subarray(0, offset).indexOf(0x0a);
+  if (newline < 0) return { ok: false, code: expectedSize > maxLineBytes ? "LINE_TOO_LARGE" : "MALFORMED_RECORD" };
+  return parseTranscript(buffer.subarray(0, newline + 1), safeAlias, maxLineBytes);
 }
 
 function parseTranscript(buffer: Buffer, safeAlias: string, maxLineBytes: number): ParsedFile {
@@ -196,6 +217,7 @@ export class TranscriptSessionCatalogSource implements SessionCatalogSourcePort 
   readonly #clock: () => Date;
   readonly #cache = new Map<string, CachedFile>();
   #lastRevision: string | undefined;
+  #scanInFlight: Promise<SessionSourceSnapshot> | undefined;
 
   constructor(root: string, options: TranscriptCatalogOptions = {}) {
     if (!isAbsolute(root) || root.includes("\0")) throw new TypeError("transcript root must be an absolute safe path");
@@ -207,7 +229,18 @@ export class TranscriptSessionCatalogSource implements SessionCatalogSourcePort 
     this.#clock = options.clock ?? (() => new Date());
   }
 
-  async scan(): Promise<SessionSourceSnapshot> {
+  scan(): Promise<SessionSourceSnapshot> {
+    if (this.#scanInFlight !== undefined) return this.#scanInFlight;
+    const operation = this.#performScan();
+    this.#scanInFlight = operation;
+    void operation.then(
+      () => { if (this.#scanInFlight === operation) this.#scanInFlight = undefined; },
+      () => { if (this.#scanInFlight === operation) this.#scanInFlight = undefined; },
+    );
+    return operation;
+  }
+
+  async #performScan(): Promise<SessionSourceSnapshot> {
     const now = this.#clock();
     if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new TypeError("clock returned an invalid date");
     const observedAt = now.toISOString();
@@ -267,10 +300,6 @@ export class TranscriptSessionCatalogSource implements SessionCatalogSourcePort 
         if (canonicalFile === canonicalRoot || !canonicalFile.startsWith(`${canonicalRoot}${sep}`)) throw new Error("escape");
         const stat = await lstat(canonicalFile);
         if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("unsafe");
-        if (stat.size > this.#maxFileBytes) {
-          diagnostics.push({ code: "FILE_TOO_LARGE", source: "CODEX_TRANSCRIPT", safeSourceAlias: safeAlias, retryable: false });
-          continue;
-        }
         const identity = `${String(stat.dev)}:${String(stat.ino)}`;
         const cached = this.#cache.get(canonicalFile);
         if (
@@ -284,7 +313,14 @@ export class TranscriptSessionCatalogSource implements SessionCatalogSourcePort 
           try {
             const opened = await handle.stat();
             if (!opened.isFile() || opened.size !== stat.size) throw new Error("changed during scan");
-            parsed = parseTranscript(await readStableFile(handle, stat.size), safeAlias, this.#maxLineBytes);
+            const header = await inspectTranscriptHeader(handle, stat.size, safeAlias, this.#maxLineBytes);
+            if (!header.ok || header.session === undefined) {
+              parsed = header;
+            } else if (stat.size > this.#maxFileBytes) {
+              parsed = { ok: false, code: "FILE_TOO_LARGE" };
+            } else {
+              parsed = parseTranscript(await readStableFile(handle, stat.size), safeAlias, this.#maxLineBytes);
+            }
           } finally {
             await handle.close();
           }

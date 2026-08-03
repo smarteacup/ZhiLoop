@@ -13,7 +13,7 @@ export interface ConsoleRuntimeOptions {
   readonly json: boolean;
 }
 
-export const CONSOLE_QUERY_TIMEOUT_MS = 5_000;
+export const CONSOLE_QUERY_TIMEOUT_MS = 15_000;
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const indexes = argv.flatMap((item, index) => item === name ? [index] : []);

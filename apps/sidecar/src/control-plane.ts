@@ -659,7 +659,6 @@ export class SidecarControlPlane {
       switch (request.type) {
         case "overview.get": {
           await this.scheduleLedgerProjection();
-          await this.#listSessions({ schemaVersion: 1, requestId: request.requestId, type: "sessions.list", page: { limit: 20 } });
           result = this.#readModel.getOverview({ observedAt, rolloutMode: "SHADOW", sidecarVersion: SIDECAR_VERSION, alertCount: 0 });
           break;
         }

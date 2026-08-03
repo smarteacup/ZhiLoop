@@ -128,7 +128,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.1.7",
+      sidecarVersion: "0.1.8",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });
@@ -390,6 +390,20 @@ describe("sidecar service", () => {
         page: { limit: 50 },
       })) as { items: Array<{ capabilityId: string; status: string }> };
       expect(before.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ capabilityId: "session.catalog", status: "STARTING" }),
+      ]));
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "overview-before-catalog",
+        type: "overview.get",
+      }))).toMatchObject({ rolloutMode: "SHADOW" });
+      const afterOverview = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "capabilities-after-overview",
+        type: "capabilities.list",
+        page: { limit: 50 },
+      })) as { items: Array<{ capabilityId: string; status: string }> };
+      expect(afterOverview.items).toEqual(expect.arrayContaining([
         expect.objectContaining({ capabilityId: "session.catalog", status: "STARTING" }),
       ]));
 

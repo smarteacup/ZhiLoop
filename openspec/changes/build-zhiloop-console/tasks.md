@@ -43,7 +43,7 @@
 - [x] 4.6 [Integration Owner] Add `zhiloop ui` launcher and local release packaging for Gateway and Web assets without making Gateway part of the Hook path
 - [x] 4.7 [Quality Owner] Add browser E2E for bootstrap → overview → session list → detail → capture preview/commit and verify no Codex session mutation
 - [x] 4.8 [Quality Owner] Run P0 performance and security Gate: ≥99% catalog fixture coverage, Overview P95 <300ms, 100k-event list P95 <500ms, Hook P95 delta <5ms, unauthorized requests 100% rejected
-- [ ] 4.9 [Integration Owner] Complete Integration and Release Reviews, document actual P0 capability matrix, and deploy only after all P0 Gates pass
+- [x] 4.9 [Integration Owner] Complete Integration and Release Reviews, document actual P0 capability matrix, and deploy only after all P0 Gates pass
 
 ## 5. P1 Durable Jobs and Automatic Ingestion — Parallel Wave 3
 

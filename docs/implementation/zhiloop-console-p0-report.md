@@ -58,3 +58,7 @@ zhiloop ui --no-open --json
 ## Release Review 结论
 
 P0 页面状态均来自 Control API/Sidecar 投影，没有硬编码 READY。Overview 只读持久化运行态快照，不触发源目录扫描；会话目录发现延迟到显式会话查询，Sidecar READY 与首屏均不受历史会话规模阻塞。结构化 sub-Agent transcript 只读取有界 header 即可排除，真实 431 文件暖缓存发现约 1.8 秒；会话查询的 Gateway/Unix 两层统一保留 15 秒冷盘有界预算。Hook/spool 写入按批增量投影，查询前有 freshness barrier。认证、隐私、单写入者、跨重启幂等、stale、恢复和 Hook 隔离均有直接自动化证据。全量门禁为 56 个 Node 测试与 774 个 Vitest 测试通过，语句覆盖率 91.20%；允许发布 `0.1.8` 本地 SHADOW 控制台，但不得据此开启自动知识编译、实际注入或 ACTIVE。
+
+## 真实部署证据
+
+`0.1.8` 已通过 journal installer 升级到当前用户目录，journal 状态为 `COMMITTED`；`zhiloop doctor` 的 release、权限、service、compatibility、rollout 六项均为 PASS。真实 Console 验证结果：bootstrap 200、Overview 200/34ms、会话列表 200/8.7s/50 条、会话详情 200、bootstrap 重放 401。部署前后 `~/.ccm/config.json` SHA-256 均为 `fdfcd36b64b35783ce2a8895d86dff5ac91a50798a3ebc836ac7a56ffb84178b`，未修改 CCM 凭证或配置。

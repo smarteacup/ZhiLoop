@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../config" },
+    { "path": "../context-orchestrator" },
+    { "path": "../domain" },
+    { "path": "../knowledge-reranker" },
+    { "path": "../query-context" },
+    { "path": "../retrieval-engine" },
+    { "path": "../retrieval-evaluation" },
+    { "path": "../vector-index" }
+  ]
+}

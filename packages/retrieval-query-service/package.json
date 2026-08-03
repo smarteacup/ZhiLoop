@@ -1,0 +1,39 @@
+{
+  "name": "@zhiloop/retrieval-query-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/config",
+      "@zhiloop/context-orchestrator",
+      "@zhiloop/domain",
+      "@zhiloop/knowledge-reranker",
+      "@zhiloop/query-context",
+      "@zhiloop/retrieval-engine",
+      "@zhiloop/retrieval-evaluation",
+      "@zhiloop/vector-index"
+    ],
+    "allowedExternalDependencies": ["node:*"]
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/config": "0.0.0",
+    "@zhiloop/context-orchestrator": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/knowledge-reranker": "0.0.0",
+    "@zhiloop/query-context": "0.0.0",
+    "@zhiloop/retrieval-engine": "0.0.0",
+    "@zhiloop/retrieval-evaluation": "0.0.0",
+    "@zhiloop/vector-index": "0.0.0"
+  }
+}

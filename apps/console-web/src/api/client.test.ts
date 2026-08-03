@@ -204,6 +204,28 @@ describe("typed Console API client", () => {
     })).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
   });
 
+  it("gives Codex-assisted answers the full model deadline while search remains bounded", async () => {
+    const answer = {
+      schemaVersion: 1, queryId: "request-web-ask", retrievalTraceId: "trace-web-p3",
+      outcome: "FALLBACK_SEARCH", answer: "", factualSpans: [], citations: [],
+      unknowns: ["No answer"], conflicts: [], latencyMs: 1, usage: {},
+    };
+    const fetcher = vi.fn<typeof fetch>(async () => envelope({ schemaVersion: 1, kind: "ASK", trace: retrievalTrace, answer }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(browserConsoleApi.askZhiLoop?.({
+      requestId: "request-web-ask", query: "ConfigService", projectId: "project-a",
+      maxResults: 10, maxContextTokens: 800,
+    })).resolves.toMatchObject({ outcome: "FALLBACK_SEARCH" });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/retrieval/ask", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        requestId: "request-web-ask", query: "ConfigService", projectId: "project-a",
+        maxResults: 10, maxContextTokens: 800, timeoutMs: 120_000,
+      }),
+    }));
+  });
+
   it("downgrades an INJECTED audit to SHADOW when delivery evidence is absent", async () => {
     const capabilities = {
       items: ["INJECTION_AUDIT", "MCP_AUDIT", "CLOSURE_AUDIT", "FEEDBACK", "ROLLOUT", "HIGH_RISK_GOVERNANCE"].map((capability) => ({

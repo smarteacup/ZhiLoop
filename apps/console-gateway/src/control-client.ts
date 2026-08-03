@@ -108,7 +108,7 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
     if (!options.socketPath.startsWith("/")) throw new Error("socketPath must be absolute");
     this.timeoutMs = options.timeoutMs ?? 2_000;
     this.maximumResponseBytes = options.maximumResponseBytes ?? MAX_CONTROL_MESSAGE_BYTES;
-    assertPositiveBoundedInteger("timeoutMs", this.timeoutMs, 30_000);
+    assertPositiveBoundedInteger("timeoutMs", this.timeoutMs, 120_000);
     assertPositiveBoundedInteger("maximumResponseBytes", this.maximumResponseBytes, MAX_CONTROL_MESSAGE_BYTES);
   }
 

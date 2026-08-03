@@ -473,7 +473,29 @@ describe("KnowledgeWorkerRuntime", () => {
 
     expect(terminal.status).toBe("FAILED");
     expect(terminal.stages.LEDGER_READ.attempts).toBe(2);
-    expect(terminal.stages.LEDGER_READ.error?.retryable).toBe(false);
+    expect(terminal.stages.LEDGER_READ.error?.retryable).toBe(true);
+  });
+
+  it("allows an explicit retry to recover one terminal retryable stage without replaying successful stages", async () => {
+    const setup = fixture();
+    let ledgerCalls = 0;
+    setup.ports.ledger.loadSnapshot = async (...args) => {
+      ledgerCalls += 1;
+      if (ledgerCalls <= 2) throw Object.assign(new Error("offline"), { retryable: true });
+      return fixture().ports.ledger.loadSnapshot(...args);
+    };
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+    const bounded = request({ limits: { maxStageAttempts: 2 } });
+
+    expect((await runtime.run(bounded)).status).toBe("RETRYABLE");
+    expect((await runtime.run(bounded)).status).toBe("FAILED");
+    expect((await runtime.run(bounded)).status).toBe("FAILED");
+
+    const recovered = await runtime.run(bounded, { retryFailed: true });
+    expect(recovered.status).toBe("COMPLETED");
+    expect(recovered.stages.LEDGER_READ.status).toBe("SUCCEEDED");
+    expect(ledgerCalls).toBe(3);
   });
 
   it("rejects snapshot drift and work identity changes", async () => {

@@ -194,6 +194,7 @@ class FakeQueryPort implements ControlQueryPort {
   public overview: Overview = overview;
   public failure: Error | undefined;
   public hang = false;
+  public askDelayMs = 0;
   public calls: string[] = [];
 
   public getOverview(options: QueryOptions): Promise<Overview> {
@@ -236,7 +237,13 @@ class FakeQueryPort implements ControlQueryPort {
     return this.result("p3:search", { schemaVersion: 1, kind: "SEARCH", trace: retrievalTrace }, options);
   }
 
-  public askKnowledge(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3AskResponse> {
+  public async askKnowledge(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3AskResponse> {
+    if (this.askDelayMs > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, this.askDelayMs);
+        options.signal.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); }, { once: true });
+      });
+    }
     return this.result("p3:ask", {
       schemaVersion: 1,
       kind: "ASK",
@@ -995,6 +1002,22 @@ describe("Console Gateway security boundary", () => {
     expect((await fetch(`${address?.origin}/api/v1/retrieval/traces/trace-gateway-p3?projectId=a&projectId=b`, {
       headers: authorizedHeaders(browser),
     })).status).toBe(400);
+  });
+
+  it("keeps ordinary queries short while allowing a separately bounded model-backed ask", async () => {
+    queryPort.askDelayMs = 40;
+    await start({ queryTimeoutMs: 20, modelQueryTimeoutMs: 100 });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const response = await fetch(`${address?.origin}/api/v1/retrieval/ask`, {
+      method: "POST",
+      headers: { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" },
+      body: JSON.stringify({
+        requestId: "request-long-ask", query: "How does ConfigService work?", projectId: "project-a",
+        maxResults: 10, maxContextTokens: 800, timeoutMs: 100,
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(queryPort.calls).toContain("p3:ask");
   });
 
   it("preserves stale-preview conflicts without reflecting Sidecar details", async () => {

@@ -1,9 +1,9 @@
 # ZhiLoop Console 本地控制台技术设计
 
-**状态**：Proposed  
-**版本**：0.2  
+**状态**：Implemented
+**版本**：1.0
 **创建日期**：2026-08-03  
-**最后更新**：2026-08-03  
+**最后更新**：2026-08-04
 **目标读者**：产品设计者、实现者、维护者、测试与安全评审者  
 **关联文档**：
 
@@ -67,15 +67,15 @@ ZhiLoop Console 是面向本机用户的可交互控制台。它不是 SQLite �
 |---|---|---|---|
 | Sidecar 健康与 SHADOW 模式 | 已有 | 已接通 | `READY / SHADOW` |
 | 指定会话采集到 Ledger | 已有 | 已接通 | 可操作、可查看报告 |
-| Codex 实时 Hook | 已有 | 已安装，真实新会话链路待验证 | `NOT_VERIFIED`，显示最后 Hook 事件 |
-| 自动发现、follow、补采 | 部分端口已有 | 未接通 | `DISABLED`，展示计划入口但禁用操作 |
-| Episode/编译/Scope/Evidence | 已有模块和测试 | 未组合进 Sidecar Worker | 对应阶段 `DISABLED` |
-| Markdown 发布和索引 | 已有模块和测试 | 未组合进 Sidecar Worker | 对应阶段 `DISABLED` |
-| 召回、重排、Context Envelope | 已有模块和测试 | 未组合进部署 | `DISABLED`，可先提供离线模拟入口 |
-| MCP 按需展开 | 已有模块和测试 | transport 未启用 | `DISABLED` |
-| Stop 闭环和反馈 | 已有模块和测试 | 未组合进 Hook | `DISABLED` |
-| ACTIVE 模式 | 已有领域能力 | 部署配置只允许 SHADOW | 只读显示，开关禁用 |
-| 可观测控制面 | 只有 health/日志/CLI | 未实现 | 本设计交付范围 |
+| Codex 实时 Hook | 已有 | 已安装并有真实链路证据 | `READY`，显示最后 Hook 事件 |
+| 自动发现、follow、补采 | 已实现 | durable job 与 scheduler 已接通 | 进度、checkpoint、重试与完整性可见 |
+| Episode/编译/Scope/Evidence | 已实现 | Production Worker 已接通 | snapshot、candidate、policy 与 provenance 可见 |
+| Markdown 发布和索引 | 已实现 | outbox、Registry 与增量索引已接通 | 版本、Evidence、状态与索引版本可见 |
+| 召回、重排、Context Envelope | 已实现 | P3/P4 检索链已接通 | 搜索、问答、Trace 与策略比较可用 |
+| MCP 按需展开 | 已实现 | 本地受控 transport 与审计已接通 | L1→L2/L3 展开与实际使用可见 |
+| Stop 闭环和反馈 | 已实现 | 有限 continuation、Gate 与反馈已接通 | Closure、纠偏与人工确认可见 |
+| ACTIVE 模式 | 已实现 | 默认仍为 SHADOW | 只能经质量证据、灰度和高风险确认切换 |
+| 可观测控制面 | 已实现 | Gateway + SPA 已部署 | 本设计交付完成 |
 | Linux/Windows、跨机器同步 | 未部署 | 未接通 | “部署与同步”页显示不支持 |
 
 ### 4.1 交互需求推演结论
@@ -88,7 +88,7 @@ ZhiLoop Console 是面向本机用户的可交互控制台。它不是 SQLite �
 | 上下文、频率、重试和告警配置 | 只有配置分类，没有字段级契约 | 支持；增加字段、作用域、边界和生效方式 | scheduler/retry/alert schemas |
 | 自然语言召回并由本地 Codex 处理 | 只支持确定性 dry-run | 支持；增加“搜索”和“问 ZhiLoop”两种模式 | read-only Codex query adapter、answer citations |
 
-这里的“支持”指架构和页面契约能够实现，不代表当前 SHADOW 发行已经具备这些运行能力。
+这里的“支持”已经包含当前发行的运行组合；`SHADOWED` 与 `INJECTED` 仍严格按真实投递证据区分。
 
 ## 5. 产品信息架构
 

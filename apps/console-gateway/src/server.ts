@@ -104,6 +104,8 @@ export interface ConsoleGatewayOptions {
   readonly bootstrapTtlMs?: number;
   readonly sessionTtlMs?: number;
   readonly queryTimeoutMs?: number;
+  /** Separate bounded deadline for model-backed retrieval asks. */
+  readonly modelQueryTimeoutMs?: number;
   readonly maximumJsonResponseBytes?: number;
   readonly maximumRequestsPerWindow?: number;
   readonly rateWindowMs?: number;
@@ -326,6 +328,10 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new Error("port is invalid");
   const queryTimeoutMs = options.queryTimeoutMs ?? 2_000;
   if (!Number.isSafeInteger(queryTimeoutMs) || queryTimeoutMs < 10 || queryTimeoutMs > 30_000) throw new Error("queryTimeoutMs is invalid");
+  const modelQueryTimeoutMs = options.modelQueryTimeoutMs ?? queryTimeoutMs;
+  if (!Number.isSafeInteger(modelQueryTimeoutMs) || modelQueryTimeoutMs < queryTimeoutMs || modelQueryTimeoutMs > 120_000) {
+    throw new Error("modelQueryTimeoutMs is invalid");
+  }
   const maximumJsonResponseBytes = options.maximumJsonResponseBytes ?? MAX_JSON_RESPONSE_BYTES;
   if (!Number.isSafeInteger(maximumJsonResponseBytes) || maximumJsonResponseBytes < 512 || maximumJsonResponseBytes > MAX_JSON_RESPONSE_BYTES) {
     throw new Error("maximumJsonResponseBytes is invalid");
@@ -753,7 +759,7 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
             await executeView(response, p3ConsoleSearchResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
               (queryOptions) => options.queryPort.searchKnowledge!(parsed.data, queryOptions));
           } else if (retrievalOperation === "ask") {
-            await executeView(response, p3ConsoleAskResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            await executeView(response, p3ConsoleAskResponseSchema, modelQueryTimeoutMs, maximumJsonResponseBytes,
               (queryOptions) => options.queryPort.askKnowledge!(parsed.data, queryOptions));
           } else {
             await executeView(response, p3ConsoleSimulationResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,

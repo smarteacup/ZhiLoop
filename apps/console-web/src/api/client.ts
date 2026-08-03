@@ -414,7 +414,7 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
   askZhiLoop: async (command: KnowledgeSearchCommand, signal?: AbortSignal) => {
     const response = await request("/retrieval/ask", p3ConsoleAskResponseSchema, {
       signal,
-      body: retrievalQueryBody(command),
+      body: retrievalQueryBody(command, 120_000),
     });
     return Object.freeze({
       outcome: response.answer.outcome,
@@ -653,7 +653,7 @@ function p4ClosureView(raw: P4WireClosure): ClosureRunView {
   });
 }
 
-function retrievalQueryBody(command: KnowledgeSearchCommand): Readonly<Record<string, unknown>> {
+function retrievalQueryBody(command: KnowledgeSearchCommand, timeoutMs = 10_000): Readonly<Record<string, unknown>> {
   return Object.freeze({
     requestId: command.requestId,
     query: command.query,
@@ -664,7 +664,7 @@ function retrievalQueryBody(command: KnowledgeSearchCommand): Readonly<Record<st
     ...(command.hints === undefined ? {} : { hints: command.hints }),
     maxResults: command.maxResults,
     maxContextTokens: command.maxContextTokens,
-    timeoutMs: 10_000,
+    timeoutMs,
   });
 }
 

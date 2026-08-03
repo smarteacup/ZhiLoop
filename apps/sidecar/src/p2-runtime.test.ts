@@ -104,7 +104,13 @@ function workerCheckpoint(
     status,
     createdAt: now,
     updatedAt: now,
-    stages: {} as KnowledgeWorkerCheckpoint["stages"],
+    stages: (status === "FAILED" ? {
+      COMPILE: {
+        status: "FAILED",
+        attempts: 5,
+        error: { code: "COMPILER_ADAPTER_UNAVAILABLE", message: "offline", retryable: true, occurredAt: now },
+      },
+    } : {}) as KnowledgeWorkerCheckpoint["stages"],
     payload: {
       episodes: [{ episodeId: "episode-1", status: "COMPLETED" }] as never,
       policies: [policy] as never,
@@ -253,7 +259,18 @@ describe("P2SidecarRuntime", () => {
     try {
       const created = await runtime.createSnapshot(snapshotRequest());
       const job = await runtime.enqueueCandidatePreview(p2PreviewRequest(created.snapshot, "preview-failed"));
-      await waitFor(() => projected.some((snapshot) => snapshot.jobId === job.jobId && snapshot.status === "FAILED") ? true : undefined);
+      const failed = await waitFor(
+        () => projected.find((snapshot) => snapshot.jobId === job.jobId && snapshot.status === "FAILED"),
+        5_000,
+      );
+      expect(failed.lastFailure?.retryable).toBe(true);
+      expect(runtime.hasJob(job.jobId)).toBe(true);
+      if (failed.revision === undefined) throw new Error("failed job revision is missing");
+      await expect(runtime.retryJob({
+        jobId: job.jobId,
+        expectedRevision: failed.revision,
+        idempotencyKey: "operator:retry:p2-runtime",
+      })).resolves.toMatchObject({ disposition: "APPLIED", job: { status: "QUEUED" } });
       expect(runtime.service().getCandidatePreviewForSnapshot(created.snapshot.snapshotId)).toBeUndefined();
     } finally {
       await runtime.close();

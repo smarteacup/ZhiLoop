@@ -87,6 +87,18 @@ describe("SqliteConfigurationService", () => {
     expect(target.audit()).toMatchObject([{ revision: 1, operatorId: "operator-1", code: "ACTIVATED", changedPaths: ["runtime.workerConcurrency"] }]);
   });
 
+  it.each([
+    ["injectionMaxTokens", { future: { injectionMaxTokens: 1_200 } }],
+    ["compilerBatchSize", { future: { compilerBatchSize: 75 } }],
+    ["codexQueryTimeoutMs", { future: { codexQueryTimeoutMs: 120_000 } }],
+  ])("marks fixed startup consumer %s changes as restart-required", (_field, draft) => {
+    const target = service();
+    const validation = target.validateDraft({ baseRevision: 0, scope: "GLOBAL", draft });
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+    expect(validation.draft.requiresRestart).toBe(true);
+  });
+
   it("rolls back applied components and records a rejected immutable revision on partial failure", async () => {
     const rollback = vi.fn(async () => undefined);
     const target = service({

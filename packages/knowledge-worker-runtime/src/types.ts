@@ -144,6 +144,11 @@ export type KnowledgeWorkerRunStatus = "RUNNING" | "AWAITING_COMMIT" | "RETRYABL
 export interface KnowledgeWorkerRunOptions {
   /** Persist a publication-free policy preview until the same work is resumed. */
   readonly stopAfterCandidatePolicy?: boolean;
+  /**
+   * Permit an explicitly re-queued durable job to make one more attempt at a
+   * terminal stage whose underlying failure is still classified retryable.
+   */
+  readonly retryFailed?: boolean;
 }
 
 export interface KnowledgeWorkerCheckpoint {

@@ -34,6 +34,7 @@ import type {
 } from "./types.js";
 
 const MAX_MANIFEST_BYTES = 1_048_576;
+const MAX_CONFIGURATION_BYTES = 1_048_576;
 
 export interface LocalInstallOptions {
   readonly home: string;
@@ -95,6 +96,26 @@ async function validateCodexExecutable(value: string | undefined): Promise<strin
     throw new Error("Codex executable must be a regular executable file");
   }
   return normalized;
+}
+
+async function inheritedCodexExecutable(configPath: string): Promise<string | undefined> {
+  if (!(await pathExists(configPath))) return undefined;
+  const metadata = await lstat(configPath);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_CONFIGURATION_BYTES) {
+    throw new Error("existing sidecar configuration must be a bounded regular file");
+  }
+  const parsed = JSON.parse(await readFile(configPath, "utf8")) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("existing sidecar configuration has an unsupported shape");
+  }
+  const query = (parsed as { codexQuery?: unknown }).codexQuery;
+  if (query === undefined) return undefined;
+  if (typeof query !== "object" || query === null || Array.isArray(query)
+    || (query as { enabled?: unknown }).enabled !== true
+    || typeof (query as { executable?: unknown }).executable !== "string") {
+    throw new Error("existing Codex query configuration has an unsupported shape");
+  }
+  return await validateCodexExecutable((query as { executable: string }).executable);
 }
 
 function configuration(paths: ReturnType<typeof resolveDeploymentPaths>, codexExecutable?: string): string {
@@ -296,7 +317,7 @@ function hookTrustStep(
 }
 
 async function waitUntilReady(options: LocalInstallOptions, expectedSidecarVersion: string): Promise<void> {
-  const attempts = options.readinessAttempts ?? 20;
+  const attempts = options.readinessAttempts ?? 60;
   const delayMs = options.readinessDelayMs ?? 250;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 200 || !Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 5_000) {
     throw new Error("readiness settings are outside supported bounds");
@@ -339,10 +360,12 @@ export async function planLocalInstall(options: LocalInstallOptions): Promise<De
 export async function installLocalRelease(options: LocalInstallOptions): Promise<LocalInstallResult> {
   const artifact = resolve(options.artifactDirectory);
   const verified = await verifyCompatibleLocalReleaseArtifact(artifact, options.compatibility);
-  const codexExecutable = await validateCodexExecutable(options.codexExecutable);
   const paths = resolveDeploymentPaths(options.home, verified.metadata.version);
   const previous = await readDeploymentManifest(paths.manifestPath);
   await validateExistingOwnership(paths, previous);
+  const codexExecutable = options.codexExecutable === undefined && previous !== undefined
+    ? await inheritedCodexExecutable(paths.configPath)
+    : await validateCodexExecutable(options.codexExecutable);
   const previousServiceState = await options.service.status();
   const plan = buildPlan(paths, verified.metadata, await pathExists(paths.releaseDirectory));
   const installedAt = now(options.clock ?? (() => new Date()));

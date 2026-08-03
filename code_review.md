@@ -1,73 +1,77 @@
-# ZhiLoop Code Review
+# ZhiLoop 0.3.9 Final Code Review
 
-## 统计概览
+## 结论
 
-| 指标 | 当前 P1 | 累计 |
-|---|---:|---:|
-| CR 标识 | `main@4d21a22+build-zhiloop-console-p1.2` | 54 次 |
-| 高风险 | 15 | 245 |
-| 中风险 | 9 | 327 |
-| 低风险 | 0 | 2 |
-| 修复程度 | 24/24（100%） | 100% |
+本次 review 覆盖 Console P0-P4 的最终组合、真实部署修复和文档状态。已按正确性、并发、性能、隐私、安全、兼容性和模块边界检查增量代码；8 个实际发现均已修复并有自动化或真实环境证据。当前没有未解决的高风险 finding。
 
-## 改动说明
+## 变更范围
 
-本次交付 Console P1 的持久 Job、自动会话采集、配置事务、告警、实时更新、Job 安全命令和真实 Codex acceptance。补丁发行版本为 `0.2.1`，运行模式仍固定 `SHADOW`；P2 知识编译、P3 召回/Codex query、P4 实际注入与 ACTIVE 均没有被提前开启。
-
-核心边界保持不变：Hook 不等待 P1 后台服务或 Console；Sidecar 是 Ledger/运行状态唯一写入者；Gateway 只监听 loopback；浏览器不持久化业务数据；Job 写命令必须通过状态、能力、revision 和幂等门禁；配置失败保持 last-known-good；acceptance 缺证据只能 `NOT_VERIFIED`。
+- Production Worker terminal retry 与 snapshot pipeline identity。
+- P1/P2 durable job 的统一 cancel/retry 路由。
+- 启动期配置的 `requiresRestart` 语义。
+- Gateway、Web 与 Sidecar 的 Codex query deadline 协调。
+- release 构建版本一致性、升级配置继承与 LaunchAgent READY 等待。
+- ZhiLoop `0.3.9` 文档、OpenSpec 任务和真实验收记录。
 
 ## 风险矩阵
 
-| 维度 | 风险 | 影响 | 修复结果 |
+| 等级 | 发现 | 风险 | 修复与证据 |
 |---|---|---|---|
-| 跨层路由 | 高 | Web 的配置草稿路径与 Gateway 单复数不一致，真实请求失败但 mock 通过 | 修正并把配置 HTTP 路径提升到共享 Control API 常量 |
-| 实时性 | 高 | 默认 5 秒后台观察不满足 UI P95 `<1s` | 仅有客户端时启用 completion-based 500ms 观察；新增一秒预算测试 |
-| Job 并发 | 高 | checkpoint/progress 未推进 operator revision，旧页面可能通过并发校验 | 所有可见语义状态推进 Job revision；heartbeat 单独排除 |
-| Job 取消 | 高 | 运行中直接终止会跨越不可中断副作用边界 | 只登记取消请求，handler 在安全 checkpoint 确认；lease fencing 保持有效 |
-| Job 重试 | 高 | terminal retry 若创建新 Job/effect key 可能重复副作用 | 沿用原 Job/effect key，仅 retryable failure 或 RETRY_WAIT 可重试，并只增加一次有界 attempt |
-| Job UI | 高 | legacy snapshot 缺 revision 时回退 checkpoint/0 可能误启命令 | 只接受 `job.revision`；缺失时 fail-closed，并有直接回归 |
-| Job migration | 高 | 新 command 表/revision 在并发启动时可能迁移竞争 | 独占、版本化前向迁移，旧 v1 数据升级测试通过 |
-| Acceptance Hook | 高 | Hook 内同步 SQLite FULL 写会增加关键路径延迟 | Hook 只入有界内存队列，返回后 `setImmediate` 批量单事务落库 |
-| Acceptance 新鲜度 | 高 | 旧 session 可被新的 `taskCreatedAt` 冒充为新任务 | 每阶段时间必须不早于创建时间；旧 session 重验保持 NOT_VERIFIED |
-| Acceptance 隐私 | 高 | 原始 evidence identity/路径若入库会扩大敏感面 | 只持久化 exact session、stage、timestamp、opaque SHA-256 和结果状态 |
-| Hook 信任 | 高 | 新安装的 unmanaged Codex Hook 默认处于 untrusted，普通任务不会触发采集，只有绕过信任参数的验收能通过 | 通过 Codex App Server `hooks/list` 获取精确 current hash，以 expected-version 原子写入用户 Hook trust state；安装、升级、卸载和回滚均保留 CCM 与其他 Hook 状态，禁用 Hook 失败关闭 |
-| 升级自举 | 高 | 旧版 `zhiloop upgrade` 会继续用旧发行包的部署代码执行新 artifact，新增部署步骤可能被静默跳过 | 旧 runtime 先完整验证新 artifact，再复制到不可变临时快照并以无 shell、有界输出/超时方式委派其 `deploy-main`；同版本防递归、两次验证间漂移和 tamper 均失败关闭 |
-| 委派类型边界 | 高 | 调用方可伪造仅有类型标记的 `VerifiedRelease`，绕过快照来源验证 | 快照 API 内部重新执行完整 inventory/hash/兼容性校验，不接受外部构造的 verified 对象 |
-| Node provenance | 高 | 未验证的 `release.json.nodePath` 若在完整性校验前执行或写入 launcher，可造成任意代码执行 | metadata Node 字段仅作 provenance；校验、委派和 launcher 全部固定当前受信 `process.execPath`，并验证当前 Node 版本边界 |
-| Release TOCTOU | 高 | 同版本目录只比较文件 digest 而不比较 metadata，且复制后未复验，可能复用或切换到漂移的 release | 复用和 staging 均比较 digest + 完整 metadata；临时目录在原子 rename 前再次执行完整验证 |
-| 发行依赖 | 中 | P1 workspace 未进入 release inventory，安装后可能缺包 | builder 与 installer required inventory 同时冻结新增运行时包 |
-| Alert 语义 | 中 | `notify=false` 若关闭评估会隐藏故障 | 健康评估始终运行，只抑制通知决定 |
-| 配置事务 | 中 | component partial apply 可能与数据库 effective revision 分裂 | prepare/apply 串行，失败逆序 rollback；提交失败同样回滚组件 |
-| 配置未来字段 | 中 | 未组合 consumer 的预算被激活会制造虚假能力 | draft 可保存，consumer 非 READY 时 activation 被拒绝 |
-| SSE 资源 | 中 | 慢客户端、断线和 replay 过期可能造成内存增长或状态缺口 | 条数/字节/连接/pending buffer 上限；Last-Event-ID 与 resync/poll fallback |
-| 自动采集循环 | 中 | 0ms interval、重叠 scan/poll 或无限 retry 形成 call storm | 配置下限、完成后调度、single-flight、有界页/批次/attempt |
-| 源旋转恢复 | 中 | transcript 替换/截断后沿用旧 cursor 会跳过或重复事件 | 持久 recovery attempt key、显式 cursor rebase、Ledger 幂等去重 |
-| Acceptance 持久化 | 中 | 每阶段单独 FULL 事务和 prune 会阻塞事件循环 | `recordMany` 单事务、单 prune，10k session 硬上限 |
-| 资源清理 | 中 | Sidecar composition 中途失败可能泄漏 SQLite handle | create/close 全路径逆序清理并保留原始错误 |
+| 高 | terminal worker failure 丢失原始 retryable 语义 | 外部能力恢复后仍无法人工重试，知识链永久卡死 | 保留 cause classification；显式 retry 只给失败阶段一个新 attempt，不重放成功阶段；runtime/P2 tests |
+| 高 | 相同 source range 无条件复用旧 snapshot | compiler、policy 或配置变化后仍使用旧产物 | pipeline identity 变化时创建新 immutable snapshot，历史保留；P2 Console E2E |
+| 高 | 浏览器问答固定 10 秒、Gateway 固定短 timeout | 检索成功但模型回答总是 fallback | search/simulation 保持短门禁，Ask 端到端上限 120 秒；Gateway/Web tests 与真实 44 秒成功回答 |
+| 高 | upgrade 未传参数会移除 `codexQuery` | 升级后能力静默退化为 NOT_CONFIGURED | 从 bounded regular managed config 继承并重新校验 executable；异常 shape fail closed；installer tests 与真实无参数升级 |
+| 中 | release manifest 与 stale dist 版本可能不一致 | 安装器接受错误版本内容或 READY 校验失败 | release 前动态读取 built metadata 并与目标版本精确比较；release acceptance |
+| 中 | future 启动期字段标记为热生效 | UI 显示已生效但实际组件仍持有旧值 | injection/compiler/query timeout/concurrency 均标记 restart；configuration tests |
+| 中 | 统一任务操作只路由 P1 store | P2 job 可见但无法 retry/cancel | 按 job 所有权路由到 P2 或 P1，并投影新状态；P2 runtime tests |
+| 中 | LaunchAgent READY 默认只等 5 秒 | 冷启动偶发误判失败并触发回滚 | 有界扩展至 15 秒；仍 fail closed 并保留 journaled rollback；真实升级验证 |
 
-## 配置与边界检查
+## 维度审查
 
-| 边界 | 结论 |
-|---|---|
-| rollout | 仍为 `SHADOW`；没有单 boolean ACTIVE 开关 |
-| Hook deadline | P1 runtime 无 Hook callback；scan in-flight P95 增量 `<5ms` 回归通过 |
-| SQLite | Job/配置/acceptance 使用 WAL、有界 busy timeout、0600；Ledger 单写入者不变 |
-| Browser | 无 localStorage、sessionStorage、IndexedDB；SSE 只使用 HttpOnly 会话 cookie |
-| Gateway | loopback、Host/Origin/CSRF、限流、消息大小和响应大小门禁维持 |
-| Secret/正文 | 不进入 Job 投影、配置 audit、alert、acceptance 或 Gateway diagnostics |
-| CCM | 源码和测试未修改 `~/.ccm`；部署前基线 hash 为 `fdfcd36b64b35783ce2a8895d86dff5ac91a50798a3ebc836ac7a56ffb84178b` |
+### 正确性与一致性
+
+- Worker checkpoint 仍是阶段进度权威源；retry 只重置单个 retryable failed stage。
+- Snapshot 身份同时绑定 source range、compiler、policy 和 configuration hash，不修改旧 snapshot。
+- P2 job 记录不会被运行时删除，因此 `hasJob` 后执行 revision-bound command 不存在所有权漂移；并发冲突由 expected revision 拒绝。
+- release version 在构建、package metadata、health 和 manifest 中一致为 `0.3.9`。
+
+### 并发与性能
+
+- job cancel/retry 继续经过 durable store 的 revision/idempotency/lease 边界。
+- Codex query concurrency 由 bounded semaphore 控制，Gateway/Web 延长 deadline 不增加并发上限。
+- 普通检索仍为 10/15 秒级短链路；只有模型辅助 Ask 使用最多 120 秒。
+- READY 等待为 60 × 250ms 的固定上界，不存在零延迟或无限循环。
+
+### 隐私与安全
+
+- Query adapter 保持 read-only、ephemeral、no MCP、safe cwd、bounded output 和最小环境；模型事实必须引用 eligible knowledge version。
+- 升级继承只读取 manifest 证明归属的 bounded regular config，拒绝 symlink、超限、非法 executable 和不支持 shape。
+- Gateway 仍为 loopback only，复用 bootstrap/session/CSRF/Origin/Host/CSP 与 response size/rate limit。
+- 日志、diagnostic 和审计不写 prompt、知识正文、凭证或完整环境变量。
+- SHADOW 结果没有投递证据时不能显示为 `INJECTED`。
+
+### 兼容性与模块边界
+
+- Domain/port 层没有新增 Node、UI 或 Sidecar 反向依赖；59 个 workspace 依赖检查通过。
+- 新参数均为向后兼容可选项；无模型配置时保持明确 `NOT_CONFIGURED/FALLBACK_SEARCH`。
+- 部署失败仍由 transaction journal 逆序恢复 current、manifest、config、Hook 和 service。
+- `~/.ccm/config.json` 未被安装器管理或修改。
 
 ## Gate 证据
 
-| 检查项 | 结果 |
+| Gate | 结果 |
 |---|---|
-| Node Gate | 56/56 通过 |
-| Vitest | 104 files / 947 tests 通过 |
-| Coverage | statements 90.85%、branches 85.59%、functions 92.60%、lines 94.28% |
-| Build / lint / typecheck / dependencies | 50 workspaces，全部通过 |
-| P1 性能 | Hook P95 delta `<5ms`；状态到 UI `<1s`；无重叠 scan/poll |
-| 安全/恢复 | Job fencing/restart/idempotency、配置 LKG、SSE bound、acceptance fail-closed 全部通过 |
+| Workspace dependency/import/direct-test | 通过，59 workspaces |
+| ESLint | 通过 |
+| TypeScript build + test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 143 files，1273/1273 通过 |
+| Coverage | statements 90.24%，branches 85.00%，functions 92.05%，lines 93.76% |
+| Local release acceptance | install/capture/CCM preservation/uninstall 通过 |
+| Real browser | session → extraction → knowledge → search → Ask `SUCCEEDED`，citation/evidence/trace 完整 |
+| Real deployment | `0.3.9` journal COMMITTED，doctor 全 PASS，无参数升级保留 Codex binding |
+| Diff hygiene | `git diff --check` 通过 |
 
-## Review 结论
+## 非阻塞限制
 
-当前 P1 的 24 个发现均已闭环，没有遗留高风险 finding。`0.2.1` 已通过 journal 升级、doctor、CCM hash 不变、三个 Hook `trusted`，以及不使用信任绕过和手动 capture 的真实 Codex 五阶段 acceptance。升级自举与本地部署回归在最终安全修复后 83/83 通过；该修复随下一发行一并部署。P1 Release Review 完成，P2 自动编译仍需独立 P2 Gate 后才能启用。
+跨语言 lexical recall 仍依赖 alias 或 vector 能力：英文知识标题用纯中文同义句查询可能没有上下文。系统会如实返回 `NO_CONTEXT`，不会让模型在无召回证据时生成事实。这属于后续召回质量增强，不是当前安全或正确性 blocker。

@@ -208,6 +208,63 @@ describe("local installer", () => {
     expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
       codexQuery: { enabled: true, executable, userConfiguration: "ALLOW" },
     });
+    await installLocalRelease({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+      hookTrustControl,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+    });
+    expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
+      codexQuery: { enabled: true, executable, userConfiguration: "ALLOW" },
+    });
+    const invalidInherited = JSON.parse(await readFile(paths.configPath, "utf8")) as Record<string, unknown>;
+    invalidInherited["codexQuery"] = { enabled: false, executable };
+    await writeFile(paths.configPath, `${JSON.stringify(invalidInherited, null, 2)}\n`, { mode: 0o600 });
+    await expect(installLocalRelease({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+      hookTrustControl,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+    })).rejects.toThrow("existing Codex query configuration has an unsupported shape");
+    await writeFile(paths.configPath, "[]\n", { mode: 0o600 });
+    await expect(installLocalRelease({
+      home: targetHome, artifactDirectory: source, service,
+      health: { health: async () => ready() }, compatibility, hookTrustControl,
+      readinessAttempts: 1, readinessDelayMs: 0,
+    })).rejects.toThrow("existing sidecar configuration has an unsupported shape");
+    await writeFile(paths.configPath, `${JSON.stringify({ ...invalidInherited, codexQuery: null })}\n`, { mode: 0o600 });
+    await expect(installLocalRelease({
+      home: targetHome, artifactDirectory: source, service,
+      health: { health: async () => ready() }, compatibility, hookTrustControl,
+      readinessAttempts: 1, readinessDelayMs: 0,
+    })).rejects.toThrow("existing Codex query configuration has an unsupported shape");
+    await writeFile(paths.configPath, `${JSON.stringify({ ...invalidInherited, codexQuery: [] })}\n`, { mode: 0o600 });
+    await expect(installLocalRelease({
+      home: targetHome, artifactDirectory: source, service,
+      health: { health: async () => ready() }, compatibility, hookTrustControl,
+      readinessAttempts: 1, readinessDelayMs: 0,
+    })).rejects.toThrow("existing Codex query configuration has an unsupported shape");
+    await writeFile(paths.configPath, Buffer.alloc(1_048_577), { mode: 0o600 });
+    await expect(installLocalRelease({
+      home: targetHome, artifactDirectory: source, service,
+      health: { health: async () => ready() }, compatibility, hookTrustControl,
+      readinessAttempts: 1, readinessDelayMs: 0,
+    })).rejects.toThrow("existing sidecar configuration must be a bounded regular file");
+    await unlink(paths.configPath);
+    await installLocalRelease({
+      home: targetHome, artifactDirectory: source, service,
+      health: { health: async () => ready() }, compatibility, hookTrustControl,
+      readinessAttempts: 1, readinessDelayMs: 0,
+    });
+    expect(JSON.parse(await readFile(paths.configPath, "utf8"))).not.toHaveProperty("codexQuery");
     await expect(planLocalInstall({
       home: targetHome,
       artifactDirectory: source,

@@ -308,6 +308,11 @@ export class P1SidecarRuntime {
     return result;
   }
 
+  hasJob(jobId: string): boolean {
+    this.#assertOpen();
+    return this.#jobStore.get(jobId) !== undefined;
+  }
+
   /** Applies active-consumer configuration and returns an idempotent last-known-good rollback closure. */
   async applyConfiguration(nextInput: P1RuntimeConfiguration): Promise<() => Promise<void>> {
     this.#assertOpen();

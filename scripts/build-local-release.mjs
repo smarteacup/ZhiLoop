@@ -3,10 +3,11 @@ import { execFile } from "node:child_process";
 import { chmod, copyFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.3.1";
+const VERSION = "0.3.9";
 const EXTERNALS = [
   ["packages/schemas/node_modules/ajv", "ajv"],
   ["node_modules/ajv-formats", "ajv-formats"],
@@ -106,6 +107,10 @@ async function main() {
       || !(await exists(path.join(cliDist, "ui-main.js"))) || !(await exists(path.join(cliDist, "ui-cli.js")))
       || !(await exists(path.join(gatewayDist, "index.js"))) || !(await exists(path.join(gatewayDist, "main.js")))) {
       throw new Error("build the repository before creating a local release");
+    }
+    const builtMetadata = await import(`${pathToFileURL(path.join(sidecarDist, "metadata.js")).href}?release=${randomUUID()}`);
+    if (builtMetadata.SIDECAR_VERSION !== VERSION) {
+      throw new Error(`sidecar build version ${String(builtMetadata.SIDECAR_VERSION)} does not match release version ${VERSION}; rebuild the repository`);
     }
     const viteEntrypoint = path.join(process.cwd(), "node_modules", "vite", "bin", "vite.js");
     if (!(await exists(viteEntrypoint))) throw new Error("the local Vite runtime is required to build Console assets");

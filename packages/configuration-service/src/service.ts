@@ -23,7 +23,14 @@ const FUTURE_CAPABILITIES = Object.freeze({
   "future.codexQueryTimeoutMs": "codex.query",
   "future.codexQueryConcurrency": "codex.query",
 } as const);
-const RESTART_PATHS = new Set(["runtime.workerPollIntervalMs", "runtime.workerConcurrency", "future.codexQueryConcurrency"]);
+const RESTART_PATHS = new Set([
+  "runtime.workerPollIntervalMs",
+  "runtime.workerConcurrency",
+  "future.injectionMaxTokens",
+  "future.compilerBatchSize",
+  "future.codexQueryTimeoutMs",
+  "future.codexQueryConcurrency",
+]);
 
 interface RevisionRow {
   readonly revision: number;

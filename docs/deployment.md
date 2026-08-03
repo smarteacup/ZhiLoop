@@ -2,7 +2,7 @@
 
 ## 1. 部署结论
 
-首个部署形态是 macOS 当前用户的本地 sidecar，默认且仅允许 `SHADOW`。它会把 Codex Hook 事件经过规范化与脱敏后写入本地 SQLite ledger；即使检索或决策成功，也不会向模型返回知识内容。`ACTIVE`、现有知识迁移和跨机器同步均不属于本部署。
+部署形态是 macOS 当前用户的本地 sidecar，默认安装为 `SHADOW`。它会把 Codex Hook 事件经过规范化与脱敏后写入本地 SQLite ledger，并在后台执行 snapshot、知识编译、分层发布、索引、检索、MCP 与闭环审计；`SHADOW` 下即使决策成功也只记录计划投递，不向模型返回知识内容。`ACTIVE` 必须经过指纹绑定的质量证据、灰度范围和高风险确认，跨机器同步不属于本部署。
 
 ZhiLoop 只合并 `~/.codex/hooks.json`，不修改 `~/.ccm`。CCM 已有 Hook、matcher、timeout、未知字段和凭证配置必须保留。任何所有权冲突、symlink、并发漂移、版本不兼容或 READY 超时都会停止部署并触发逆序回滚。
 
@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.1.4
+npm run release:local -- --output /absolute/path/to/zhiloop-0.3.9
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,17 +52,18 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.1.4
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.4 --json
+  install --artifact /absolute/path/to/zhiloop-0.3.9 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.4 --apply --json
+  install --artifact /absolute/path/to/zhiloop-0.3.9 \
+  --codex-executable /absolute/path/to/codex --apply --json
 ```
 
-安装事务依次完成发行 staging、SHADOW 配置、LaunchAgent、`current`、启动器、Codex Hook merge、manifest 与服务健康检查。每步写入 journal；任一步失败都会逆序恢复已完成步骤。升级使用同一入口的 `upgrade` 命令，新版本只有达到兼容 READY 后才保留，否则恢复旧 `current`、manifest、Hook 和服务。
+安装事务依次完成发行 staging、SHADOW 配置、LaunchAgent、`current`、启动器、Codex Hook merge、manifest 与服务健康检查。每步写入 journal；任一步失败都会逆序恢复已完成步骤。升级使用同一入口的 `upgrade` 命令，新版本只有在最长 15 秒内达到兼容 READY 后才保留，否则恢复旧 `current`、manifest、Hook 和服务。升级未显式提供 `--codex-executable` 时会安全继承当前托管配置中的可执行文件绑定；首次安装需要显式绑定才能启用“问 ZhiLoop”。
 
 ## 6. 健康检查
 
@@ -98,7 +99,9 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 
 仅在 `--no-open` 模式下，JSON 会返回一次性 `bootstrapUrl`。该 URL 的 fragment 会在页面发起认证前从地址栏移除；Gateway 使用短期 HttpOnly SameSite 会话、内存 CSRF token、Host/Origin 校验和无 CORS 策略。页面不使用 localStorage、sessionStorage 或 IndexedDB 持久化会话和知识数据。
 
-控制台当前支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、部署状态，以及会话级采集 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识编译、召回、注入、MCP、闭环和 ACTIVE 仍显示实际 `DISABLED/NOT_VERIFIED`，不能从页面开启。
+控制台支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、配置与部署状态，以及会话级采集和提取的 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识页支持来源、版本、Evidence、编辑影响、suppress/restore；召回页支持确定性搜索、策略比较和本地 Codex 只读问答；会话页展示真实注入/MCP 审计；闭环页展示 Gate、纠偏、续跑和高风险治理。
+
+普通检索保持 15 秒 Gateway 上限；本地 Codex 问答允许最多 120 秒，同时仍受配置项 `future.codexQueryTimeoutMs` 的更短门禁约束。下列启动期消费者配置在激活后标记 `requiresRestart`：`future.injectionMaxTokens`、`future.compilerBatchSize`、`future.codexQueryTimeoutMs`、`future.codexQueryConcurrency`。
 
 Gateway 是独立进程，不被 Sidecar launcher 或 Codex Hook 引用。关闭 `zhiloop ui` 不影响 Hook、Ledger 或后台 Sidecar。
 
@@ -126,13 +129,13 @@ CLI 只通过当前用户 Unix socket 请求 Sidecar，Sidecar 是 SQLite 唯一
 
 同一会话重复采集会从持久化锚点游标继续；关闭且未变化的会话返回 `projectedEvents: 0`、`appendedEvents: 0`。如果 append 已完成但游标提交前中断，重试由确定性 event ID 吸收重复。文件被替换、截断或锚点前内容改变时不会自动重置游标。
 
-当前部署仍为 `SHADOW`，所以成功报告明确包含：
+采集响应中的 `knowledgeCompiled` 只描述这个同步命令本身是否已完成知识编译；正式知识提取由 durable P2 job 独立执行。页面可在会话详情创建当前不可变 snapshot、查看候选并按策略提交。当前部署仍为 `SHADOW`，因此知识可以发布并被检索，但注入 attempt 必须显示 `SHADOWED`，不能显示 `INJECTED`。
 
 ```json
 { "knowledgeCompiled": false }
 ```
 
-这表示规范化对话事件已经进入 ledger，但生产知识编译、分层入库和后续注入尚未由该命令触发。
+这表示规范化对话事件已经进入 ledger，但该采集请求不会同步等待模型编译；它不表示生产知识流水线未接通。会话页和后台任务页是后续 snapshot、candidate、publish 与 index 状态的权威视图。
 
 ## 9. 卸载、保留数据与 purge
 

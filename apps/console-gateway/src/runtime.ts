@@ -14,6 +14,7 @@ export interface ConsoleRuntimeOptions {
 }
 
 export const CONSOLE_QUERY_TIMEOUT_MS = 15_000;
+export const CONSOLE_MODEL_QUERY_TIMEOUT_MS = 120_000;
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const indexes = argv.flatMap((item, index) => item === name ? [index] : []);
@@ -85,13 +86,14 @@ export function formatConsoleRuntimeAnnouncement(
 export async function runConsoleGateway(argv: readonly string[]): Promise<void> {
   const options = parseConsoleRuntimeOptions(argv);
   const paths = resolveConsoleRuntimePaths(options.home);
-  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath, timeoutMs: CONSOLE_QUERY_TIMEOUT_MS });
+  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath, timeoutMs: CONSOLE_MODEL_QUERY_TIMEOUT_MS });
   const gateway = await createConsoleGateway({
     queryPort: controlClient,
     commandPort: controlClient,
     staticRoot: paths.staticRoot,
     port: options.port,
     queryTimeoutMs: CONSOLE_QUERY_TIMEOUT_MS,
+    modelQueryTimeoutMs: CONSOLE_MODEL_QUERY_TIMEOUT_MS,
   });
   const address = await gateway.listen();
   const browserOpened = options.openBrowser && openLocalBrowser(address.bootstrapUrl);

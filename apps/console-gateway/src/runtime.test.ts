@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONSOLE_QUERY_TIMEOUT_MS,
+  CONSOLE_MODEL_QUERY_TIMEOUT_MS,
   formatConsoleRuntimeAnnouncement,
   parseConsoleRuntimeOptions,
   resolveConsoleRuntimePaths,
@@ -17,6 +18,7 @@ describe("Console Gateway runtime", () => {
 
   it("resolves only the owner-local Sidecar socket and release Web assets", () => {
     expect(CONSOLE_QUERY_TIMEOUT_MS).toBe(15_000);
+    expect(CONSOLE_MODEL_QUERY_TIMEOUT_MS).toBe(120_000);
     expect(resolveConsoleRuntimePaths("/Users/operator", "file:///release/apps/console-gateway/dist/runtime.js")).toEqual({
       socketPath: "/Users/operator/.ckl/run/sidecar.sock",
       staticRoot: "/release/apps/console-web/dist/",

@@ -18,7 +18,7 @@ import {
 import type { P2ProductionComposition } from "./p2-production.js";
 import { p2CommitRequest, p2PreviewRequest, type P2SidecarRuntime } from "./p2-runtime.js";
 
-const COMPILER_VERSION = "mvp-compiler-v2";
+const COMPILER_VERSION = "mvp-compiler-v3";
 const MAX_PROVENANCE_VISITS = 1_000;
 const LEDGER_PAGE_SIZE = 1_000;
 const MAX_MANUAL_EXTRACTION_RECORDS = 5_000;
@@ -318,10 +318,30 @@ export class P2ConsoleRuntime {
       throw Object.assign(new Error("capture must be current before extraction"), { code: "CONFLICT" });
     }
     const previous = this.#options.runtime.service().listSnapshots({ sessionId: request.sessionId, limit: 1 }).items[0];
+    const policyHash = hash(DEFAULT_CONFIGURATION.verification);
+    const configurationHash = this.#options.configurationHash();
+    const previousMatchesPipeline = previous !== undefined
+      && previous.transcriptIdentityHash === source.transcriptIdentityHash
+      && previous.compilerVersion === COMPILER_VERSION
+      && previous.policyHash === policyHash
+      && previous.configurationHash === configurationHash;
     const fromSequence = (previous?.sourceSequence.to ?? 0) + 1;
-    if (fromSequence > revision && previous !== undefined) return this.sessionView(request.sessionId);
-    const records = ledgerRange(this.#options.ledger, request.sessionId, fromSequence, revision);
-    if (records.length === 0 && previous !== undefined) return this.sessionView(request.sessionId);
+    if (fromSequence > revision && previousMatchesPipeline) return this.sessionView(request.sessionId);
+    let records = fromSequence > revision
+      ? []
+      : ledgerRange(this.#options.ledger, request.sessionId, fromSequence, revision);
+    if (records.length === 0 && previousMatchesPipeline) return this.sessionView(request.sessionId);
+    if (records.length === 0 && previous !== undefined) {
+      // A compiler/policy/configuration revision must be able to recompile the
+      // same immutable source range. It creates a new snapshot identity and
+      // never mutates or aliases the previous failed run.
+      records = ledgerRange(
+        this.#options.ledger,
+        request.sessionId,
+        previous.sourceSequence.from,
+        previous.sourceSequence.to,
+      );
+    }
     if (records.length === 0) throw Object.assign(new Error("captured session contains no extractable events"), { code: "CONFLICT" });
     const from = records[0]!.sequence;
     const to = records.at(-1)!.sequence;
@@ -342,8 +362,8 @@ export class P2ConsoleRuntime {
       cursor: source.cursor,
       completeness,
       compilerVersion: COMPILER_VERSION,
-      policyHash: hash(DEFAULT_CONFIGURATION.verification),
-      configurationHash: this.#options.configurationHash(),
+      policyHash,
+      configurationHash,
     };
     const created = await this.#options.runtime.createSnapshot({ ...draft, idempotencyKey: snapshotIdempotencyKey(draft) });
     const previewRequest = p2PreviewRequest(created.snapshot, request.requestId);

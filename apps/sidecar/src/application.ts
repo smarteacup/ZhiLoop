@@ -286,10 +286,12 @@ export class SidecarApplication {
         configuration,
         jobCommands: {
           cancelJob: async (request) => {
+            if (p2Runtime?.hasJob(request.jobId) === true) return await p2Runtime.cancelJob(request);
             if (p1Runtime === undefined) throw new Error("P1 runtime is not composed");
             return await p1Runtime.cancelJob(request);
           },
           retryJob: async (request) => {
+            if (p2Runtime?.hasJob(request.jobId) === true) return await p2Runtime.retryJob(request);
             if (p1Runtime === undefined) throw new Error("P1 runtime is not composed");
             return await p1Runtime.retryJob(request);
           },

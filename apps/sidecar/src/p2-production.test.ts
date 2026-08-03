@@ -28,7 +28,7 @@ function snapshot(sessionId: string, from: number, to: number): ExtractionSnapsh
   return {
     schemaVersion: 1, snapshotId: `snapshot_${sha(sessionId).slice(0, 48)}`, revision: 1, identityHash: sha(`${sessionId}:identity`),
     sessionId, transcriptIdentityHash: sha(`${sessionId}:transcript`), sourceSequence: { from, to }, cursor: { byteOffset: to, lineNumber: to },
-    completeness: { status: "PARTIAL_SNAPSHOT", sourceClosed: false, unsupportedEventTypes: [] }, compilerVersion: "mvp-compiler-v2",
+    completeness: { status: "PARTIAL_SNAPSHOT", sourceClosed: false, unsupportedEventTypes: [] }, compilerVersion: "mvp-compiler-v3",
     policyHash: sha("policy"), configurationHash: sha("configuration"), createdAt: "2026-08-04T08:00:00.000Z",
   };
 }

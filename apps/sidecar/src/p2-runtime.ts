@@ -7,6 +7,7 @@ import {
   type CandidatePreviewItem,
   type ExtractionSnapshot,
   type JobSnapshot,
+  type JobCommandResult,
   type P2ControlRequest,
 } from "@zhiloop/control-api";
 import {
@@ -15,6 +16,7 @@ import {
   RetryableJobError,
   SqliteDurableJobStore,
   type JobExecutionContext,
+  type JobOperatorCommandRequest,
   type WorkerCycleResult,
 } from "@zhiloop/job-runtime";
 import type {
@@ -108,7 +110,11 @@ function previewItem(record: CandidatePolicyRecord): CandidatePreviewItem {
 }
 
 function assertPreviewCheckpoint(checkpoint: KnowledgeWorkerCheckpoint): readonly CandidatePolicyRecord[] {
-  if (checkpoint.status === "FAILED") throw new NonRetryableJobError("KNOWLEDGE_PREVIEW_FAILED");
+  if (checkpoint.status === "FAILED") {
+    const retryable = Object.values(checkpoint.stages).some((stage) => stage.error?.retryable === true);
+    if (retryable) throw new RetryableJobError("KNOWLEDGE_PREVIEW_FAILED");
+    throw new NonRetryableJobError("KNOWLEDGE_PREVIEW_FAILED");
+  }
   if (checkpoint.status !== "AWAITING_COMMIT" || checkpoint.payload.policies === undefined) {
     throw new RetryableJobError("KNOWLEDGE_PREVIEW_INCOMPLETE");
   }
@@ -116,7 +122,11 @@ function assertPreviewCheckpoint(checkpoint: KnowledgeWorkerCheckpoint): readonl
 }
 
 function assertCommitCheckpoint(checkpoint: KnowledgeWorkerCheckpoint): void {
-  if (checkpoint.status === "FAILED") throw new NonRetryableJobError("KNOWLEDGE_COMMIT_FAILED");
+  if (checkpoint.status === "FAILED") {
+    const retryable = Object.values(checkpoint.stages).some((stage) => stage.error?.retryable === true);
+    if (retryable) throw new RetryableJobError("KNOWLEDGE_COMMIT_FAILED");
+    throw new NonRetryableJobError("KNOWLEDGE_COMMIT_FAILED");
+  }
   if (checkpoint.status !== "COMPLETED") throw new RetryableJobError("KNOWLEDGE_COMMIT_INCOMPLETE");
 }
 
@@ -254,6 +264,25 @@ export class P2SidecarRuntime {
     return this.#service;
   }
 
+  public hasJob(jobId: string): boolean {
+    this.#assertOpen();
+    return this.#jobStore.get(jobId) !== undefined;
+  }
+
+  public async cancelJob(request: JobOperatorCommandRequest): Promise<JobCommandResult> {
+    this.#assertOpen();
+    const result = this.#jobStore.cancel(request);
+    await this.#project(result.job);
+    return result;
+  }
+
+  public async retryJob(request: JobOperatorCommandRequest): Promise<JobCommandResult> {
+    this.#assertOpen();
+    const result = this.#jobStore.manualRetry(request);
+    await this.#project(result.job);
+    return result;
+  }
+
   /** Durable publication job state used by the Console read model. */
   public publicationJobForPreview(previewId: string): JobSnapshot | undefined {
     this.#assertOpen();
@@ -287,7 +316,10 @@ export class P2SidecarRuntime {
     if (snapshot === undefined) throw new NonRetryableJobError("EXTRACTION_SNAPSHOT_NOT_FOUND");
     const existing = this.#service.getCandidatePreviewForSnapshot(snapshot.snapshotId);
     if (existing !== undefined) return;
-    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), { stopAfterCandidatePolicy: true });
+    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), {
+      stopAfterCandidatePolicy: true,
+      retryFailed: true,
+    });
     const policies = assertPreviewCheckpoint(checkpoint);
     const createdAt = this.#clock().toISOString();
     this.#service.recordEpisodes(snapshot.snapshotId, (checkpoint.payload.episodes ?? []).map(({ episodeId }) => ({ episodeId })), createdAt);
@@ -327,7 +359,7 @@ export class P2SidecarRuntime {
         createdAt: this.#clock().toISOString(),
       });
     }
-    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot));
+    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), { retryFailed: true });
     assertCommitCheckpoint(checkpoint);
     for (const item of checkpoint.payload.outbox ?? []) {
       if (item.markdown === undefined) continue;

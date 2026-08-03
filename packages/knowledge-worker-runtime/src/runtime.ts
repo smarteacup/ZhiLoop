@@ -234,7 +234,26 @@ export class KnowledgeWorkerRuntime {
         throw new KnowledgeWorkerError("LEDGER_SNAPSHOT_CHANGED", "immutable ledger snapshot changed during replay", false);
       }
     }
-    if (checkpoint.status === "COMPLETED" || checkpoint.status === "FAILED") return checkpoint;
+    if (checkpoint.status === "COMPLETED") return checkpoint;
+    if (checkpoint.status === "FAILED") {
+      if (options.retryFailed !== true) return checkpoint;
+      const failedStage = WORKER_STAGES.find((stage) =>
+        checkpoint?.stages[stage].status === "FAILED" && checkpoint.stages[stage].error?.retryable === true);
+      if (failedStage === undefined) return checkpoint;
+      const previous = checkpoint.stages[failedStage];
+      checkpoint = this.#persist(checkpoint, {
+        status: "RUNNING",
+        stages: {
+          ...checkpoint.stages,
+          [failedStage]: {
+            status: "RETRYABLE",
+            attempts: Math.max(0, resolvedLimits.maxStageAttempts - 1),
+            startedAt: previous.startedAt,
+            error: previous.error,
+          },
+        },
+      });
+    }
 
     const execute = async (
       stage: KnowledgeWorkerStage,
@@ -278,7 +297,10 @@ export class KnowledgeWorkerRuntime {
               status: retryable ? "RETRYABLE" : "FAILED",
               attempts,
               startedAt: checkpoint.stages[stage].startedAt,
-              error: { ...failure, retryable },
+              // Keep the cause classification even when the automatic attempt
+              // budget is exhausted. The FAILED status is the budget fence;
+              // retryable remains the operator recovery signal.
+              error: failure,
             },
           },
         });

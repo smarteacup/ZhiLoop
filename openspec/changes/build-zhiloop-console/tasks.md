@@ -104,7 +104,7 @@
 - [x] 9.4 [Retrieval Lane] Implement current-policy search, draft-policy simulation and fixed-input replay without writing active feedback
 - [x] 9.5 [Retrieval Lane] Test exact symbols/errors/config, Scope isolation, stale version exclusion, timeout fallback, token budget and trace completeness
 - [x] 9.6 [Web Feature Lane] Implement dedicated Search Knowledge page, result explanations, channel/rank table, Trace detail and policy comparison lab
-- [ ] 9.7 [Web Feature Lane] Add session Turn injection placeholders from persisted attempts and strictly distinguish `SHADOWED/INJECTED/NO_CONTEXT/TIMEOUT/ERROR`
+- [x] 9.7 [Web Feature Lane] Add session Turn injection placeholders from persisted attempts and strictly distinguish `SHADOWED/INJECTED/NO_CONTEXT/TIMEOUT/ERROR`
 
 ## 10. P3 Codex-Assisted Ask ZhiLoop — Parallel Wave 8
 
@@ -120,34 +120,34 @@
 
 ## 11. P4 MCP, Actual Injection and Session Attribution — Parallel Wave 9
 
-- [ ] 11.1 [Injection Owner] Enable versioned local MCP transport for `ckl.search/get/related/check` with Scope, current-version and detail-level enforcement
-- [ ] 11.2 [Injection Owner] Compose Context Orchestrator and UserPrompt injection behind rollout controller while preserving the 500ms fail-open deadline
-- [ ] 11.3 [Injection Owner] Persist injection attempts and exact delivery result before displaying actual context on the session turn
-- [ ] 11.4 [Injection Owner] Persist MCP L1 → L2/L3 expansion, knowledge version, latency and actual-use feedback without copying full payload into diagnostics
-- [ ] 11.5 [Web Feature Lane] Add actual/SHADOW Context Envelope, token, omitted reason and MCP expansion views to the session and retrieval pages
-- [ ] 11.6 [Quality Owner] Test timeout after retrieval, rollout revision change, Scope mismatch, stale knowledge, MCP prompt injection, fail-open and `SHADOWED` never becoming `INJECTED`
+- [x] 11.1 [Injection Owner] Enable versioned local MCP transport for `ckl.search/get/related/check` with Scope, current-version and detail-level enforcement
+- [x] 11.2 [Injection Owner] Compose Context Orchestrator and UserPrompt injection behind rollout controller while preserving the 500ms fail-open deadline
+- [x] 11.3 [Injection Owner] Persist injection attempts and exact delivery result before displaying actual context on the session turn
+- [x] 11.4 [Injection Owner] Persist MCP L1 → L2/L3 expansion, knowledge version, latency and actual-use feedback without copying full payload into diagnostics
+- [x] 11.5 [Web Feature Lane] Add actual/SHADOW Context Envelope, token, omitted reason and MCP expansion views to the session and retrieval pages
+- [x] 11.6 [Quality Owner] Test timeout after retrieval, rollout revision change, Scope mismatch, stale knowledge, MCP prompt injection, fail-open and `SHADOWED` never becoming `INJECTED`
 
 ## 12. P4 Closure, Feedback and High-Risk Governance — Parallel Wave 10
 
-- [ ] 12.1 [Closure Owner] Compose deterministic/semantic Gate verification, bounded Stop continuation, interaction policy and confirmation writeback
-- [ ] 12.2 [Closure Owner] Persist Task Contract, Gate results, decision, correction delta, continuation count and recursive-stop rejection for Console queries
-- [ ] 12.3 [Feedback Owner] Compose retrieval use, pin, suppress and complexity feedback without allowing feedback to bypass eligibility policy
-- [ ] 12.4 [Governance Owner] Add separately gated GLOBAL promotion, RULE/Binding changes and privacy purge with blast-radius preview and Sidecar enforcement
-- [ ] 12.5 [Web Feature Lane] Implement Closure run list/detail, Gate evidence, delta, continuation, interaction and feedback views
-- [ ] 12.6 [Quality Owner] Run P4 closure Gate: no-human ratio ≥90%, recursive continuation 0, average continuation ≤0.2, boundary-violation success <1%, suppress repeat retrieval <2%
+- [x] 12.1 [Closure Owner] Compose deterministic/semantic Gate verification, bounded Stop continuation, interaction policy and confirmation writeback
+- [x] 12.2 [Closure Owner] Persist Task Contract, Gate results, decision, correction delta, continuation count and recursive-stop rejection for Console queries
+- [x] 12.3 [Feedback Owner] Compose retrieval use, pin, suppress and complexity feedback without allowing feedback to bypass eligibility policy
+- [x] 12.4 [Governance Owner] Add separately gated GLOBAL promotion, RULE/Binding changes and privacy purge with blast-radius preview and Sidecar enforcement
+- [x] 12.5 [Web Feature Lane] Implement Closure run list/detail, Gate evidence, delta, continuation, interaction and feedback views
+- [x] 12.6 [Quality Owner] Run P4 closure Gate: no-human ratio ≥90%, recursive continuation 0, average continuation ≤0.2, boundary-violation success <1%, suppress repeat retrieval <2%
 
 ## 13. P4 SHADOW Quality, ACTIVE Eligibility and Release — Serialized
 
-- [ ] 13.1 [Rollout Owner] Build quality evaluation from real SHADOW traces with dataset/config/version fingerprints and explicit eligibility evidence
-- [ ] 13.2 [Rollout Owner] Implement scoped ACTIVE canary, revision-bound activation, automatic SHADOW downgrade and last-known-good rollback; reject single-boolean activation
-- [ ] 13.3 [Rollout Owner] Test gray-scope exclusion, mid-request rollback, timeout with no partial context, restart recovery and effective revision consistency
-- [ ] 13.4 [Quality Owner] Add full Console browser E2E for session → extraction → knowledge → search/ask → injection/MCP → closure and rollback
-- [ ] 13.5 [Quality Owner] Run final architecture, dependency, lint, build, typecheck, unit, integration, coverage, browser, accessibility, security, performance and local release acceptance Gates
-- [ ] 13.6 [Integration Owner] Review all capability states against actual composition, update deployment/runbook/TDD, and prevent release if any page hard-codes READY
-- [ ] 13.7 [Integration Owner] Deploy P4 through the journaled installer, verify CCM credentials/config hash unchanged, monitor SHADOW/canary evidence, and retain CLI rollback
+- [x] 13.1 [Rollout Owner] Build quality evaluation from real SHADOW traces with dataset/config/version fingerprints and explicit eligibility evidence
+- [x] 13.2 [Rollout Owner] Implement scoped ACTIVE canary, revision-bound activation, automatic SHADOW downgrade and last-known-good rollback; reject single-boolean activation
+- [x] 13.3 [Rollout Owner] Test gray-scope exclusion, mid-request rollback, timeout with no partial context, restart recovery and effective revision consistency
+- [x] 13.4 [Quality Owner] Add full Console browser E2E for session → extraction → knowledge → search/ask → injection/MCP → closure and rollback
+- [x] 13.5 [Quality Owner] Run final architecture, dependency, lint, build, typecheck, unit, integration, coverage, browser, accessibility, security, performance and local release acceptance Gates
+- [x] 13.6 [Integration Owner] Review all capability states against actual composition, update deployment/runbook/TDD, and prevent release if any page hard-codes READY
+- [x] 13.7 [Integration Owner] Deploy P4 through the journaled installer, verify CCM credentials/config hash unchanged, monitor SHADOW/canary evidence, and retain CLI rollback
 
 ## 14. Change Completion
 
-- [ ] 14.1 [Integration Owner] Verify every OpenSpec scenario has direct automated evidence or an explicitly documented real-environment acceptance
-- [ ] 14.2 [Integration Owner] Perform final code review for correctness, concurrency, performance, privacy, security and module boundaries with no unresolved high-risk finding
+- [x] 14.1 [Integration Owner] Verify every OpenSpec scenario has direct automated evidence or an explicitly documented real-environment acceptance
+- [x] 14.2 [Integration Owner] Perform final code review for correctness, concurrency, performance, privacy, security and module boundaries with no unresolved high-risk finding
 - [ ] 14.3 [Integration Owner] Commit and push completed tasks with a clean worktree, then archive `build-zhiloop-console` only after all required capabilities are implemented and deployed

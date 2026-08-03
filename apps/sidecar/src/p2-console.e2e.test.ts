@@ -14,6 +14,7 @@ import {
   type JobSnapshot,
 } from "@zhiloop/control-api";
 import type { KnowledgeExtractionInput, KnowledgeExtractionPort } from "@zhiloop/knowledge-compiler";
+import { snapshotIdempotencyKey } from "@zhiloop/session-extraction";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { P2ConsoleRuntime } from "./p2-console.js";
@@ -84,6 +85,21 @@ describe("P2 Console real composition", () => {
     });
     runtimeReference.value = runtime;
     await runtime.start();
+    const legacyDraft = {
+      schemaVersion: 1 as const,
+      requestId: "legacy-snapshot",
+      type: "extraction.snapshot.create" as const,
+      sessionId: "session-1",
+      expectedCaptureRevision: ledger.count(),
+      transcriptIdentityHash: sha("transcript"),
+      sourceSequence: { from: 1, to: ledger.count() },
+      cursor: { byteOffset: 400, lineNumber: 4 },
+      completeness: { status: "COMPLETE_SNAPSHOT" as const, sourceClosed: true, unsupportedEventTypes: [] },
+      compilerVersion: "mvp-compiler-v2",
+      policyHash: sha("legacy-policy"),
+      configurationHash: sha("configuration"),
+    };
+    await runtime.createSnapshot({ ...legacyDraft, idempotencyKey: snapshotIdempotencyKey(legacyDraft) });
     const facade = new P2ConsoleRuntime({
       runtime, production, ledger, configurationHash: () => sha("configuration"),
       inspectTranscriptSource: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: sha("transcript"), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 400, lineNumber: 4 }, hasMore: false, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
@@ -101,6 +117,8 @@ describe("P2 Console real composition", () => {
         return value.previewId === undefined ? undefined : value;
       });
       p2SessionExtractionViewSchema.parse(previewView);
+      expect(previewView.snapshot?.compilerVersion).toBe("mvp-compiler-v3");
+      expect(runtime.service().listSnapshots({ sessionId: "session-1", limit: 10 }).items).toHaveLength(2);
       expect(previewView.commitAction.enabled).toBe(true);
       await facade.handle({ schemaVersion: 1, requestId: "commit-1", type: "p2.session.commit", sessionId: "session-1", previewId: previewView.previewId!, expectedPreviewRevision: previewView.commitAction.expectedRevision, idempotencyKey: previewView.commitAction.idempotencyKey });
       const committedView = await waitFor(() => {

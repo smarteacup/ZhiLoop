@@ -25,10 +25,10 @@ interface StructuredGenerationModel {
 
 `MvpKnowledgeCompiler` 默认绑定：
 
-- `compilerVersion = mvp-compiler-v2`
+- `compilerVersion = mvp-compiler-v3`
 - `promptVersion = mvp-extraction-prompt-v2`
 
-v2 将领域层抽取 Schema 转换为 Codex Structured Outputs 可接受的严格 Schema，并在业务校验前移除可选字段的 `null` 占位。版本提升确保旧的 v1 幂等记录不会被错误复用。
+v2 将领域层抽取 Schema 转换为 Codex Structured Outputs 可接受的严格 Schema，并在业务校验前移除可选字段的 `null` 占位。v3 增加生产重试与 pipeline identity 边界，确保修复后的 retryable terminal run 或配置/编译器变化不会错误复用旧 snapshot；旧版本历史仍保留。
 
 Runner request 的版本必须与 Compiler 实例完全匹配；错配直接 `FAILED/ADAPTER_REJECTED`，不会在错误的幂等身份下运行另一版 Prompt。
 

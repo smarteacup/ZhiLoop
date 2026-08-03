@@ -11,6 +11,7 @@
 - [ADR-0002：Markdown 权威源与 SQLite 投影](../adr/0002-markdown-sqlite-storage.md)
 - [ADR-0003：Codex 接入策略](../adr/0003-codex-integration.md)
 - [ADR-0004：可控复杂度知识注入与闭环验证](../adr/0004-context-orchestration-and-closure.md)
+- [ZhiLoop Console 本地控制台技术设计](./zhiloop-console-tdd.md)
 
 ## 1. 摘要
 

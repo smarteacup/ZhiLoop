@@ -488,6 +488,24 @@ function authorize(grants: Readonly<Record<string, readonly HighRiskPermission[]
 }
 
 describe("high-risk governance enforcement", () => {
+  it("reloads an authoritative preview by identity without trusting client payloads", async () => {
+    const state = new MemoryHighRiskGovernanceStateStore();
+    const service = new HighRiskGovernanceService({
+      preview: () => ({
+        affectedAssets: 1, affectedProjects: 1, affectedRules: 0, affectedBindings: 0,
+        affectedTraces: 0, affectedInjections: 0, irreversible: false, reasonCodes: ["PROJECT_TO_GLOBAL"],
+      }),
+      execute: async () => { throw new Error("not called"); },
+    }, state, authorize({ "operator-a": ["PROMOTE_GLOBAL"] }), policy());
+    const created = await service.preview(command("GLOBAL_PROMOTION"), now);
+    const restarted = new HighRiskGovernanceService({
+      preview: () => { throw new Error("not called"); },
+      execute: async () => { throw new Error("not called"); },
+    }, state, authorize({ "operator-a": ["PROMOTE_GLOBAL"] }), policy());
+
+    expect(restarted.getPreview(created.previewId)).toEqual(created);
+    expect(() => restarted.getPreview("client-preview")).toThrow("preview ID");
+  });
   it.each([
     ["GLOBAL_PROMOTION", "PROMOTE_GLOBAL"],
     ["RULE_CHANGE", "CHANGE_RULE"],

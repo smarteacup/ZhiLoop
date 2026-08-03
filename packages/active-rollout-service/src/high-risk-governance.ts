@@ -86,6 +86,17 @@ export class HighRiskGovernanceService {
     return freezeClone(this.policyValue);
   }
 
+  /**
+   * Resolves an authoritative durable preview for server-side commit flows.
+   * Browser clients only carry the preview identity and typed confirmation;
+   * they never become the source of truth for blast-radius facts.
+   */
+  getPreview(previewId: string): HighRiskPreview | undefined {
+    requireFingerprint(previewId, "preview ID");
+    const preview = this.store.getPreview(previewId);
+    return preview === undefined ? undefined : freezeClone(preview);
+  }
+
   updatePolicy(next: HighRiskGovernancePolicy, expectedRevision: number): HighRiskGovernancePolicy {
     validatePolicy(next);
     if (expectedRevision !== this.policyValue.revision || next.revision <= expectedRevision) {

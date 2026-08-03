@@ -13,6 +13,8 @@ import type {
   UserPromptSubmitInput,
 } from "./types.js";
 
+type UnauditedTerminalStatus = "TIMEOUT" | "ERROR";
+
 function scopeKey(value: ActiveKnowledgeRetrievalResult["queryContext"]): string {
   if (value.taskId !== undefined) return JSON.stringify({
     level: "TASK",
@@ -50,6 +52,73 @@ export class ActiveKnowledgeInjectionRuntime {
 
   constructor(private readonly dependencies: ActiveInjectionRuntimeDependencies) {
     this.#now = dependencies.now ?? (() => new Date());
+  }
+
+  #auditUnavailableRetrieval(
+    input: UserPromptSubmitInput,
+    rolloutRevision: number,
+    status: UnauditedTerminalStatus,
+    reasonCode: string,
+  ) {
+    const identity = [input.session_id, input.turn_id, String(rolloutRevision), "RETRIEVAL_UNAVAILABLE"];
+    const runId = `run-unavailable-${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24)}`;
+    const traceId = `trace-unavailable-${createHash("sha256").update(JSON.stringify([...identity, "trace"])).digest("hex").slice(0, 24)}`;
+    const id = attemptId([input.session_id, input.turn_id, traceId, runId, String(rolloutRevision)]);
+    const envelope = {
+      schemaVersion: 1 as const,
+      runId,
+      complexity: {
+        level: "L0_NONE" as const,
+        breadth: 0,
+        depth: "NONE" as const,
+        authority: "NONE" as const,
+        evidence: "NONE" as const,
+        reasonCodes: ["RETRIEVAL_NOT_COMPLETED"],
+      },
+      budget: {
+        maxTokens: this.dependencies.injectionPolicy().defaultMaxTokens,
+        estimatedTokens: 0,
+        truncated: false,
+        disclosedItems: 0,
+        omittedItems: 0,
+      },
+      items: [],
+    };
+    const createdAt = this.#now().toISOString();
+    const expected = {
+      schemaVersion: 1 as const,
+      attemptId: id,
+      sessionId: input.session_id,
+      turnId: input.turn_id,
+      traceId,
+      runId,
+      rolloutRevision,
+      status: "PENDING" as const,
+      revision: 0,
+      envelope,
+      reasonCode: "RETRIEVAL_PENDING",
+      createdAt,
+    };
+    const existing = this.dependencies.audits.getInjection(id);
+    if (existing !== undefined && (
+      existing.sessionId !== expected.sessionId || existing.turnId !== expected.turnId
+      || existing.traceId !== traceId || existing.runId !== runId
+      || existing.rolloutRevision !== rolloutRevision || JSON.stringify(existing.envelope) !== JSON.stringify(envelope)
+    )) throw new Error("fallback injection attempt identity conflicts with the failed retrieval");
+    const pending = existing ?? this.dependencies.audits.beginInjection(expected);
+    if (pending.status !== "PENDING") {
+      if (pending.status !== status || pending.reasonCode !== reasonCode) {
+        throw new Error("persisted fallback injection result conflicts with the failed retrieval");
+      }
+      return pending;
+    }
+    return this.dependencies.audits.completeInjection(
+      pending.attemptId,
+      pending.revision,
+      status,
+      reasonCode,
+      this.#now().toISOString(),
+    );
   }
 
   async #retrieve(
@@ -129,7 +198,10 @@ export class ActiveKnowledgeInjectionRuntime {
 
   async handle(input: UserPromptSubmitInput): Promise<ActiveInjectionRuntimeResult> {
     const rolloutAtStart = this.dependencies.rollout.snapshot;
-    const holder: { record?: ReturnType<ActiveInjectionRuntimeDependencies["audits"]["beginInjection"]> } = {};
+    const holder: {
+      record?: ReturnType<ActiveInjectionRuntimeDependencies["audits"]["beginInjection"]>;
+      attemptedPersistence?: boolean;
+    } = {};
     try {
       const service = new UserPromptInjectionService({
         retrieve: async (request, signal) => {
@@ -141,6 +213,7 @@ export class ActiveKnowledgeInjectionRuntime {
             context.trace.runId,
             String(rolloutAtStart.revision),
           ]);
+          holder.attemptedPersistence = true;
           const existing = this.dependencies.audits.getInjection(id);
           if (existing !== undefined && (
             existing.sessionId !== request.sessionId
@@ -174,10 +247,17 @@ export class ActiveKnowledgeInjectionRuntime {
       if (handled.status === "INVALID_INPUT") return { status: "INVALID_INPUT" };
       const terminal = terminalStatus(handled.status);
       const pending = holder.record;
-      if (pending === undefined) return {
-        status: terminal.status,
-        ...(handled.diagnostic === undefined ? {} : { diagnostic: handled.diagnostic }),
-      };
+      if (pending === undefined) {
+        const attempt = holder.attemptedPersistence !== true
+          && (terminal.status === "TIMEOUT" || terminal.status === "ERROR")
+          ? this.#auditUnavailableRetrieval(input, rolloutAtStart.revision, terminal.status, terminal.reason)
+          : undefined;
+        return {
+          ...(attempt === undefined ? {} : { attempt }),
+          status: terminal.status,
+          ...(handled.diagnostic === undefined ? {} : { diagnostic: handled.diagnostic }),
+        };
+      }
       const current = this.dependencies.audits.getInjection(pending.attemptId);
       const completed = current !== undefined && current.status !== "PENDING"
         ? current
@@ -211,6 +291,18 @@ export class ActiveKnowledgeInjectionRuntime {
             );
         } catch {
           // The Hook remains fail-open. Recovery can CAS the durable PENDING attempt on the next replay.
+        }
+      }
+      if (pending === undefined && holder.attemptedPersistence !== true && rolloutAtStart.mode !== "OFF") {
+        try {
+          pending = this.#auditUnavailableRetrieval(
+            input,
+            rolloutAtStart.revision,
+            "ERROR",
+            "RUNTIME_COMPOSITION_ERROR",
+          );
+        } catch {
+          // The Hook remains fail-open when even the fallback audit cannot be persisted.
         }
       }
       return {

@@ -224,9 +224,9 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
       retrieve: async () => new Promise(() => undefined),
     };
     const timeout = await runtime({ retrieval: timeoutRetrieval, rollout: timeoutRollout, ...timeoutValues }, eligible, 10).handle(input());
-    expect(timeout).toMatchObject({ status: "TIMEOUT" });
+    expect(timeout).toMatchObject({ status: "TIMEOUT", attempt: { status: "TIMEOUT", envelope: { complexity: { level: "L0_NONE" }, items: [] } } });
     expect(timeout.hookOutput).toBeUndefined();
-    expect(timeoutValues.audits.listInjections("session-1").items).toEqual([]);
+    expect(timeoutValues.audits.listInjections("session-1").items).toHaveLength(1);
     timeoutValues.audits.close(); timeoutValues.feedback.close();
 
     const rollbackValues = resources();
@@ -278,8 +278,7 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
       retrieve: async () => { throw new Error("retrieval unavailable"); },
     };
     const failed = await runtime({ retrieval: failedProvider, rollout: shadow, ...providerValues }).handle(input());
-    expect(failed).toMatchObject({ status: "ERROR", diagnostic: expect.stringContaining("retrieval unavailable") });
-    expect(failed.attempt).toBeUndefined();
+    expect(failed).toMatchObject({ status: "ERROR", attempt: { status: "ERROR", reasonCode: "RETRIEVAL_PROVIDER_ERROR" }, diagnostic: expect.stringContaining("retrieval unavailable") });
     providerValues.audits.close(); providerValues.feedback.close();
 
     const invalidValues = resources();

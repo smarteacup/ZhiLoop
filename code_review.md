@@ -1,52 +1,60 @@
 # ZhiLoop Code Review
 
-## 统计概览
+## 📊 统计概览
 
-| 指标 | 当前 | 累计 |
-|---|---:|---:|
-| CR 标识/次数 | CKL-702 | 45 次 |
-| 耗时 | 720s | 22230s |
-| 高风险 | 9 | 220 |
-| 中风险 | 11 | 304 |
-| 低风险 | 0 | 0 |
-| 修复程度 | 20/20（100%） | 100% |
+### 当前 CR 情况
+
+| 指标 | 数值 |
+|---|---:|
+| CR 标识 | `main@024e920+structured-output-v2` |
+| CR 耗时 | 420s |
+| 🔴 高风险 | 1 个 |
+| 🟡 中风险 | 0 个 |
+| 🟢 低风险 | 0 个 |
+| 修复程度 | 已修复 1/1（100%） |
+
+### 累计情况
+
+| 指标 | 累计值 |
+|---|---:|
+| 总 CR 次数 | 46 次 |
+| 总耗时 | 22650s |
+| 🔴 高风险累计 | 221 个 |
+| 🟡 中风险累计 | 304 个 |
+| 🟢 低风险累计 | 0 个 |
+| 平均修复程度 | 100% |
+
+## 改动说明
+
+本次变更修复真实 Codex Structured Outputs 调用被服务端拒绝的问题。知识编译器现在会从领域 Schema 生成 Codex 严格 Schema：对象属性全部 required、可选字段使用 nullable `anyOf`、对象关闭额外字段、断言联合改为受支持的 `anyOf`，并在领域二次校验前移除 `null` 占位。
+
+候选业务契约没有放宽：模型输出仍需通过原有 `knowledge-extraction-output` Schema，候选仍只会物化为 `PROPOSED`。同时强化 `subjectKey` 格式契约，并将 compiler、prompt 与响应 Schema 标识统一升级为 v2，避免旧幂等记录错误复用。
+
+对外接口和配置文件没有变化；兼容性边界是 v1 与 v2 使用不同抽取身份，已有 v1 结果保留，新请求按 v2 重新编译。
 
 ## 风险矩阵
 
-| 风险 | 问题 | 修复结果 |
-|---|---|---|
-| 高 | 默认执行直接写入历史数据 | `dryRun` 默认 true；live 缺 Checkpoint/EventSink 直接拒绝。 |
-| 高 | PROJECT 回填混入其他仓库 Thread | 强制 projectId+cwd，客户端过滤后再次做 cwd 边界复核。 |
-| 高 | 页内崩溃后推进 Cursor 导致 Thread 永久遗漏 | 仅全页终态完成后 CAS 推进 Cursor。 |
-| 高 | 部分事件已写后恢复造成重复知识 | PROCESSING 重放，确定性 Event + Ledger duplicate 收敛。 |
-| 高 | 循环/倒退 Cursor 先写入断点导致永久卡死 | 在 advance 前检测 current/seen Cursor。 |
-| 高 | 活跃 Thread 被当成完整历史编译 | 任一 inProgress Turn 强制 ACTIVE_SESSION 跳过。 |
-| 高 | 敏感会话正文进入 dry-run 报告 | 报告只含 ID/cwd/count/bytes/decision，不含 preview/body。 |
-| 高 | 单 Thread 或全量扫描无界占用内存 | 分页、maxThreads pause、16 MiB 默认单 Thread 门禁和 64 MiB 硬上限。 |
-| 高 | Unix-only 路径逻辑在 Windows 越 Scope | POSIX/drive/UNC 绝对路径与目录边界统一处理。 |
-| 中 | `/project` 前缀误匹配 `/project-other` | exact-or-separator path boundary。 |
-| 中 | dry-run 为估算偷偷建立 SQLite 状态 | dry-run 不创建 Run，不需要 Checkpoint，不调用 EventSink。 |
-| 中 | 已编译历史再次消耗模型 | ProcessedThreadPort 在 read 前跳过；恢复 Run 复用终态 Thread。 |
-| 中 | 短会话产生低价值 Candidate | `minTurns` 默认 2，可配置且有界。 |
-| 中 | App Server 跨页重复 Thread 重复计数 | 当前扫描维护 seen Thread，输出 DUPLICATE_LISTING。 |
-| 中 | opaque cursor 被解析或自行拼接 | Cursor 原样保存/传回，仅做空值与循环检查。 |
-| 中 | 不同策略错误恢复同一 Run | requestHash 覆盖 Scope、source、pageSize、大小与全部策略。 |
-| 中 | 两个并发执行者静默覆盖 Cursor | SQLite partial unique active Run + cursor revision fencing。 |
-| 中 | Thread read 与 list 身份不一致 | 强制 id/cwd/turns 一致后才投影。 |
-| 中 | 历史映射复制 CKL-701 领域实现 | 生成标准 completed 通知并复用同一 Adapter。 |
-| 中 | 包装层被回填模块反向依赖 | Backfill 只依赖 History/Event/Processed Ports，不依赖 transport 或 app。 |
+| 维度 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
+|---|---|---|---|---|---|
+| 增/重构 | 🔴 高 | `packages/knowledge-compiler/src/mvp-compiler.ts:21` | Schema 与提示已变化但版本仍为 v1，且 `$id` 仍指向 v1，可能命中旧幂等结果并破坏审计可复现性。 | 候选仓库 claim、重放、Schema 缓存与知识来源审计。 | compilerVersion、promptVersion、Schema `$id` 全部升级为 v2，文档同步；已修复。 |
+
+## 配置检查
+
+本次 diff 不包含 `.properties`、`.yml`、`.yaml` 或运行时配置变更，无 pre/prod/inner 配置迁移项。
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| Backfill 专项 | 9/9；Lines 96.42%、Branches 88.07%、Functions 100% |
-| Ledger 边界 | 1/1；dry-run 0 写入，live 5 条事件入库 |
-| 性能 | 1,000 Thread dry-run 7.692ms；约 129,999 threads/s（不含 RPC） |
-| 全仓 | 584/584 模块；46/46 架构/Gate |
-| 整体覆盖率 | Lines 97.01%、Branches 90.10%、Functions 98.44% |
-| Workspace / 供应链 | 35 个依赖边界通过；0 vulnerabilities |
+| 真实 Transcript | 2355 行、5.76 MB、0 malformed；投影 90 个公开事件 |
+| Ledger 幂等 | 首次 90 appended；复读 90 duplicate |
+| 真实 Codex 编译 | Structured Outputs Schema 被服务端接受；单次成功生成 6–8 个候选 |
+| 候选仓库 | `ACQUIRED → IN_PROGRESS → SUCCEEDED → ALREADY_SUCCEEDED` |
+| 生命周期门禁 | 全部候选为 `PROPOSED`；默认正式召回 0，审计视图可见 |
+| 模块测试 | knowledge-compiler 9/9 |
+| 全仓 Gate | 51/51 架构/Gate；624/624 模块测试 |
+| 覆盖率 | Lines 96.86%、Branches 89.77%、Functions 97.97% |
 
 ## Review 结论
 
-CKL-702 三项验收满足，20 项风险全部修复，无遗留 actionable finding。默认 dry-run、中断恢复、策略跳过和 Scope 隔离成立；真实 App Server transport 仍未装配。可以进入 CKL-703。
+本次发现的 1 个高风险版本治理问题已闭环，无遗留 actionable finding。严格 Schema 经过真实 Codex 服务端接受、业务 Schema 二次校验、候选仓库幂等与全仓测试验证，可以合入。

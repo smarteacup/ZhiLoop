@@ -88,6 +88,13 @@ function draft(kind: KnowledgeKind, index: number): KnowledgeCandidateDraft {
 
 const runOptions = { maxAttempts: 1, retryDelayMs: 0, perAttemptTimeoutMs: 1_000 } as const;
 
+function schemaRecords(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) return value.flatMap(schemaRecords);
+  if (typeof value !== "object" || value === null) return [];
+  const record = value as Record<string, unknown>;
+  return [record, ...Object.values(record).flatMap(schemaRecords)];
+}
+
 describe("MvpKnowledgeCompiler", () => {
   it("extracts all five MVP kinds in one atomic multi-candidate batch", async () => {
     const captured: Array<{ request: StructuredGenerationRequest; context: StructuredGenerationContext }> = [];
@@ -128,14 +135,51 @@ describe("MvpKnowledgeCompiler", () => {
 
     const kindSchema = (((captured?.responseSchema["definitions"] as Record<string, unknown>)["candidateDraft"] as Record<string, unknown>)["properties"] as Record<string, unknown>)["kind"] as Record<string, unknown>;
     expect(kindSchema["enum"]).toEqual(MVP_KNOWLEDGE_KINDS);
-    expect(captured?.responseSchema["$id"]).toBe("https://zhiloop.dev/schemas/mvp-knowledge-extraction-output/v1");
+    expect(captured?.responseSchema["$id"]).toBe("https://zhiloop.dev/schemas/mvp-knowledge-extraction-output/v2");
     expect(captured?.systemInstructions).toContain("Do not output hidden reasoning");
     expect(captured?.systemInstructions).toContain("caller always materializes candidates as PROPOSED");
     expect(captured?.systemInstructions).toContain("Treat corrections as authoritative");
+    expect(captured?.systemInstructions).toContain("lowercase dot-separated identifier");
     expect(Object.isFrozen(captured)).toBe(true);
     expect(Object.isFrozen(MVP_KNOWLEDGE_EXTRACTION_SCHEMA)).toBe(true);
     expect(Object.isFrozen(MVP_KNOWLEDGE_KINDS)).toBe(true);
     expect(MVP_SYSTEM_INSTRUCTIONS).not.toContain("think step by step");
+  });
+
+  it("supplies a Codex-compatible strict schema and removes nullable placeholders", async () => {
+    const strictDraft = {
+      ...draft("DESIGN", 1),
+      scopeHint: {
+        level: "PROJECT",
+        taskId: null,
+        projectId: "project-1",
+        repositoryRemote: null,
+        modulePaths: null,
+        symbols: null,
+        userId: null,
+        teamId: null,
+        reasonCodes: ["EPISODE_PROJECT"],
+      },
+      evidenceHints: [{ type: "USER_STATEMENT", sourceRef: "event-goal", projectId: null }],
+    };
+    const compiler = new MvpKnowledgeCompiler({
+      model: { generate: async () => ({ schemaVersion: 1, candidates: [strictDraft] }) },
+    });
+
+    const result = await runKnowledgeExtraction(request(), compiler, runOptions);
+
+    expect(result.status).toBe("SUCCEEDED");
+    expect(result.candidates[0]?.scopeHint).toEqual(draft("DESIGN", 1).scopeHint);
+    expect(result.candidates[0]?.evidenceHints[0]).toMatchObject(draft("DESIGN", 1).evidenceHints[0] as object);
+    expect(result.candidates[0]?.evidenceHints[0]).not.toHaveProperty("projectId");
+    expect(schemaRecords(MVP_KNOWLEDGE_EXTRACTION_SCHEMA).some((schema) => "oneOf" in schema)).toBe(false);
+    for (const schema of schemaRecords(MVP_KNOWLEDGE_EXTRACTION_SCHEMA)) {
+      if (schema["type"] !== "object" || typeof schema["properties"] !== "object" || schema["properties"] === null) continue;
+      expect(schema["additionalProperties"]).toBe(false);
+      expect(new Set(schema["required"] as string[])).toEqual(
+        new Set(Object.keys(schema["properties"] as Record<string, unknown>)),
+      );
+    }
   });
 
   it("supports multiple candidates of the same kind", async () => {

@@ -794,7 +794,8 @@ SSE 只发布轻量失效通知，不携带知识正文：
 - [ ] 手动 capture dry-run/commit
 - [ ] session→turn→injection trace 数据契约和禁用态展示
 - [ ] 任务队列与诊断页
-- [ ] 配置只读视图
+- [ ] 基础配置的有效值、草稿、校验、diff、原子激活、历史和回滚
+- [ ] 注入预算、后台调度、分类重试和控制台内告警配置；未接通能力只允许保存草稿
 - [ ] 未接通阶段的 disabled capability 展示
 
 完成 C1 后，即使知识流水线尚未组合，用户也能可靠看清当前真实状态。
@@ -820,7 +821,7 @@ SSE 只发布轻量失效通知，不携带知识正文：
 
 ### Phase C4：安全配置与 ACTIVE 灰度
 
-- [ ] 配置草稿、校验、diff、激活、历史和回滚
+- [ ] 高风险配置的二次门禁和项目级 override 治理
 - [ ] SHADOW 质量门禁和 ACTIVE eligibility
 - [ ] 灰度范围、自动降级和回滚状态
 - [ ] 知识治理写操作与高风险门禁
@@ -913,6 +914,7 @@ Review 必须检查：
 - 会话目录来自只读 Catalog，能区分未采集、部分采集和已追平；不能在控制台对话或修改 Codex 会话。
 - 会话详情能展示注入的禁用态或真实 session/turn/trace 关联，不能把 SHADOW 误标为实际注入。
 - 可以看到后台任务、spool、Ledger、Worker 和部署诊断。
+- 可以安全修改已接通的基础配置；校验或组件应用失败时自动保持 last-known-good。
 - 当前所有未接通能力在对应页面有真实 capability 状态和原因。
 - Console 停止、刷新、断线和高负载均不影响 Codex Hook。
 - 自动化测试、性能 Gate、安全 review 和代码 review 全部通过。

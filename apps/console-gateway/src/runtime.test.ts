@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatConsoleRuntimeAnnouncement, parseConsoleRuntimeOptions, resolveConsoleRuntimePaths } from "./runtime.js";
+import {
+  CONSOLE_QUERY_TIMEOUT_MS,
+  formatConsoleRuntimeAnnouncement,
+  parseConsoleRuntimeOptions,
+  resolveConsoleRuntimePaths,
+} from "./runtime.js";
 
 describe("Console Gateway runtime", () => {
   it("parses bounded launcher options", () => {
@@ -11,6 +16,7 @@ describe("Console Gateway runtime", () => {
   });
 
   it("resolves only the owner-local Sidecar socket and release Web assets", () => {
+    expect(CONSOLE_QUERY_TIMEOUT_MS).toBe(5_000);
     expect(resolveConsoleRuntimePaths("/Users/operator", "file:///release/apps/console-gateway/dist/runtime.js")).toEqual({
       socketPath: "/Users/operator/.ckl/run/sidecar.sock",
       staticRoot: "/release/apps/console-web/dist/",

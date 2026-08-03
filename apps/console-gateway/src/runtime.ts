@@ -13,6 +13,8 @@ export interface ConsoleRuntimeOptions {
   readonly json: boolean;
 }
 
+export const CONSOLE_QUERY_TIMEOUT_MS = 5_000;
+
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const indexes = argv.flatMap((item, index) => item === name ? [index] : []);
   if (indexes.length > 1) throw new Error(`${name} may only be specified once`);
@@ -83,12 +85,13 @@ export function formatConsoleRuntimeAnnouncement(
 export async function runConsoleGateway(argv: readonly string[]): Promise<void> {
   const options = parseConsoleRuntimeOptions(argv);
   const paths = resolveConsoleRuntimePaths(options.home);
-  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath, timeoutMs: 5_000 });
+  const controlClient = new UnixSocketControlClient({ socketPath: paths.socketPath, timeoutMs: CONSOLE_QUERY_TIMEOUT_MS });
   const gateway = await createConsoleGateway({
     queryPort: controlClient,
     commandPort: controlClient,
     staticRoot: paths.staticRoot,
     port: options.port,
+    queryTimeoutMs: CONSOLE_QUERY_TIMEOUT_MS,
   });
   const address = await gateway.listen();
   const browserOpened = options.openBrowser && openLocalBrowser(address.bootstrapUrl);

@@ -354,6 +354,14 @@ export class SqliteEventLedger {
     `).run(ingestionId, cursorJson, sha256(cursorJson), this.#clock().toISOString());
   }
 
+  /** Explicitly discards a source checkpoint so an idempotent full replay can rebuild it. */
+  rebaseIngestionCursor(ingestionId: string): "REBASED" | "NOT_FOUND" {
+    this.#assertOpen();
+    assertIngestionId(ingestionId);
+    const result = this.#database.prepare("DELETE FROM ingestion_cursors WHERE ingestion_id = ?").run(ingestionId);
+    return result.changes === 1 ? "REBASED" : "NOT_FOUND";
+  }
+
   cursor(consumerId: string): number {
     this.#assertOpen();
     assertConsumerId(consumerId);

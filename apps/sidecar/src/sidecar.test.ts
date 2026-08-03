@@ -4,12 +4,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
+import { SqliteRealCodexAcceptanceEvidenceStore } from "@zhiloop/automatic-ingestion";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { CONTROL_API_SCHEMA_VERSION, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
-import { afterEach, describe, expect, it } from "vitest";
+import { resolveDeploymentPaths } from "@zhiloop/local-deployment";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidecarApplication } from "./application.js";
 import { loadSidecarConfig, parseSidecarConfig, type SidecarConfig } from "./config.js";
+import { runDeploymentCli } from "./deployment-cli.js";
 import { SafeDiagnosticLog } from "./diagnostic-log.js";
 import { runHookCommand } from "./hook-command.js";
 import { requestSidecar, startSidecarServer, stopSidecarServer } from "./transport.js";
@@ -58,6 +61,17 @@ async function writeRollout(config: SidecarConfig, sessionId: string): Promise<v
     rolloutRecord("event_msg", "2026-08-03T00:00:01.000Z", { type: "task_started", turn_id: "turn-1" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:02.000Z", { type: "user_message", message: "capture me" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:03.000Z", { type: "task_complete", turn_id: "turn-1", last_agent_message: "captured" }),
+  ].join(""));
+}
+
+async function writeFreshRollout(config: SidecarConfig, sessionId: string, createdAt: string): Promise<void> {
+  const directory = join(config.codexSessionsRoot, "2026", "08", "04");
+  await mkdir(directory, { recursive: true });
+  const start = Date.parse(createdAt) + 100;
+  await writeFile(join(directory, `rollout-${sessionId}.jsonl`), [
+    rolloutRecord("session_meta", new Date(start).toISOString(), { id: sessionId, session_id: sessionId, cli_version: "0.145.0" }),
+    rolloutRecord("event_msg", new Date(start + 100).toISOString(), { type: "task_started", turn_id: "acceptance-turn" }),
+    rolloutRecord("event_msg", new Date(start + 200).toISOString(), { type: "user_message", message: "content-is-not-evidence" }),
   ].join(""));
 }
 
@@ -128,7 +142,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.1.8",
+      sidecarVersion: "0.2.0",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });
@@ -167,6 +181,106 @@ describe("sidecar service", () => {
     const ledger = new SqliteEventLedger(config.ledgerPath);
     expect(ledger.count()).toBe(1);
     ledger.close();
+  });
+
+  it("keeps synchronous acceptance persistence off the Hook response path", async () => {
+    const delayMs = 300;
+    let persisted = false;
+    const recordMany = vi.spyOn(SqliteRealCodexAcceptanceEvidenceStore.prototype, "recordMany")
+      .mockImplementation(() => {
+        persisted = true;
+        const until = Date.now() + delayMs;
+        while (Date.now() < until) { /* Simulate a slow FULL SQLite transaction. */ }
+        return Object.freeze([]);
+      });
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    try {
+      const startedAt = Date.now();
+      await application.handleHook({
+        hook_event_name: "UserPromptSubmit",
+        session_id: "non-blocking-acceptance",
+        turn_id: "turn-1",
+        prompt: "never persisted as acceptance evidence",
+      });
+      expect(Date.now() - startedAt).toBeLessThan(delayMs / 2);
+    } finally {
+      await application.close();
+      recordMany.mockRestore();
+    }
+    expect(persisted).toBe(true);
+  });
+
+  it("verifies an exact fresh task through Hook, spool, Ledger, catalog and cursor via the deployed CLI", async () => {
+    const temporary = await temporaryConfig();
+    const paths = resolveDeploymentPaths(temporary.root, "0.0.0");
+    const config = { ...temporary.config, socketPath: paths.socketPath };
+    const sessionId = "real-acceptance-session";
+    const taskCreatedAt = new Date(Date.now() - 1_000).toISOString();
+    await writeFreshRollout(config, sessionId, taskCreatedAt);
+    let application = await SidecarApplication.create(config);
+    await application.start();
+    let server = await startSidecarServer(config.socketPath, application);
+    try {
+      const privatePrompt = "acceptance prompt sk-private-value";
+      expect(await application.handleHook({
+        hook_event_name: "UserPromptSubmit",
+        session_id: sessionId,
+        turn_id: "acceptance-turn",
+        cwd: "/Users/private/acceptance-project",
+        prompt: privatePrompt,
+      })).toBe("");
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const health = await application.health();
+        if (health.lastWorkerCycle?.cursor !== undefined && health.lastWorkerCycle.cursor > 0) break;
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+      }
+      await application.captureSession({ sessionId, dryRun: false });
+
+      const stdout = outputSink();
+      const stderr = outputSink();
+      expect(await runDeploymentCli([
+        "acceptance",
+        "--session", sessionId,
+        "--created-at", taskCreatedAt,
+        "--home", temporary.root,
+        "--json",
+      ], stdout.output, stderr.output)).toBe(0);
+      expect(JSON.parse(stdout.text())).toMatchObject({
+        request: { sessionId, taskCreatedAt },
+        result: { status: "VERIFIED", verifiedStages: ["HOOK", "SPOOL", "LEDGER", "CATALOG", "CURSOR"] },
+        evidenceRef: expect.stringMatching(/^acceptance:[a-f0-9]{64}$/u),
+      });
+      expect(stderr.text()).toBe("");
+      const capabilities = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "real-acceptance-capability",
+        type: "capabilities.list",
+        page: { limit: 50 },
+      })) as { items: Array<{ capabilityId: string; status: string }> };
+      expect(capabilities.items).toContainEqual(expect.objectContaining({ capabilityId: "codex.live-hook", status: "READY" }));
+
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+      const evidenceBytes = await readFile(join(dirname(config.ledgerPath), "real-codex-acceptance.sqlite"), "utf8");
+      expect(evidenceBytes).not.toContain(privatePrompt);
+      expect(evidenceBytes).not.toContain("/Users/private/acceptance-project");
+
+      application = await SidecarApplication.create(config);
+      await application.start();
+      server = await startSidecarServer(config.socketPath, application);
+      const restored = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "real-acceptance-restored",
+        type: "capabilities.list",
+        page: { limit: 50 },
+      })) as { items: Array<{ capabilityId: string; status: string }> };
+      expect(restored.items).toContainEqual(expect.objectContaining({ capabilityId: "codex.live-hook", status: "READY" }));
+    } finally {
+      await stopSidecarServer(server, config.socketPath).catch(() => undefined);
+      await application.close().catch(() => undefined);
+    }
   });
 
   it("previews and serializes active session captures while Hook capture remains independent", async () => {
@@ -219,6 +333,11 @@ describe("sidecar service", () => {
         sessionId: 42,
         dryRun: false,
       } as never, 1_000)).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+      await expect(requestSidecar(config.socketPath, {
+        type: "acceptance.verify",
+        sessionId: "unsafe session",
+        taskCreatedAt: "not-a-timestamp",
+      } as never, 1_000)).rejects.toMatchObject({ code: "INVALID_ACCEPTANCE_REQUEST" });
     } finally {
       await stopSidecarServer(server, config.socketPath);
       await application.close();
@@ -646,6 +765,7 @@ describe("sidecar service", () => {
         requestId: "oversized-control-request",
         type: "config.validate",
         baseRevision: 0,
+        scope: "GLOBAL",
         draft: { padding: "x".repeat(1_100_000) },
       }, 2_000)).rejects.toMatchObject({ code: "MESSAGE_TOO_LARGE" });
       await expect(requestSidecar(config.socketPath, {
@@ -667,6 +787,61 @@ describe("sidecar service", () => {
       expect(await requestSidecar(config.socketPath, { type: "health" }, 1_000)).toMatchObject({ status: "READY" });
     } finally {
       await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
+  it("validates, activates, persists, and rolls back configuration through the Control API", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    try {
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-get-default",
+        type: "config.get",
+      }))).toMatchObject({ view: { revision: 0, effective: { runtime: { sessionScanIntervalMs: 60_000 } } }, drafts: [], history: [{ revision: 0 }] });
+
+      const validation = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-validate",
+        type: "config.validate",
+        baseRevision: 0,
+        scope: "GLOBAL",
+        draft: { runtime: { sessionScanIntervalMs: 5_000 } },
+      })) as { ok: boolean; draft?: { draftRevision: number } };
+      expect(validation).toMatchObject({ ok: true, draft: { activatable: true } });
+      const draftRevision = validation.draft?.draftRevision as number;
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-activate",
+        type: "config.activate",
+        expectedRevision: 0,
+        draftRevision,
+        idempotencyKey: "sidecar-configuration-activate-0001",
+      }))).toMatchObject({ ok: true, revision: 1, status: "EFFECTIVE" });
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-get-active",
+        type: "config.get",
+      }))).toMatchObject({ view: { revision: 1, effective: { runtime: { sessionScanIntervalMs: 5_000 } } } });
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-stale-draft",
+        type: "config.validate",
+        baseRevision: 0,
+        scope: "GLOBAL",
+        draft: {},
+      }))).toMatchObject({ ok: false, diagnostics: [{ code: "STALE_REVISION" }] });
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "configuration-rollback",
+        type: "config.rollback",
+        expectedRevision: 1,
+        targetRevision: 0,
+        idempotencyKey: "sidecar-configuration-rollback-0001",
+      }))).toMatchObject({ ok: true, revision: 2, status: "ROLLED_BACK" });
+    } finally {
       await application.close();
     }
   });

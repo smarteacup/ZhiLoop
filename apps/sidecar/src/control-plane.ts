@@ -13,10 +13,13 @@ import {
   type ControlResponse,
   type Diagnostics,
   type EventMetadata,
+  type JobCommandResult,
+  type JobSnapshot,
   type SessionSummary,
   type StageSnapshot,
   eventMetadataSchema,
 } from "@zhiloop/control-api";
+import type { SqliteConfigurationService } from "@zhiloop/configuration-service";
 import { createCursorCodec, type CursorCodec } from "@zhiloop/control-api/server";
 import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import {
@@ -32,6 +35,13 @@ import {
   type SessionCaptureProjectionPort,
   type SessionCatalogEntry,
 } from "@zhiloop/session-catalog";
+import { evaluateAlerts, type PreviousAlertState } from "@zhiloop/observability";
+import {
+  JobIdempotencyConflictError,
+  JobNotFoundError,
+  JobStaleRevisionError,
+  JobStateConflictError,
+} from "@zhiloop/job-runtime";
 
 import type { SidecarConfig } from "./config.js";
 import type { SidecarHealthReport } from "./application.js";
@@ -68,11 +78,18 @@ export interface CaptureExecutionPort {
   transaction<T>(operation: (capture: (request: CaptureSessionRequest) => Promise<CaptureSessionReport>) => Promise<T>): Promise<T>;
 }
 
+export interface JobCommandExecutionPort {
+  cancelJob(request: { readonly jobId: string; readonly expectedRevision: number; readonly idempotencyKey: string }): Promise<JobCommandResult>;
+  retryJob(request: { readonly jobId: string; readonly expectedRevision: number; readonly idempotencyKey: string }): Promise<JobCommandResult>;
+}
+
 export interface SidecarControlPlaneOptions {
   readonly config: SidecarConfig;
   readonly ledger: SqliteEventLedger;
   readonly capture: CaptureExecutionPort;
   readonly health: () => Promise<SidecarHealthReport>;
+  readonly configuration?: SqliteConfigurationService;
+  readonly jobCommands?: JobCommandExecutionPort;
   readonly clock?: () => Date;
 }
 
@@ -96,7 +113,7 @@ function errorResponse(requestId: string, supported: ControlFailureCode, observe
       message: supported === "NOT_FOUND"
         ? "Requested resource was not found"
         : supported === "STALE_REVISION"
-          ? "Capture preview is stale; create a new preview"
+          ? "Expected revision is stale; refresh current state"
           : supported === "CONFLICT"
             ? "Idempotency key conflicts with an earlier command"
             : supported === "CAPABILITY_UNAVAILABLE"
@@ -235,6 +252,8 @@ export class SidecarControlPlane {
   readonly #ledger: SqliteEventLedger;
   readonly #capture: CaptureExecutionPort;
   readonly #health: () => Promise<SidecarHealthReport>;
+  readonly #configuration: SqliteConfigurationService | undefined;
+  readonly #jobCommands: JobCommandExecutionPort | undefined;
   readonly #clock: () => Date;
   readonly #readModel: SqliteOperationalReadModel;
   readonly #catalog: ReadOnlySessionCatalog;
@@ -247,6 +266,10 @@ export class SidecarControlPlane {
   #commitTail: Promise<void> = Promise.resolve();
   #projectionTail: Promise<void> = Promise.resolve();
   #closed = false;
+  readonly #monitoringSinceAt: string;
+  #lastHookEventAt: string | undefined;
+  #previousAlerts: readonly PreviousAlertState[] = [];
+  #alertCount = 0;
 
   private constructor(
     options: SidecarControlPlaneOptions,
@@ -259,11 +282,14 @@ export class SidecarControlPlane {
     this.#ledger = options.ledger;
     this.#capture = options.capture;
     this.#health = options.health;
+    this.#configuration = options.configuration;
+    this.#jobCommands = options.jobCommands;
     this.#clock = options.clock ?? (() => new Date());
     this.#readModel = readModel;
     this.#catalog = catalog;
     this.#cursorCodec = cursorCodec;
     this.#captureStates = captureStates;
+    this.#monitoringSinceAt = timestamp(this.#clock);
   }
 
   public static async create(options: SidecarControlPlaneOptions): Promise<SidecarControlPlane> {
@@ -326,7 +352,11 @@ export class SidecarControlPlane {
       capability("conversation.capture", "READY", "COMPONENT_READY", observedAt),
       capability("codex.live-hook", "NOT_VERIFIED", "CAPABILITY_NOT_VERIFIED", observedAt, false, "Validate a newly created Codex task"),
       capability("session.catalog", "STARTING", "COMPONENT_STARTING", observedAt),
-      capability("automatic.ingestion", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Enable durable ingestion jobs"),
+      capability("durable.jobs", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("automatic.ingestion", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("configuration", "READY", "COMPONENT_READY", observedAt),
+      capability("observability.alerts", "READY", "COMPONENT_READY", observedAt),
+      capability("session.relations", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Compose an observable parent/child relation source"),
       capability("knowledge.compile", "DISABLED", "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt, false, "Compose the production knowledge worker"),
       capability("knowledge.retrieval", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Compose the retrieval runtime"),
       capability("context.injection", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Complete SHADOW quality gates before injection"),
@@ -350,6 +380,9 @@ export class SidecarControlPlane {
     state.eventCount += 1;
     if (record.event.turnId !== undefined) state.turnIds.add(record.event.turnId);
     state.redactionCount += record.redactionCount;
+    if (record.event.source === "codex-hook" && (this.#lastHookEventAt === undefined || record.event.occurredAt > this.#lastHookEventAt)) {
+      this.#lastHookEventAt = record.event.occurredAt;
+    }
   }
 
   async #restoreProjectionState(): Promise<void> {
@@ -404,6 +437,24 @@ export class SidecarControlPlane {
     const operation = this.#projectionTail.then(async () => await this.#projectThrough(targetSequence));
     this.#projectionTail = operation.then(() => undefined, () => undefined);
     return operation;
+  }
+
+  public sessionCatalog(): Pick<ReadOnlySessionCatalog, "list" | "get"> {
+    return this.#catalog;
+  }
+
+  public projectJob(snapshot: JobSnapshot): void {
+    this.#readModel.projectJob(snapshot);
+  }
+
+  public projectCapabilitySnapshot(snapshot: CapabilitySnapshot): void {
+    this.#readModel.projectCapability(snapshot);
+  }
+
+  public setAutomaticIngestionReady(): void {
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability(capability("durable.jobs", "READY", "COMPONENT_READY", observedAt));
+    this.#readModel.projectCapability(capability("automatic.ingestion", "READY", "COMPONENT_READY", observedAt));
   }
 
   async #refreshSession(sessionId: string): Promise<SessionSummary | undefined> {
@@ -468,11 +519,20 @@ export class SidecarControlPlane {
 
   async #diagnostics(): Promise<Diagnostics> {
     let spoolDepth = 0;
+    let oldestSpoolAgeMs = 0;
     let spoolReadable = true;
+    const observedAt = timestamp(this.#clock);
+    const alertConfiguration = this.#configuration?.get().effective.runtime.alerts;
     try {
       const directory = await opendir(this.#config.spoolPath);
       for await (const entry of directory) {
-        if (entry.isFile() && entry.name.endsWith(".json")) spoolDepth += 1;
+        if (entry.isFile() && entry.name.endsWith(".json")) {
+          spoolDepth += 1;
+          if (alertConfiguration !== undefined && spoolDepth <= alertConfiguration.spoolDepth.error) {
+            const metadata = await stat(join(this.#config.spoolPath, entry.name));
+            oldestSpoolAgeMs = Math.max(oldestSpoolAgeMs, Math.max(0, Date.parse(observedAt) - metadata.mtimeMs));
+          }
+        }
         if (spoolDepth >= MAX_SPOOL_DEPTH_SCAN) break;
       }
     } catch {
@@ -490,9 +550,46 @@ export class SidecarControlPlane {
     }
     const [health, storage] = await Promise.all([this.#health(), stat(this.#config.ledgerPath)]);
     const lastCycle = health.lastWorkerCycle;
+    const jobs = this.#readModel.getOverview({ observedAt, rolloutMode: "SHADOW", sidecarVersion: SIDECAR_VERSION, alertCount: this.#alertCount }).jobs;
+    const alerts = alertConfiguration === undefined ? undefined : evaluateAlerts({
+      schemaVersion: 1,
+      notificationsEnabled: alertConfiguration.enabled && alertConfiguration.notify,
+      notificationMinimumSeverity: alertConfiguration.minimumSeverity,
+      spool: { enabled: true, depth: alertConfiguration.spoolDepth, oldestAgeMs: alertConfiguration.spoolOldestAgeMs },
+      cursor: { enabled: true, lagEvents: alertConfiguration.cursorLagEvents },
+      failedJobs: { enabled: true, count: alertConfiguration.failedJobs },
+      hookSilence: { enabled: true, ageMs: alertConfiguration.hookSilenceMs },
+      quietHours: alertConfiguration.quietHours,
+    }, {
+      schemaVersion: 1,
+      observedAt,
+      spool: { depth: spoolDepth, oldestAgeMs: oldestSpoolAgeMs },
+      cursors: [],
+      jobs: { failedCount: jobs.failed },
+      hook: {
+        expected: true,
+        monitoringSinceAt: this.#monitoringSinceAt,
+        ...(this.#lastHookEventAt === undefined ? {} : { lastEventAt: this.#lastHookEventAt }),
+      },
+    }, this.#previousAlerts);
+    if (alerts !== undefined) {
+      this.#previousAlerts = Object.freeze(alerts.activeAlerts.map((alert) => Object.freeze({
+        dedupeKey: alert.dedupeKey,
+        severity: alert.severity,
+        reasonCodes: alert.reasonCodes,
+        notificationPending: alert.notificationPending,
+        notificationDelivered: alert.notificationDelivered,
+      })));
+      this.#alertCount = alerts.activeAlerts.length;
+    }
+    const alertView = alerts === undefined ? undefined : {
+      ...alerts,
+      activeAlerts: alerts.activeAlerts.map((alert) => ({ ...alert, reasonCodes: [...alert.reasonCodes] })),
+      transitions: alerts.transitions.map((transition) => ({ ...transition, reasonCodes: [...transition.reasonCodes] })),
+    };
     const value: Diagnostics = {
       schemaVersion: CONTROL_API_SCHEMA_VERSION,
-      observedAt: timestamp(this.#clock),
+      observedAt,
       ledgerSequence: this.#ledger.count(),
       spoolDepth,
       consumerLags: [],
@@ -503,6 +600,7 @@ export class SidecarControlPlane {
         retryableFailures: (lastCycle?.retryableFailures ?? 0) + (spoolReadable ? 0 : 1),
       },
       storage: { healthy: storage.isFile(), databaseBytes: storage.size },
+      ...(alertView === undefined ? {} : { alerts: alertView }),
     };
     this.#readModel.projectHealth(value);
     return value;
@@ -659,7 +757,7 @@ export class SidecarControlPlane {
       switch (request.type) {
         case "overview.get": {
           await this.scheduleLedgerProjection();
-          result = this.#readModel.getOverview({ observedAt, rolloutMode: "SHADOW", sidecarVersion: SIDECAR_VERSION, alertCount: 0 });
+          result = this.#readModel.getOverview({ observedAt, rolloutMode: "SHADOW", sidecarVersion: SIDECAR_VERSION, alertCount: this.#alertCount });
           break;
         }
         case "capabilities.list":
@@ -682,6 +780,22 @@ export class SidecarControlPlane {
         case "jobs.list":
           result = this.#readModel.listJobs(operationalPage(request.page));
           break;
+        case "job.cancel":
+          if (this.#jobCommands === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = await this.#jobCommands.cancelJob({
+            jobId: request.jobId,
+            expectedRevision: request.expectedRevision,
+            idempotencyKey: request.idempotencyKey,
+          });
+          break;
+        case "job.retry":
+          if (this.#jobCommands === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = await this.#jobCommands.retryJob({
+            jobId: request.jobId,
+            expectedRevision: request.expectedRevision,
+            idempotencyKey: request.idempotencyKey,
+          });
+          break;
         case "diagnostics.get":
           await this.scheduleLedgerProjection();
           result = await this.#diagnostics();
@@ -692,16 +806,44 @@ export class SidecarControlPlane {
         case "capture.commit":
           result = await this.#serializedCommit(request);
           break;
-        case "config.get":
+        case "config.get": {
+          if (this.#configuration === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          const view = this.#configuration.get(request.projectId);
+          result = {
+            view: { schemaVersion: CONTROL_API_SCHEMA_VERSION, ...view },
+            drafts: this.#configuration.drafts(100),
+            history: this.#configuration.history(100),
+          };
+          break;
+        }
         case "config.validate":
+          if (this.#configuration === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = this.#configuration.validateDraft({
+            baseRevision: request.baseRevision,
+            scope: request.scope,
+            ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+            draft: request.draft,
+          });
+          break;
         case "config.activate":
+          if (this.#configuration === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = await this.#configuration.activate(request.expectedRevision, request.draftRevision, request.idempotencyKey);
+          break;
         case "config.rollback":
-          throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          if (this.#configuration === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
+          result = await this.#configuration.rollback(request.expectedRevision, request.targetRevision, request.idempotencyKey);
+          break;
       }
       return successResponse(request.requestId, result, timestamp(this.#clock));
     } catch (error) {
       const code = error instanceof ControlPlaneError
         ? error.code
+        : error instanceof JobNotFoundError
+          ? "NOT_FOUND"
+          : error instanceof JobStaleRevisionError
+            ? "STALE_REVISION"
+            : error instanceof JobIdempotencyConflictError || error instanceof JobStateConflictError
+              ? "CONFLICT"
         : error instanceof InvalidOperationalCursorError
           ? "INVALID_CURSOR"
           : error instanceof Error && "code" in error && error.code === "SESSION_NOT_FOUND"

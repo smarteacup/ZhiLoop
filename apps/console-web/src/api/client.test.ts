@@ -66,6 +66,37 @@ describe("typed Console API client", () => {
     }));
   });
 
+  it("sends strict revision-bound cancel and retry commands without placing fields in the URL", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const action = String(input).endsWith("/cancel") ? "CANCEL" : "RETRY";
+      const body = JSON.parse(String(init?.body)) as { expectedRevision: number };
+      return envelope({
+        schemaVersion: 1,
+        action,
+        disposition: "APPLIED",
+        job: {
+          schemaVersion: 1, jobId: "job-1", jobType: "AUTOMATIC_INGESTION_SCAN", revision: body.expectedRevision + 1,
+          status: action === "CANCEL" ? "CANCELLED" : "QUEUED", attempt: 1, maxAttempts: 3, progress: 0,
+          reasonCode: action === "CANCEL" ? "JOB_CANCELLED" : "JOB_QUEUED", observedAt: timestamp,
+          lastTransitionAt: timestamp, retryable: action === "RETRY", evidenceRefs: [],
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await expect(browserConsoleApi.cancelJob?.({ jobId: "job-1", expectedRevision: 3, idempotencyKey: "operator:cancel:web:one" }))
+      .resolves.toMatchObject({ action: "CANCEL", job: { revision: 4 } });
+    await expect(browserConsoleApi.retryJob?.({ jobId: "job-1", expectedRevision: 4, idempotencyKey: "operator:retry:web:one" }))
+      .resolves.toMatchObject({ action: "RETRY", job: { revision: 5 } });
+    expect(fetcher).toHaveBeenNthCalledWith(1, "/api/v1/jobs/job-1/cancel", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ expectedRevision: 3, idempotencyKey: "operator:cancel:web:one" }),
+    }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, "/api/v1/jobs/job-1/retry", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ expectedRevision: 4, idempotencyKey: "operator:retry:web:one" }),
+    }));
+  });
+
   it("preserves stable API error codes for stale and unavailable UI states", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => errorEnvelope("STALE_REVISION", false)));
     await expect(browserConsoleApi.previewCapture("session-1")).rejects.toMatchObject({ code: "STALE_REVISION", retryable: false });
@@ -78,5 +109,83 @@ describe("typed Console API client", () => {
   it("rejects a validly shaped capture response bound to another session", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => envelope({ schemaVersion: 1, sessionId: "session-other", previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 0, lineNumber: 0 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" })));
     await expect(browserConsoleApi.previewCapture("session-1")).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
+  });
+
+  it("uses typed configuration query, validate, activate and rollback endpoints with CSRF", async () => {
+    const configuration = {
+      schemaVersion: 1,
+      runtime: {
+        sessionScanIntervalMs: 60_000, followDebounceMs: 1_000, workerPollIntervalMs: 1_000, extractionDelayMs: 300_000,
+        workerConcurrency: 2, scanBatchSize: 100, captureBatchSize: 100,
+        captureRetry: { maxAttempts: 5, baseDelayMs: 1_000, maximumDelayMs: 60_000, jitterRatio: 0.2 },
+        alerts: {
+          enabled: true, notify: false, minimumSeverity: "WARNING",
+          spoolDepth: { warning: 100, error: 1_000 }, spoolOldestAgeMs: { warning: 60_000, error: 600_000 },
+          cursorLagEvents: { warning: 1_000, error: 10_000 }, failedJobs: { warning: 1, error: 10 }, hookSilenceMs: { warning: 3_600_000, error: 21_600_000 },
+          quietHours: { enabled: false, startMinute: 1_320, endMinute: 480, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], utcOffsetMinutes: 480 },
+        },
+      },
+      future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+    };
+    const state = { view: { schemaVersion: 1, revision: 2, hash: "a".repeat(64), effective: configuration, sources: { "runtime.sessionScanIntervalMs": "GLOBAL" } }, drafts: [], history: [] };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      const path = String(input);
+      if (path.includes("/draft")) return envelope({ ok: false, diagnostics: [{ code: "CONSUMER_DISABLED", retryable: false }] });
+      if (path.includes("/activate")) return envelope({ ok: true, revision: 3, hash: "b".repeat(64), status: "EFFECTIVE" });
+      if (path.includes("/rollback")) return envelope({ ok: true, revision: 4, hash: "c".repeat(64), status: "ROLLED_BACK" });
+      return envelope(state);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await expect(browserConsoleApi.configuration?.("project-1")).resolves.toMatchObject({ view: { revision: 2 } });
+    await expect(browserConsoleApi.validateConfiguration?.({ baseRevision: 2, scope: "PROJECT", projectId: "project-1", draft: configuration })).resolves.toMatchObject({ ok: false });
+    await expect(browserConsoleApi.activateConfiguration?.({ expectedRevision: 2, draftRevision: 3, idempotencyKey: "config-activate-2-3" })).resolves.toMatchObject({ status: "EFFECTIVE" });
+    await expect(browserConsoleApi.rollbackConfiguration?.({ expectedRevision: 3, targetRevision: 2, idempotencyKey: "config-rollback-3-2" })).resolves.toMatchObject({ status: "ROLLED_BACK" });
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/v1/configuration?projectId=project-1",
+      "/api/v1/configuration/draft",
+      "/api/v1/configuration/activate",
+      "/api/v1/configuration/rollback",
+    ]);
+    expect(fetcher.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ method: "POST", headers: expect.objectContaining({ "x-zhiloop-csrf": "csrf-token-1234567890" }) }));
+  });
+
+  it("strictly parses bounded invalidation polling and rejects unsafe revisions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => envelope({
+      currentRevision: 2, oldestRetainedRevision: 1, requestedAfterRevision: 0, nextRevision: 2,
+      resyncRequired: false, hasMore: false, retryAfterMs: 1_000,
+      events: [{ schemaVersion: 1, eventId: "event-2", type: "job.updated", entityId: "job-1", revision: 2, occurredAt: timestamp }],
+    })));
+    await expect(browserConsoleApi.pollInvalidations?.(0)).resolves.toMatchObject({ nextRevision: 2 });
+    await expect(browserConsoleApi.pollInvalidations?.(-1)).rejects.toThrow(/afterRevision/u);
+  });
+
+  it("parses named SSE invalidations and closes the native source on abort", () => {
+    class FakeEventSource {
+      static instance: FakeEventSource | undefined;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readonly listeners = new Map<string, EventListener>();
+      readonly close = vi.fn();
+      constructor(readonly url: string, readonly options: EventSourceInit) { FakeEventSource.instance = this; }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+        if (typeof listener === "function") this.listeners.set(type, listener);
+      }
+      emit(type: string, value: unknown): void { this.listeners.get(type)?.({ data: JSON.stringify(value) } as unknown as Event); }
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const controller = new AbortController();
+    const onOpen = vi.fn();
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    browserConsoleApi.openInvalidations?.({ onOpen, onEvent, onError }, controller.signal);
+    FakeEventSource.instance?.onopen?.();
+    FakeEventSource.instance?.emit("job.updated", { schemaVersion: 1, eventId: "event-1", type: "job.updated", entityId: "job-1", revision: 1, occurredAt: timestamp });
+    expect(FakeEventSource.instance?.url).toBe("/api/v1/invalidations");
+    expect(FakeEventSource.instance?.options.withCredentials).toBe(true);
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ revision: 1, type: "job.updated" }));
+    controller.abort();
+    expect(FakeEventSource.instance?.close).toHaveBeenCalledOnce();
   });
 });

@@ -5,6 +5,10 @@ import {
   CONTROL_API_SCHEMA_VERSION,
   CONTROL_ERROR_CODES,
   INJECTION_STATUSES,
+  JOB_ATTEMPT_STATUSES,
+  JOB_CANCELLATION_STATUSES,
+  JOB_IDEMPOTENCY_STATUSES,
+  JOB_LEASE_STATUSES,
   JOB_STATUSES,
   MAX_CONTROL_MESSAGE_BYTES,
   MAX_PAGE_SIZE,
@@ -36,6 +40,10 @@ export const reasonCodeSchema = z.enum(REASON_CODES);
 export const capabilityStatusSchema = z.enum(CAPABILITY_STATUSES);
 export const stageStatusSchema = z.enum(STAGE_STATUSES);
 export const jobStatusSchema = z.enum(JOB_STATUSES);
+export const jobAttemptStatusSchema = z.enum(JOB_ATTEMPT_STATUSES);
+export const jobLeaseStatusSchema = z.enum(JOB_LEASE_STATUSES);
+export const jobCancellationStatusSchema = z.enum(JOB_CANCELLATION_STATUSES);
+export const jobIdempotencyStatusSchema = z.enum(JOB_IDEMPOTENCY_STATUSES);
 export const injectionStatusSchema = z.enum(INJECTION_STATUSES);
 
 const statusBaseShape = {
@@ -62,15 +70,114 @@ export const stageSnapshotSchema = z.strictObject({
   ...statusBaseShape,
 });
 
+export const jobFailureSchema = z.strictObject({
+  code: z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/u),
+  retryable: z.boolean(),
+  occurredAt: isoTimestampSchema,
+});
+
+export const jobLeaseSchema = z.strictObject({
+  attemptId: safeId(),
+  workerId: safeId(200),
+  fencingToken: z.number().int().positive(),
+  status: jobLeaseStatusSchema,
+  acquiredAt: isoTimestampSchema,
+  heartbeatAt: isoTimestampSchema,
+  expiresAt: isoTimestampSchema,
+});
+
+export const jobCheckpointSchema = z.strictObject({
+  revision: z.number().int().positive(),
+  payloadHash: sha256Schema,
+  progress: z.number().min(0).max(1),
+  updatedAt: isoTimestampSchema,
+});
+
+export const jobCancellationSchema = z.strictObject({
+  status: jobCancellationStatusSchema,
+  requestedAt: isoTimestampSchema.optional(),
+  resolvedAt: isoTimestampSchema.optional(),
+}).superRefine((value, context) => {
+  if (value.status === "NOT_REQUESTED" && (value.requestedAt !== undefined || value.resolvedAt !== undefined)) {
+    context.addIssue({ code: "custom", path: ["status"], message: "cancellation was not requested" });
+  }
+  if (value.status !== "NOT_REQUESTED" && value.requestedAt === undefined) {
+    context.addIssue({ code: "custom", path: ["requestedAt"], message: "requested cancellation requires a timestamp" });
+  }
+  if ((value.status === "ACKNOWLEDGED" || value.status === "REJECTED") && value.resolvedAt === undefined) {
+    context.addIssue({ code: "custom", path: ["resolvedAt"], message: "resolved cancellation requires a timestamp" });
+  }
+  if (value.status === "REQUESTED" && value.resolvedAt !== undefined) {
+    context.addIssue({ code: "custom", path: ["resolvedAt"], message: "pending cancellation cannot be resolved" });
+  }
+});
+
+export const jobIdempotencySchema = z.strictObject({
+  key: idempotencyKeySchema,
+  inputHash: sha256Schema,
+  status: jobIdempotencyStatusSchema,
+});
+
+export const jobAttemptSnapshotSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  jobId: jobIdSchema,
+  attemptId: safeId(),
+  attempt: z.number().int().positive().max(1_000),
+  status: jobAttemptStatusSchema,
+  workerId: safeId(200),
+  fencingToken: z.number().int().positive(),
+  startedAt: isoTimestampSchema,
+  heartbeatAt: isoTimestampSchema,
+  leaseExpiresAt: isoTimestampSchema,
+  finishedAt: isoTimestampSchema.optional(),
+  checkpointRevision: z.number().int().nonnegative(),
+  failure: jobFailureSchema.optional(),
+}).superRefine((value, context) => {
+  if (value.status === "RUNNING" && value.finishedAt !== undefined) {
+    context.addIssue({ code: "custom", path: ["finishedAt"], message: "running attempt cannot be finished" });
+  }
+  if (value.status !== "RUNNING" && value.finishedAt === undefined) {
+    context.addIssue({ code: "custom", path: ["finishedAt"], message: "terminal attempt requires finishedAt" });
+  }
+  const failed = value.status === "RETRYABLE_FAILED" || value.status === "TERMINAL_FAILED" || value.status === "LEASE_LOST";
+  if (failed !== (value.failure !== undefined)) {
+    context.addIssue({ code: "custom", path: ["failure"], message: "attempt failure metadata does not match status" });
+  }
+});
+
 export const jobSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
   jobId: jobIdSchema,
   jobType: z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/u),
+  revision: z.number().int().nonnegative().optional(),
   status: jobStatusSchema,
   attempt: z.number().int().min(0).max(1_000),
   maxAttempts: z.number().int().min(1).max(1_000),
   progress: z.number().min(0).max(1),
+  createdAt: isoTimestampSchema.optional(),
+  updatedAt: isoTimestampSchema.optional(),
+  startedAt: isoTimestampSchema.optional(),
+  completedAt: isoTimestampSchema.optional(),
+  nextAttemptAt: isoTimestampSchema.optional(),
+  lease: jobLeaseSchema.optional(),
+  checkpoint: jobCheckpointSchema.optional(),
+  cancellation: jobCancellationSchema.optional(),
+  lastFailure: jobFailureSchema.optional(),
+  idempotency: jobIdempotencySchema.optional(),
   ...statusBaseShape,
+}).superRefine((value, context) => {
+  if (value.attempt > value.maxAttempts) {
+    context.addIssue({ code: "custom", path: ["attempt"], message: "attempt exceeds maxAttempts" });
+  }
+  if (value.lease !== undefined && value.status !== "RUNNING") {
+    context.addIssue({ code: "custom", path: ["lease"], message: "only a running job can expose a lease" });
+  }
+  if (value.nextAttemptAt !== undefined && value.status !== "RETRY_WAIT") {
+    context.addIssue({ code: "custom", path: ["nextAttemptAt"], message: "only retry-wait can expose nextAttemptAt" });
+  }
+  if (value.completedAt !== undefined && value.status !== "SUCCEEDED" && value.status !== "FAILED" && value.status !== "CANCELLED") {
+    context.addIssue({ code: "custom", path: ["completedAt"], message: "only terminal jobs can expose completedAt" });
+  }
 });
 
 export const knowledgeVersionRefSchema = z.strictObject({
@@ -144,6 +251,20 @@ export const controlRequestSchema = z.discriminatedUnion("type", [
     page: pageRequestSchema.optional(),
   }),
   pagedRequest("jobs.list"),
+  z.strictObject({
+    ...baseRequestShape,
+    type: z.literal("job.cancel"),
+    jobId: jobIdSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    idempotencyKey: idempotencyKeySchema,
+  }),
+  z.strictObject({
+    ...baseRequestShape,
+    type: z.literal("job.retry"),
+    jobId: jobIdSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    idempotencyKey: idempotencyKeySchema,
+  }),
   noInputRequest("diagnostics.get"),
   z.strictObject({ ...baseRequestShape, type: z.literal("capture.preview"), sessionId: sessionIdSchema }),
   z.strictObject({
@@ -154,12 +275,22 @@ export const controlRequestSchema = z.discriminatedUnion("type", [
     transcriptIdentityHash: sha256Schema,
     idempotencyKey: idempotencyKeySchema,
   }),
-  noInputRequest("config.get"),
+  z.strictObject({
+    ...baseRequestShape,
+    type: z.literal("config.get"),
+    projectId: safeId(200).optional(),
+  }),
   z.strictObject({
     ...baseRequestShape,
     type: z.literal("config.validate"),
     baseRevision: z.number().int().nonnegative(),
+    scope: z.enum(["GLOBAL", "PROJECT"]),
+    projectId: safeId(200).optional(),
     draft: z.record(z.string().min(1).max(200), z.unknown()),
+  }).superRefine((value, context) => {
+    if ((value.scope === "PROJECT") !== (value.projectId !== undefined)) {
+      context.addIssue({ code: "custom", path: ["projectId"], message: "projectId must match configuration scope" });
+    }
   }),
   z.strictObject({
     ...baseRequestShape,
@@ -176,6 +307,17 @@ export const controlRequestSchema = z.discriminatedUnion("type", [
     idempotencyKey: idempotencyKeySchema,
   }),
 ]);
+
+export const jobCommandResultSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  action: z.enum(["CANCEL", "RETRY"]),
+  disposition: z.enum(["APPLIED", "NOOP", "REPLAYED"]),
+  job: jobSnapshotSchema,
+}).superRefine((value, context) => {
+  if (value.job.revision === undefined) {
+    context.addIssue({ code: "custom", path: ["job", "revision"], message: "job command result requires a durable revision" });
+  }
+});
 
 export const controlErrorSchema = z.strictObject({
   code: z.enum(CONTROL_ERROR_CODES),
@@ -201,7 +343,7 @@ export const controlResponseSchema = z.discriminatedUnion("ok", [
   }),
 ]);
 
-export const configurationFieldSourceSchema = z.enum(["DEFAULT", "FILE", "ENV", "PROJECT_OVERRIDE", "RUNTIME_OVERRIDE"]);
+export const configurationFieldSourceSchema = z.enum(["DEFAULT", "FILE", "ENV", "GLOBAL", "PROJECT_OVERRIDE", "RUNTIME_OVERRIDE"]);
 export const configurationRevisionSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
   revision: z.number().int().nonnegative(),
@@ -212,6 +354,121 @@ export const configurationRevisionSchema = z.strictObject({
   changedPaths: z.array(z.string().min(1).max(300)).max(500),
   requiresRestart: z.boolean(),
 });
+
+const configurationInteger = (minimum: number, maximum: number) => z.number().int().min(minimum).max(maximum);
+const configurationThresholdPairSchema = z.strictObject({
+  warning: z.number().int().positive(),
+  error: z.number().int().positive(),
+}).refine((value) => value.warning <= value.error, { path: ["warning"], message: "warning must not exceed error" });
+const captureRetryConfigurationSchema = z.strictObject({
+  maxAttempts: configurationInteger(1, 20),
+  baseDelayMs: configurationInteger(100, 300_000),
+  maximumDelayMs: configurationInteger(100, 3_600_000),
+  jitterRatio: z.number().min(0).max(1),
+}).refine((value) => value.baseDelayMs <= value.maximumDelayMs, {
+  path: ["baseDelayMs"], message: "baseDelayMs must not exceed maximumDelayMs",
+});
+
+export const consoleConfigurationSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  runtime: z.strictObject({
+    sessionScanIntervalMs: configurationInteger(5_000, 86_400_000),
+    followDebounceMs: configurationInteger(100, 60_000),
+    workerPollIntervalMs: configurationInteger(100, 60_000),
+    extractionDelayMs: configurationInteger(1_000, 86_400_000),
+    workerConcurrency: configurationInteger(1, 32),
+    scanBatchSize: configurationInteger(1, 1_000),
+    captureBatchSize: configurationInteger(1, 1_000),
+    captureRetry: captureRetryConfigurationSchema,
+    alerts: z.strictObject({
+      enabled: z.boolean(),
+      notify: z.boolean(),
+      minimumSeverity: z.enum(["WARNING", "ERROR"]),
+      spoolDepth: configurationThresholdPairSchema,
+      spoolOldestAgeMs: configurationThresholdPairSchema,
+      cursorLagEvents: configurationThresholdPairSchema,
+      failedJobs: configurationThresholdPairSchema,
+      hookSilenceMs: configurationThresholdPairSchema,
+      quietHours: z.strictObject({
+        enabled: z.boolean(),
+        startMinute: configurationInteger(0, 1_439),
+        endMinute: configurationInteger(0, 1_439),
+        daysOfWeek: z.array(configurationInteger(0, 6)).min(1).max(7).refine((days) => new Set(days).size === days.length).readonly(),
+        utcOffsetMinutes: configurationInteger(-840, 840),
+      }),
+    }),
+  }),
+  future: z.strictObject({
+    injectionMaxTokens: configurationInteger(1, 1_000_000),
+    compilerBatchSize: configurationInteger(1, 1_000),
+    codexQueryTimeoutMs: configurationInteger(1_000, 300_000),
+    codexQueryConcurrency: configurationInteger(1, 32),
+  }),
+});
+
+export const configurationDiagnosticSchema = z.strictObject({
+  code: z.enum([
+    "INVALID_CONFIGURATION", "STALE_REVISION", "CONFLICT", "CONSUMER_DISABLED", "COMPONENT_PREPARE_FAILED",
+    "COMPONENT_APPLY_FAILED", "COMPONENT_ROLLBACK_FAILED", "NOT_FOUND",
+  ]),
+  path: z.string().min(1).max(300).optional(),
+  retryable: z.boolean(),
+});
+
+export const configurationDraftSchema = z.strictObject({
+  draftRevision: z.number().int().positive(),
+  baseRevision: z.number().int().nonnegative(),
+  scope: z.enum(["GLOBAL", "PROJECT"]),
+  projectId: safeId(200).optional(),
+  configuration: consoleConfigurationSchema,
+  changedPaths: z.array(z.string().min(1).max(300)).max(500),
+  requiresRestart: z.boolean(),
+  activatable: z.boolean(),
+  diagnostics: z.array(configurationDiagnosticSchema).max(100),
+});
+
+export const configurationViewSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  revision: z.number().int().nonnegative(),
+  hash: configurationHashSchema,
+  projectId: safeId(200).optional(),
+  effective: consoleConfigurationSchema,
+  sources: z.record(z.string().min(1).max(300), configurationFieldSourceSchema),
+});
+
+export const configurationHistoryEntrySchema = z.strictObject({
+  revision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
+  status: z.enum(["EFFECTIVE", "REJECTED", "ROLLED_BACK"]),
+  hash: configurationHashSchema,
+  scope: z.enum(["GLOBAL", "PROJECT"]),
+  projectId: safeId(200).optional(),
+  changedPaths: z.array(z.string().min(1).max(300)).max(500),
+  requiresRestart: z.boolean(),
+  createdAt: isoTimestampSchema,
+  reasonCode: z.string().min(1).max(200).regex(/^[A-Z][A-Z0-9_]*$/u),
+});
+
+export const configurationStateSchema = z.strictObject({
+  view: configurationViewSchema,
+  drafts: z.array(configurationDraftSchema).max(100),
+  history: z.array(configurationHistoryEntrySchema).max(100),
+});
+
+export const configurationValidationResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), draft: configurationDraftSchema }),
+  z.strictObject({ ok: z.literal(false), diagnostics: z.array(configurationDiagnosticSchema).max(100) }),
+]);
+
+export const configurationMutationResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    revision: z.number().int().positive(),
+    hash: configurationHashSchema,
+    status: z.enum(["EFFECTIVE", "ROLLED_BACK"]),
+  }),
+  z.strictObject({ ok: z.literal(false), diagnostic: configurationDiagnosticSchema }),
+]);
 
 export const sseInvalidationEventSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
@@ -294,6 +551,35 @@ export const overviewSchema = z.strictObject({
   alertCount: z.number().int().nonnegative(),
 });
 
+export const alertEvaluationSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  evaluationId: sha256Schema,
+  observedAt: isoTimestampSchema,
+  health: z.enum(["HEALTHY", "DEGRADED", "FAILED"]),
+  quietHoursActive: z.boolean(),
+  activeAlerts: z.array(z.strictObject({
+    alertId: safeId(200),
+    dedupeKey: safeId(500),
+    entityType: z.enum(["SPOOL", "CURSOR", "JOBS", "HOOK"]),
+    entityId: safeId(500),
+    severity: z.enum(["WARNING", "ERROR"]),
+    reasonCodes: z.array(z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/u)).min(1).max(10),
+    observedAt: isoTimestampSchema,
+    observedValue: z.number().nonnegative(),
+    threshold: z.number().nonnegative(),
+    notificationPending: z.boolean(),
+    notificationDelivered: z.boolean(),
+  })).max(1_000),
+  transitions: z.array(z.strictObject({
+    dedupeKey: safeId(500),
+    kind: z.enum(["OPENED", "UNCHANGED", "UPDATED", "ESCALATED", "DEESCALATED", "RESOLVED"]),
+    previousSeverity: z.enum(["WARNING", "ERROR"]).optional(),
+    currentSeverity: z.enum(["WARNING", "ERROR"]).optional(),
+    reasonCodes: z.array(z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/u)).max(10),
+    notificationDecision: z.enum(["DELIVER", "NOT_REQUIRED", "SUPPRESSED_DISABLED", "SUPPRESSED_QUIET_HOURS", "SUPPRESSED_MINIMUM_SEVERITY"]),
+  })).max(2_000),
+});
+
 export const diagnosticsSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
   observedAt: isoTimestampSchema,
@@ -317,6 +603,7 @@ export const diagnosticsSchema = z.strictObject({
     databaseBytes: z.number().int().nonnegative(),
     availableBytes: z.number().int().nonnegative().optional(),
   }),
+  alerts: alertEvaluationSchema.optional(),
 });
 
 export const capturePreviewSchema = z.strictObject({
@@ -358,15 +645,29 @@ export type ControlResponse = z.infer<typeof controlResponseSchema>;
 export type CapabilitySnapshot = z.infer<typeof capabilitySnapshotSchema>;
 export type StageSnapshot = z.infer<typeof stageSnapshotSchema>;
 export type JobSnapshot = z.infer<typeof jobSnapshotSchema>;
+export type JobCommandResult = z.infer<typeof jobCommandResultSchema>;
+export type JobAttemptSnapshot = z.infer<typeof jobAttemptSnapshotSchema>;
+export type JobLease = z.infer<typeof jobLeaseSchema>;
+export type JobCheckpoint = z.infer<typeof jobCheckpointSchema>;
+export type JobFailure = z.infer<typeof jobFailureSchema>;
+export type JobCancellation = z.infer<typeof jobCancellationSchema>;
+export type JobIdempotency = z.infer<typeof jobIdempotencySchema>;
 export type InjectionAttempt = z.infer<typeof injectionAttemptSchema>;
 export type ProvenanceLink = z.infer<typeof provenanceLinkSchema>;
 export type ConfigurationRevision = z.infer<typeof configurationRevisionSchema>;
+export type ConsoleConfiguration = z.infer<typeof consoleConfigurationSchema>;
+export type ConfigurationDraft = z.infer<typeof configurationDraftSchema>;
+export type ConfigurationView = z.infer<typeof configurationViewSchema>;
+export type ConfigurationState = z.infer<typeof configurationStateSchema>;
+export type ConfigurationValidationResult = z.infer<typeof configurationValidationResultSchema>;
+export type ConfigurationMutationResult = z.infer<typeof configurationMutationResultSchema>;
 export type SseInvalidationEvent = z.infer<typeof sseInvalidationEventSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type EventMetadata = z.infer<typeof eventMetadataSchema>;
 export type Overview = z.infer<typeof overviewSchema>;
 export type Diagnostics = z.infer<typeof diagnosticsSchema>;
+export type AlertEvaluation = z.infer<typeof alertEvaluationSchema>;
 export type CapturePreview = z.infer<typeof capturePreviewSchema>;
 export type CaptureCommitResult = z.infer<typeof captureCommitResultSchema>;
 

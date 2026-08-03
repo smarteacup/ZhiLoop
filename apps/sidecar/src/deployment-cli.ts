@@ -69,6 +69,28 @@ export async function runDeploymentCli(args: readonly string[], stdout: Writable
   const apply = args.includes("--apply");
   const home = selectedHome(args);
   const service = new MacOsLaunchctlController();
+  if (command === "acceptance") {
+    const sessionId = option(args, "--session");
+    const taskCreatedAt = option(args, "--created-at");
+    if (sessionId === undefined || taskCreatedAt === undefined) {
+      stderr.write("usage: zhiloop acceptance --session <new-session-id> --created-at <ISO-8601> [--home PATH] [--json]\n");
+      return 64;
+    }
+    try {
+      const paths = resolveDeploymentPaths(home, "0.0.0");
+      const result = await requestSidecar(paths.socketPath, {
+        type: "acceptance.verify",
+        sessionId,
+        taskCreatedAt,
+      }, 10_000);
+      output(result, stdout, json);
+      return (result as { result?: { status?: string } }).result?.status === "VERIFIED" ? 0 : 1;
+    } catch (error) {
+      const errorCode = captureErrorCode(error);
+      output({ schemaVersion: 1, status: "FAILED", errorCode }, stderr, true);
+      return captureExitCode(errorCode);
+    }
+  }
   if (command === "capture") {
     const sessionId = option(args, "--session");
     if (sessionId === undefined) {
@@ -141,6 +163,6 @@ export async function runDeploymentCli(args: readonly string[], stdout: Writable
     output(result, stdout, json);
     return 0;
   }
-  stderr.write("usage: zhiloop <capture|install|upgrade|doctor|uninstall> [options]\n");
+  stderr.write("usage: zhiloop <acceptance|capture|install|upgrade|doctor|uninstall> [options]\n");
   return 64;
 }

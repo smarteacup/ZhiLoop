@@ -47,28 +47,28 @@
 
 ## 5. P1 Durable Jobs and Automatic Ingestion — Parallel Wave 3
 
-- [ ] 5.1 [Job Owner] Define durable job, attempt, lease, checkpoint, retryable failure, cancellation and idempotency state machines in the frozen Control API
-- [ ] 5.2 [Job Owner] Implement job persistence, lease fencing, heartbeat, bounded retry, exponential backoff, jitter and restart recovery in a dedicated runtime package
-- [ ] 5.3 [Job Owner] Test duplicate claim, expired lease, crash after side effect, checkpoint resume, non-retryable errors and cancellation boundaries
-- [ ] 5.4 [Ingestion Lane] Implement bounded session scan scheduler, incremental discovery, follow debounce and session completeness checks without a zero-delay loop
-- [ ] 5.5 [Ingestion Lane] Compose existing backfill with durable checkpoints, source rotation/truncation diagnostics and idempotent recovery
-- [ ] 5.6 [Ingestion Lane] Add parent/child session relation metadata where observable without blocking primary-session delivery on complete sub-Agent aggregation
+- [x] 5.1 [Job Owner] Define durable job, attempt, lease, checkpoint, retryable failure, cancellation and idempotency state machines in the frozen Control API
+- [x] 5.2 [Job Owner] Implement job persistence, lease fencing, heartbeat, bounded retry, exponential backoff, jitter and restart recovery in a dedicated runtime package
+- [x] 5.3 [Job Owner] Test duplicate claim, expired lease, crash after side effect, checkpoint resume, non-retryable errors and cancellation boundaries
+- [x] 5.4 [Ingestion Lane] Implement bounded session scan scheduler, incremental discovery, follow debounce and session completeness checks without a zero-delay loop
+- [x] 5.5 [Ingestion Lane] Compose existing backfill with durable checkpoints, source rotation/truncation diagnostics and idempotent recovery
+- [x] 5.6 [Ingestion Lane] Add parent/child session relation metadata where observable without blocking primary-session delivery on complete sub-Agent aggregation
 - [ ] 5.7 [Ingestion Lane] Validate a newly created real Codex task through Hook → spool → Ledger → catalog/cursor and record `NOT_VERIFIED` until this acceptance succeeds
-- [ ] 5.8 [Web Feature Lane] Add job progress, attempt, retry, safe cancellation, backlog, last-success and ingestion completeness views
-- [ ] 5.9 [Integration Owner] Serially compose Job and Ingestion lanes into Sidecar and verify Hook deadlines during scan, follow, backfill and retry load
+- [x] 5.8 [Web Feature Lane] Add job progress, attempt, retry, safe cancellation, backlog, last-success and ingestion completeness views
+- [x] 5.9 [Integration Owner] Serially compose Job and Ingestion lanes into Sidecar and verify Hook deadlines during scan, follow, backfill and retry load
 
 ## 6. P1 Configuration, Alerts and Live Updates — Parallel Wave 4
 
-- [ ] 6.1 [Configuration Owner] Extend configuration schemas for active consumers: scan interval, worker poll, capture retry/backoff, batch limits and in-console alert thresholds
-- [ ] 6.2 [Configuration Owner] Add bounded draft fields for future injection, compiler and Codex query consumers, and reject their activation while capabilities are disabled
-- [ ] 6.3 [Configuration Owner] Create `packages/configuration-service` with effective source resolution, GLOBAL/PROJECT override, draft, validate, diff and expected revision
-- [ ] 6.4 [Configuration Owner] Implement prepare/apply activation, immutable history, last-known-good rollback and secret-safe operator audit as one serialized transaction boundary
-- [ ] 6.5 [Configuration Owner] Test stale revision, unknown field, consumer disabled, component partial failure, restart-required field, rollback and secret redaction
-- [ ] 6.6 [Observability Lane] Create `packages/observability` alert evaluation for spool lag, cursor lag, failed jobs, Hook silence and quiet hours without hiding health state
-- [ ] 6.7 [Gateway Lane] Implement bounded SSE invalidation, monotonic revision, Last-Event-ID resume, resync and polling fallback
-- [ ] 6.8 [Web Feature Lane] Implement effective/draft/history configuration, field source, validation diagnostics, impact diff, activation and rollback interactions
-- [ ] 6.9 [Web Feature Lane] Implement in-console alerts, live job/session invalidation and safe degraded-state notifications
-- [ ] 6.10 [Integration Owner] Serially compose configuration activation into Sidecar, then run P1 restart recovery, no-call-storm, SSE bound and last-known-good Gates
+- [x] 6.1 [Configuration Owner] Extend configuration schemas for active consumers: scan interval, worker poll, capture retry/backoff, batch limits and in-console alert thresholds
+- [x] 6.2 [Configuration Owner] Add bounded draft fields for future injection, compiler and Codex query consumers, and reject their activation while capabilities are disabled
+- [x] 6.3 [Configuration Owner] Create `packages/configuration-service` with effective source resolution, GLOBAL/PROJECT override, draft, validate, diff and expected revision
+- [x] 6.4 [Configuration Owner] Implement prepare/apply activation, immutable history, last-known-good rollback and secret-safe operator audit as one serialized transaction boundary
+- [x] 6.5 [Configuration Owner] Test stale revision, unknown field, consumer disabled, component partial failure, restart-required field, rollback and secret redaction
+- [x] 6.6 [Observability Lane] Create `packages/observability` alert evaluation for spool lag, cursor lag, failed jobs, Hook silence and quiet hours without hiding health state
+- [x] 6.7 [Gateway Lane] Implement bounded SSE invalidation, monotonic revision, Last-Event-ID resume, resync and polling fallback
+- [x] 6.8 [Web Feature Lane] Implement effective/draft/history configuration, field source, validation diagnostics, impact diff, activation and rollback interactions
+- [x] 6.9 [Web Feature Lane] Implement in-console alerts, live job/session invalidation and safe degraded-state notifications
+- [x] 6.10 [Integration Owner] Serially compose configuration activation into Sidecar, then run P1 restart recovery, no-call-storm, SSE bound and last-known-good Gates
 - [ ] 6.11 [Integration Owner] Complete P1 Contract, Module, Integration and Release Reviews before enabling automatic ingestion by default
 
 ## 7. P2 Session Snapshot and Production Knowledge Worker — Parallel Wave 5

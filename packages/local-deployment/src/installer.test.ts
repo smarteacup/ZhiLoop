@@ -42,8 +42,12 @@ async function artifact(root: string, version = "0.1.0"): Promise<string> {
     ["apps/console-gateway/dist/main.js", "#!/usr/bin/env node\n// gateway executable\n"],
     ["apps/console-web/dist/index.html", "<!doctype html><title>ZhiLoop</title>\n"],
     ["node_modules/@zhiloop/console-gateway/package.json", "{\"name\":\"@zhiloop/console-gateway\"}\n"],
+    ["node_modules/@zhiloop/automatic-ingestion/package.json", "{\"name\":\"@zhiloop/automatic-ingestion\"}\n"],
+    ["node_modules/@zhiloop/configuration-service/package.json", "{\"name\":\"@zhiloop/configuration-service\"}\n"],
     ["node_modules/@zhiloop/control-api/package.json", "{\"name\":\"@zhiloop/control-api\"}\n"],
+    ["node_modules/@zhiloop/job-runtime/package.json", "{\"name\":\"@zhiloop/job-runtime\"}\n"],
     ["node_modules/@zhiloop/local-deployment/package.json", "{\"name\":\"@zhiloop/local-deployment\"}\n"],
+    ["node_modules/@zhiloop/observability/package.json", "{\"name\":\"@zhiloop/observability\"}\n"],
     ["node_modules/zod/package.json", "{\"name\":\"zod\"}\n"],
   ]);
   for (const [path, content] of files) {
@@ -129,8 +133,12 @@ describe("local installer", () => {
       "apps/console-gateway/dist/main.js",
       "apps/console-web/dist/index.html",
       "node_modules/@zhiloop/console-gateway/package.json",
+      "node_modules/@zhiloop/automatic-ingestion/package.json",
+      "node_modules/@zhiloop/configuration-service/package.json",
       "node_modules/@zhiloop/control-api/package.json",
+      "node_modules/@zhiloop/job-runtime/package.json",
       "node_modules/@zhiloop/local-deployment/package.json",
+      "node_modules/@zhiloop/observability/package.json",
       "node_modules/zod/package.json",
     ]);
   });

@@ -1,23 +1,35 @@
 import {
+  CONFIGURATION_HTTP_PATHS,
+  SSE_EVENT_TYPES,
   type CONTROL_ERROR_CODES,
   capabilityPageSchema,
   captureCommitResultSchema,
   capturePreviewSchema,
+  configurationMutationResultSchema,
+  configurationStateSchema,
+  configurationValidationResultSchema,
   controlResponseSchema,
   diagnosticsSchema,
   eventMetadataPageSchema,
   jobPageSchema,
+  jobCommandResultSchema,
   overviewSchema,
+  sseInvalidationEventSchema,
   sessionDetailSchema,
   sessionPageSchema,
   type Diagnostics,
   type Overview,
   type CaptureCommitResult,
   type CapturePreview,
+  type ConfigurationMutationResult,
+  type ConfigurationState,
+  type ConfigurationValidationResult,
+  type SseInvalidationEvent,
+  type JobCommandResult,
   type SessionDetail,
   type SessionSummary,
 } from "@zhiloop/control-api";
-import type { z } from "zod";
+import { z } from "zod";
 
 export interface ConsoleApi {
   overview(signal?: AbortSignal): Promise<Overview>;
@@ -26,9 +38,17 @@ export interface ConsoleApi {
   session(sessionId: string, signal?: AbortSignal): Promise<SessionDetail>;
   events(sessionId: string, cursor?: string, signal?: AbortSignal): Promise<z.infer<typeof eventMetadataPageSchema>>;
   jobs(signal?: AbortSignal): Promise<z.infer<typeof jobPageSchema>>;
+  cancelJob?(command: JobOperatorCommand, signal?: AbortSignal): Promise<JobCommandResult>;
+  retryJob?(command: JobOperatorCommand, signal?: AbortSignal): Promise<JobCommandResult>;
   diagnostics(signal?: AbortSignal): Promise<Diagnostics>;
   previewCapture(sessionId: string, signal?: AbortSignal): Promise<CapturePreview>;
   commitCapture(command: CaptureCommitCommand, signal?: AbortSignal): Promise<CaptureCommitResult>;
+  configuration?(projectId?: string, signal?: AbortSignal): Promise<ConfigurationState>;
+  validateConfiguration?(command: ConfigurationDraftCommand, signal?: AbortSignal): Promise<ConfigurationValidationResult>;
+  activateConfiguration?(command: ConfigurationActivateCommand, signal?: AbortSignal): Promise<ConfigurationMutationResult>;
+  rollbackConfiguration?(command: ConfigurationRollbackCommand, signal?: AbortSignal): Promise<ConfigurationMutationResult>;
+  openInvalidations?(handlers: InvalidationHandlers, signal?: AbortSignal): InvalidationSubscription;
+  pollInvalidations?(afterRevision: number, signal?: AbortSignal): Promise<InvalidationPollResult>;
 }
 
 export interface CaptureCommitCommand {
@@ -37,6 +57,63 @@ export interface CaptureCommitCommand {
   readonly transcriptIdentityHash: string;
   readonly idempotencyKey: string;
 }
+
+export interface JobOperatorCommand {
+  readonly jobId: string;
+  readonly expectedRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface ConfigurationDraftCommand {
+  readonly baseRevision: number;
+  readonly scope: "GLOBAL" | "PROJECT";
+  readonly projectId?: string;
+  readonly draft: Readonly<Record<string, unknown>>;
+}
+
+export interface ConfigurationActivateCommand {
+  readonly expectedRevision: number;
+  readonly draftRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface ConfigurationRollbackCommand {
+  readonly expectedRevision: number;
+  readonly targetRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface InvalidationPollResult {
+  readonly currentRevision: number;
+  readonly oldestRetainedRevision: number;
+  readonly requestedAfterRevision: number;
+  readonly nextRevision: number;
+  readonly resyncRequired: boolean;
+  readonly hasMore: boolean;
+  readonly events: readonly SseInvalidationEvent[];
+  readonly retryAfterMs: number;
+}
+
+export interface InvalidationHandlers {
+  readonly onOpen: () => void;
+  readonly onEvent: (event: SseInvalidationEvent) => void;
+  readonly onError: (error: Error) => void;
+}
+
+export interface InvalidationSubscription {
+  close(): void;
+}
+
+const invalidationPollResultSchema = z.strictObject({
+  currentRevision: z.number().int().nonnegative(),
+  oldestRetainedRevision: z.number().int().nonnegative(),
+  requestedAfterRevision: z.number().int().nonnegative(),
+  nextRevision: z.number().int().nonnegative(),
+  resyncRequired: z.boolean(),
+  hasMore: z.boolean(),
+  events: z.array(sseInvalidationEventSchema).max(200).readonly(),
+  retryAfterMs: z.number().int().min(250).max(60_000),
+});
 
 type ControlErrorCode = (typeof CONTROL_ERROR_CODES)[number];
 
@@ -93,6 +170,36 @@ async function request<T>(
   }
 }
 
+function openInvalidations(handlers: InvalidationHandlers, signal?: AbortSignal): InvalidationSubscription {
+  if (typeof EventSource === "undefined") {
+    queueMicrotask(() => handlers.onError(new Error("EventSource is unavailable")));
+    return Object.freeze({ close: () => undefined });
+  }
+  const source = new EventSource("/api/v1/invalidations", { withCredentials: true });
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    source.close();
+  };
+  source.onopen = () => { if (!closed) handlers.onOpen(); };
+  source.onerror = () => { if (!closed) handlers.onError(new Error("SSE invalidation stream is unavailable")); };
+  for (const eventType of SSE_EVENT_TYPES) {
+    source.addEventListener(eventType, (event) => {
+      if (closed) return;
+      try {
+        const message = event as MessageEvent<string>;
+        handlers.onEvent(sseInvalidationEventSchema.parse(JSON.parse(message.data) as unknown));
+      } catch {
+        handlers.onError(new Error("SSE invalidation event is invalid"));
+      }
+    });
+  }
+  if (signal?.aborted === true) close();
+  else signal?.addEventListener("abort", close, { once: true });
+  return Object.freeze({ close });
+}
+
 export const browserConsoleApi: ConsoleApi = Object.freeze({
   overview: async (signal?: AbortSignal) => await request("/overview", overviewSchema, { signal }),
   capabilities: async (signal?: AbortSignal) => await request("/capabilities", capabilityPageSchema, { signal }),
@@ -104,6 +211,16 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
     return await request(`/events?${query.toString()}`, eventMetadataPageSchema, { signal });
   },
   jobs: async (signal?: AbortSignal) => await request("/jobs", jobPageSchema, { signal }),
+  cancelJob: async (command: JobOperatorCommand, signal?: AbortSignal) => await request(
+    `/jobs/${encodeURIComponent(command.jobId)}/cancel`,
+    jobCommandResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  retryJob: async (command: JobOperatorCommand, signal?: AbortSignal) => await request(
+    `/jobs/${encodeURIComponent(command.jobId)}/retry`,
+    jobCommandResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
   diagnostics: async (signal?: AbortSignal) => await request("/diagnostics", diagnosticsSchema, { signal }),
   previewCapture: async (sessionId: string, signal?: AbortSignal) => {
     const result = await request(
@@ -135,6 +252,39 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
       throw new ConsoleApiError("INTERNAL_ERROR", "采集结果与已确认预览不匹配", false);
     }
     return result;
+  },
+  configuration: async (projectId?: string, signal?: AbortSignal) => {
+    const query = projectId === undefined ? "" : `?${new URLSearchParams({ projectId }).toString()}`;
+    return await request(`/configuration${query}`, configurationStateSchema, { signal });
+  },
+  validateConfiguration: async (command: ConfigurationDraftCommand, signal?: AbortSignal) => await request(
+    CONFIGURATION_HTTP_PATHS.draft,
+    configurationValidationResultSchema,
+    {
+      signal,
+      body: {
+        baseRevision: command.baseRevision,
+        scope: command.scope,
+        ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
+        draft: command.draft,
+      },
+    },
+  ),
+  activateConfiguration: async (command: ConfigurationActivateCommand, signal?: AbortSignal) => await request(
+    CONFIGURATION_HTTP_PATHS.activate,
+    configurationMutationResultSchema,
+    { signal, body: { ...command } },
+  ),
+  rollbackConfiguration: async (command: ConfigurationRollbackCommand, signal?: AbortSignal) => await request(
+    CONFIGURATION_HTTP_PATHS.rollback,
+    configurationMutationResultSchema,
+    { signal, body: { ...command } },
+  ),
+  openInvalidations,
+  pollInvalidations: async (afterRevision: number, signal?: AbortSignal) => {
+    if (!Number.isSafeInteger(afterRevision) || afterRevision < 0) throw new Error("afterRevision is invalid");
+    const query = new URLSearchParams({ afterRevision: String(afterRevision), limit: "100" });
+    return await request(`/invalidations/poll?${query.toString()}`, invalidationPollResultSchema, { signal });
   },
 });
 

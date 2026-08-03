@@ -3,6 +3,14 @@ export const MAX_CONTROL_MESSAGE_BYTES = 1_048_576;
 export const MAX_PAGE_SIZE = 100;
 export const MAX_CURSOR_BYTES = 2_048;
 
+export const CONSOLE_HTTP_API_PREFIX = "/api/v1" as const;
+export const CONFIGURATION_HTTP_PATHS = Object.freeze({
+  view: "/configuration",
+  draft: "/configuration/draft",
+  activate: "/configuration/activate",
+  rollback: "/configuration/rollback",
+} as const);
+
 export const CAPABILITY_STATUSES = [
   "NOT_IMPLEMENTED",
   "DISABLED",
@@ -33,6 +41,26 @@ export const JOB_STATUSES = [
   "FAILED",
   "CANCELLED",
 ] as const;
+
+export const JOB_ATTEMPT_STATUSES = [
+  "RUNNING",
+  "SUCCEEDED",
+  "RETRYABLE_FAILED",
+  "TERMINAL_FAILED",
+  "CANCELLED",
+  "LEASE_LOST",
+] as const;
+
+export const JOB_LEASE_STATUSES = ["ACTIVE", "EXPIRED", "RELEASED"] as const;
+
+export const JOB_CANCELLATION_STATUSES = [
+  "NOT_REQUESTED",
+  "REQUESTED",
+  "ACKNOWLEDGED",
+  "REJECTED",
+] as const;
+
+export const JOB_IDEMPOTENCY_STATUSES = ["RESERVED", "COMPLETED"] as const;
 
 export const INJECTION_STATUSES = [
   "PENDING",
@@ -76,6 +104,14 @@ export const REASON_CODES = [
   "JOB_SUCCEEDED",
   "JOB_FAILED",
   "JOB_CANCELLED",
+  "JOB_LEASE_EXPIRED",
+  "JOB_LEASE_LOST",
+  "JOB_RESTART_RECOVERED",
+  "JOB_MAX_ATTEMPTS_EXHAUSTED",
+  "JOB_NON_RETRYABLE_FAILURE",
+  "JOB_CANCELLATION_REQUESTED",
+  "JOB_CANCELLATION_REJECTED",
+  "JOB_IDEMPOTENCY_CONFLICT",
   "SHADOW_CONTEXT_ONLY",
   "CONTEXT_INJECTED",
   "NO_ELIGIBLE_CONTEXT",
@@ -112,6 +148,8 @@ export const CONTROL_REQUEST_TYPES = [
   "session.get",
   "session.events.list",
   "jobs.list",
+  "job.cancel",
+  "job.retry",
   "diagnostics.get",
   "capture.preview",
   "capture.commit",
@@ -120,6 +158,11 @@ export const CONTROL_REQUEST_TYPES = [
   "config.activate",
   "config.rollback",
 ] as const;
+
+export const JOB_HTTP_PATH_SUFFIXES = Object.freeze({
+  cancel: "cancel",
+  retry: "retry",
+} as const);
 
 export const SSE_EVENT_TYPES = [
   "capability.updated",

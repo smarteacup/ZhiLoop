@@ -1,6 +1,6 @@
 {
   "name": "@zhiloop/sidecar",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -18,13 +18,17 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@zhiloop/automatic-ingestion": "0.0.0",
     "@zhiloop/codex-session-capture": "0.0.0",
     "@zhiloop/control-api": "0.0.0",
+    "@zhiloop/configuration-service": "0.0.0",
     "@zhiloop/conversation-ledger": "0.0.0",
     "@zhiloop/daemon": "0.0.0",
     "@zhiloop/hook-runtime": "0.0.0",
+    "@zhiloop/job-runtime": "0.0.0",
     "@zhiloop/local-deployment": "0.1.0",
     "@zhiloop/operational-read-model": "0.0.0",
+    "@zhiloop/observability": "0.0.0",
     "@zhiloop/plugin-runtime": "0.0.0",
     "@zhiloop/session-catalog": "0.0.0"
   }

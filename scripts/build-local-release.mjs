@@ -6,18 +6,23 @@ import process from "node:process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.1.8";
+const VERSION = "0.2.0";
 const WORKSPACES = [
   ["apps/console-gateway", "console-gateway"],
+  ["packages/automatic-ingestion", "automatic-ingestion"],
+  ["packages/codex-backfill", "codex-backfill"],
   ["packages/codex-session-capture", "codex-session-capture"],
+  ["packages/configuration-service", "configuration-service"],
   ["packages/control-api", "control-api"],
   ["packages/daemon-runtime", "daemon"],
   ["packages/conversation-ledger", "conversation-ledger"],
   ["packages/domain", "domain"],
   ["packages/hook-runtime", "hook-runtime"],
   ["packages/ingestion-codex", "ingestion-codex"],
+  ["packages/job-runtime", "job-runtime"],
   ["packages/local-deployment", "local-deployment"],
   ["packages/operational-read-model", "operational-read-model"],
+  ["packages/observability", "observability"],
   ["packages/plugin-runtime", "plugin-runtime"],
   ["packages/schemas", "schemas"],
   ["packages/session-catalog", "session-catalog"],

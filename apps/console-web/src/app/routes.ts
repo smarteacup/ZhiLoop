@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-export type RouteName = "overview" | "sessions" | "knowledge" | "retrieval" | "closure" | "operations" | "configuration" | "deployment";
+export type RouteName = "overview" | "sessions" | "knowledge" | "retrieval" | "closure" | "operations" | "jobs" | "diagnostics" | "configuration" | "deployment";
 export interface ConsoleRoute { readonly name: RouteName; readonly sessionId?: string }
 
 const routeNames = new Set<RouteName>([
-  "overview", "sessions", "knowledge", "retrieval", "closure", "operations", "configuration", "deployment",
+  "overview", "sessions", "knowledge", "retrieval", "closure", "operations", "jobs", "diagnostics", "configuration", "deployment",
 ]);
 
 export function parseRoute(hash: string): ConsoleRoute {

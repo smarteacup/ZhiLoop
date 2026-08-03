@@ -2,8 +2,9 @@ import type { ConsoleApi } from "../api/client.js";
 import { browserConsoleApi } from "../api/client.js";
 import { DisabledState } from "../components/AsyncState.js";
 import { DeploymentPage } from "../features/deployment/DeploymentPage.js";
-import { OperationsPage } from "../features/operations/OperationsPage.js";
 import { OverviewPage } from "../features/overview/OverviewPage.js";
+import { ConfigurationPage } from "../features/p1/configuration/ConfigurationPage.js";
+import { P1OperationsPage } from "../features/p1/jobs/P1OperationsPage.js";
 import { SessionDetailPage } from "../features/sessions/SessionDetailPage.js";
 import { SessionsPage } from "../features/sessions/SessionsPage.js";
 import { useRoute, type RouteName } from "./routes.js";
@@ -14,7 +15,8 @@ const navigation: readonly { readonly name: RouteName; readonly label: string }[
   { name: "knowledge", label: "知识库" },
   { name: "retrieval", label: "召回与注入" },
   { name: "closure", label: "闭环验证" },
-  { name: "operations", label: "任务与诊断" },
+  { name: "jobs", label: "后台任务" },
+  { name: "diagnostics", label: "诊断与告警" },
   { name: "configuration", label: "配置中心" },
   { name: "deployment", label: "部署与能力" },
 ];
@@ -23,12 +25,15 @@ function CurrentPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
   const route = useRoute();
   if (route.name === "overview") return <OverviewPage api={api} />;
   if (route.name === "sessions") return route.sessionId === undefined ? <SessionsPage api={api} /> : <SessionDetailPage api={api} sessionId={route.sessionId} />;
-  if (route.name === "operations") return <OperationsPage api={api} />;
+  if (route.name === "operations") return <P1OperationsPage api={api} />;
+  if (route.name === "jobs") return <P1OperationsPage api={api} mode="jobs" />;
+  if (route.name === "diagnostics") return <P1OperationsPage api={api} mode="diagnostics" />;
+  if (route.name === "configuration") return <ConfigurationPage api={api} />;
   if (route.name === "deployment") return <DeploymentPage api={api} />;
   if (route.name === "knowledge") return <DisabledState title="知识库尚未接通" reason="KNOWLEDGE_WORKER_NOT_COMPOSED · P2 实现后启用" />;
   if (route.name === "retrieval") return <DisabledState title="召回与注入尚未接通" reason="CAPABILITY_DISABLED · P3 实现后启用" />;
   if (route.name === "closure") return <DisabledState title="闭环验证尚未接通" reason="STOP_VERIFIER_NOT_COMPOSED · P4 实现后启用" />;
-  return <DisabledState title="配置写入尚未接通" reason="CAPABILITY_DISABLED · P1 实现后启用" />;
+  return <DisabledState title="未知页面" reason="INVALID_ROUTE" />;
 }
 
 export function App({ api = browserConsoleApi }: { readonly api?: ConsoleApi }): React.JSX.Element {

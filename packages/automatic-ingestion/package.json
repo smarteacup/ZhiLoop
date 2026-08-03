@@ -1,0 +1,32 @@
+{
+  "name": "@zhiloop/automatic-ingestion",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/codex-backfill",
+      "@zhiloop/codex-session-capture",
+      "@zhiloop/session-catalog"
+    ],
+    "allowedExternalDependencies": [
+      "node:*"
+    ],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/codex-backfill": "0.0.0",
+    "@zhiloop/codex-session-capture": "0.0.0",
+    "@zhiloop/session-catalog": "0.0.0"
+  }
+}

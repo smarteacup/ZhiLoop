@@ -31,6 +31,21 @@ const session = {
   ignoredRecords: 0,
   redactionCount: 0,
 };
+const configuration = {
+  schemaVersion: 1 as const,
+  runtime: {
+    sessionScanIntervalMs: 60_000, followDebounceMs: 1_000, workerPollIntervalMs: 1_000, extractionDelayMs: 300_000,
+    workerConcurrency: 2, scanBatchSize: 100, captureBatchSize: 100,
+    captureRetry: { maxAttempts: 5, baseDelayMs: 1_000, maximumDelayMs: 60_000, jitterRatio: 0.2 },
+    alerts: {
+      enabled: true, notify: false, minimumSeverity: "WARNING" as const,
+      spoolDepth: { warning: 100, error: 1_000 }, spoolOldestAgeMs: { warning: 60_000, error: 600_000 },
+      cursorLagEvents: { warning: 1_000, error: 10_000 }, failedJobs: { warning: 1, error: 10 }, hookSilenceMs: { warning: 3_600_000, error: 21_600_000 },
+      quietHours: { enabled: false, startMinute: 1_320, endMinute: 480, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], utcOffsetMinutes: 480 },
+    },
+  },
+  future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+};
 const api: ConsoleApi = {
   overview: async () => ({ schemaVersion: 1, observedAt: timestamp, rolloutMode: "SHADOW", sidecarVersion: "0.1.4", capabilities: [capability], recentSessions: [session], jobs: { queued: 0, running: 0, retryWait: 0, failed: 0 }, alertCount: 0 }),
   capabilities: async () => ({ items: [capability] }),
@@ -39,6 +54,7 @@ const api: ConsoleApi = {
   events: async () => ({ items: [] }),
   jobs: async () => ({ items: [] }),
   diagnostics: async () => ({ schemaVersion: 1, observedAt: timestamp, ledgerSequence: 0, spoolDepth: 0, consumerLags: [], worker: { healthy: true, consumed: 0, produced: 0, retryableFailures: 0 }, storage: { healthy: true, databaseBytes: 4096 } }),
+  configuration: async () => ({ view: { schemaVersion: 1, revision: 1, hash: "a".repeat(64), effective: configuration, sources: {} }, drafts: [], history: [] }),
   previewCapture: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: "a".repeat(64), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 0, lineNumber: 0 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" }),
   commitCapture: async (command) => ({ schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 0, duplicateEvents: 0, cursor: { byteOffset: 0, lineNumber: 0 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } }),
 };
@@ -85,13 +101,32 @@ describe("Console application shell", () => {
 
     window.location.hash = "#/operations";
     const operations = render(<App api={api} />);
-    expect(await screen.findByRole("heading", { name: "任务与诊断" })).toBeTruthy();
-    expect(screen.getByText("当前没有后台任务。")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "任务、采集与诊断" })).toBeTruthy();
+    expect(screen.getByText("当前没有任务。")).toBeTruthy();
     operations.unmount();
 
     window.location.hash = "#/deployment";
     render(<App api={api} />);
     expect(await screen.findByRole("heading", { name: "部署与能力" })).toBeTruthy();
     expect(screen.getByText("conversation.ledger")).toBeTruthy();
+  });
+
+  it("routes the P1 jobs, diagnostics and configuration views", async () => {
+    window.location.hash = "#/jobs";
+    const jobs = render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "后台任务" })).toBeTruthy();
+    expect(screen.getByText("当前没有任务。")).toBeTruthy();
+    jobs.unmount();
+
+    window.location.hash = "#/diagnostics";
+    const diagnostics = render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "诊断与告警" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "实时更新" })).toBeTruthy();
+    diagnostics.unmount();
+
+    window.location.hash = "#/configuration";
+    render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "有效配置与草稿" })).toBeTruthy();
+    expect(screen.getByText("VALIDATED_DRAFT_NOT_AVAILABLE")).toBeTruthy();
   });
 });

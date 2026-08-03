@@ -40,7 +40,7 @@ main { min-width: 0; padding: 48px clamp(32px, 5vw, 76px) 80px; }
 .page-header p { color: var(--muted); margin: 0; }
 .eyebrow { color: var(--accent) !important; letter-spacing: .16em; font-size: 11px; font-weight: 800; }
 .panel, .metric-card { background: linear-gradient(145deg, rgba(23, 29, 37, .96), rgba(15, 20, 25, .96)); border: 1px solid var(--line); border-radius: 14px; }
-.panel { padding: 22px; }
+.panel { padding: 22px; overflow-x: auto; }
 .panel h2 { margin: 0 0 18px; font-size: 18px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .section-heading h2 { margin: 0; }
@@ -85,6 +85,16 @@ main { min-width: 0; padding: 48px clamp(32px, 5vw, 76px) 80px; }
 .detail-grid div { padding: 12px; background: #0e1318; border-radius: 8px; }
 .detail-grid dt { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
 .detail-grid dd { margin: 0; overflow-wrap: anywhere; }
+.detail-grid dd > label { display: grid; gap: 6px; margin: 12px 0 8px; color: var(--muted); font-size: 12px; }
+.detail-grid input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; color: #fff; background: var(--panel-raised); }
+.detail-grid input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+.panel table { width: 100%; min-width: 720px; border-collapse: collapse; margin: 14px 0; text-align: left; }
+.panel caption { color: var(--muted); text-align: left; padding-bottom: 8px; }
+.panel th, .panel td { padding: 11px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.panel th { color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+.panel code, .page-header code { max-width: min(100%, 680px); overflow-wrap: anywhere; }
+.panel details { margin-top: 14px; }
+.panel summary { color: var(--muted); cursor: pointer; }
 .injection-list, .job-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .injection-list article, .job-list article { padding: 14px; background: #0e1318; border-radius: 8px; }
 .back-link { width: fit-content; color: var(--muted); text-decoration: none; }

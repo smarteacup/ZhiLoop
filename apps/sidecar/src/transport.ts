@@ -14,6 +14,7 @@ export type SidecarRequest =
   | { readonly type: "health" }
   | { readonly type: "worker" }
   | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean }
+  | { readonly type: "acceptance.verify"; readonly sessionId: string; readonly taskCreatedAt: string }
   | ControlRequest;
 
 interface SidecarResponse {
@@ -55,6 +56,21 @@ function parseRequest(value: unknown): SidecarRequest {
     const dryRun = (value as { dryRun?: unknown }).dryRun;
     if (typeof sessionId !== "string" || typeof dryRun !== "boolean") throw new Error("invalid capture-session request");
     return { type, sessionId, dryRun };
+  }
+  if (type === "acceptance.verify") {
+    const sessionId = (value as { sessionId?: unknown }).sessionId;
+    const taskCreatedAt = (value as { taskCreatedAt?: unknown }).taskCreatedAt;
+    if (
+      typeof sessionId !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,999}$/u.test(sessionId)
+      || typeof taskCreatedAt !== "string"
+      || !Number.isFinite(Date.parse(taskCreatedAt))
+    ) {
+      const error = new Error("invalid acceptance.verify request") as Error & { code: string };
+      error.code = "INVALID_ACCEPTANCE_REQUEST";
+      throw error;
+    }
+    return { type, sessionId, taskCreatedAt };
   }
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new Error("invalid request");
@@ -121,6 +137,8 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
           ? await application.runWorkerOnce()
           : request.type === "capture-session"
             ? await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun })
+            : request.type === "acceptance.verify"
+              ? await application.verifyRealCodexIngestion({ sessionId: request.sessionId, taskCreatedAt: request.taskCreatedAt })
             : await application.handleControl(request);
     response = { ok: true, result };
   } catch (error) {

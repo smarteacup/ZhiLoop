@@ -3,13 +3,20 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 
 import {
+  CONFIGURATION_HTTP_PATHS,
+  CONSOLE_HTTP_API_PREFIX,
   CONTROL_API_SCHEMA_VERSION,
   capabilityPageSchema,
   captureCommitResultSchema,
   capturePreviewSchema,
+  configurationMutationResultSchema,
+  configurationStateSchema,
+  configurationValidationResultSchema,
   controlRequestSchema,
   diagnosticsSchema,
   eventMetadataPageSchema,
+  jobCommandResultSchema,
+  jobIdSchema,
   jobPageSchema,
   overviewSchema,
   pageRequestSchema,
@@ -17,10 +24,19 @@ import {
   sessionIdSchema,
   sessionPageSchema,
   type ControlResponse,
+  type ConfigurationMutationResult,
 } from "@zhiloop/control-api";
 
 import { BrowserSessionManager, createBootstrapToken } from "./auth.js";
 import { ControlClientError } from "./control-client.js";
+import {
+  BoundedInvalidationLog,
+  MAX_POLL_INVALIDATIONS,
+  createResyncInvalidation,
+  encodeInvalidationFrame,
+  parseRevision,
+  type InvalidationPollResult,
+} from "./invalidation.js";
 import type { ControlCommandPort, ControlQueryPort, PageQuery, QueryOptions } from "./ports.js";
 import {
   FixedWindowRateLimiter,
@@ -33,6 +49,8 @@ import { StaticAssetStore } from "./static-assets.js";
 const MAX_BOOTSTRAP_BODY_BYTES = 8_192;
 const MAX_COMMAND_BODY_BYTES = 16_384;
 const MAX_JSON_RESPONSE_BYTES = 1_048_576;
+const MAX_SSE_CONNECTIONS = 64;
+const MAX_SSE_PENDING_BYTES = 2 * 1_048_576;
 
 interface OutputSchema<T> {
   safeParse(value: unknown): { success: true; data: T } | { success: false };
@@ -40,7 +58,7 @@ interface OutputSchema<T> {
 
 export interface ConsoleGatewayOptions {
   readonly queryPort: ControlQueryPort;
-  readonly commandPort?: ControlCommandPort;
+  readonly commandPort?: ControlCommandPort | undefined;
   readonly staticRoot: string;
   readonly host?: string;
   readonly port?: number;
@@ -51,6 +69,11 @@ export interface ConsoleGatewayOptions {
   readonly maximumJsonResponseBytes?: number;
   readonly maximumRequestsPerWindow?: number;
   readonly rateWindowMs?: number;
+  readonly invalidationLog?: BoundedInvalidationLog;
+  readonly maximumSseConnections?: number;
+  readonly maximumSsePendingBytes?: number;
+  readonly sseHeartbeatMs?: number;
+  readonly pollingFallbackMs?: number;
 }
 
 export interface ConsoleGatewayAddress {
@@ -123,6 +146,13 @@ function readBoundedBody(request: IncomingMessage, maximumBytes: number): Promis
   });
 }
 
+function hasExactBodyFields(value: unknown, required: readonly string[], optional: readonly string[] = []): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  const allowed = new Set([...required, ...optional]);
+  return required.every((key) => key in value) && keys.every((key) => allowed.has(key));
+}
+
 function parsePage(searchParams: URLSearchParams): PageQuery | undefined {
   for (const key of searchParams.keys()) if (key !== "limit" && key !== "cursor" && key !== "sessionId") return undefined;
   const rawLimit = searchParams.get("limit");
@@ -183,6 +213,7 @@ async function executeCommand<T>(
   timeoutMs: number,
   maximumBytes: number,
   operation: (options: QueryOptions) => Promise<T>,
+  statusForResult: (result: T) => number = () => 200,
 ): Promise<void> {
   try {
     const value = await withTimeout(timeoutMs, operation);
@@ -191,7 +222,7 @@ async function executeCommand<T>(
       safeError(response, 502, "INTERNAL_ERROR", "Control API returned an invalid response");
       return;
     }
-    sendJson(response, 200, {
+    sendJson(response, statusForResult(parsed.data), {
       schemaVersion: CONTROL_API_SCHEMA_VERSION,
       requestId: randomUUID(),
       observedAt: new Date().toISOString(),
@@ -201,17 +232,27 @@ async function executeCommand<T>(
   } catch (error) {
     const remoteCode = error instanceof ControlClientError ? error.remoteCode : undefined;
     if (remoteCode === "CONFLICT" || remoteCode === "STALE_REVISION") {
-      safeError(response, 409, remoteCode, "Capture preview is stale or conflicts with current state");
+      safeError(response, 409, remoteCode, "Command is stale or conflicts with current state");
+    } else if (remoteCode === "NOT_FOUND") {
+      safeError(response, 404, remoteCode, "Control command target was not found");
     } else if (remoteCode === "INVALID_REQUEST") {
-      safeError(response, 400, remoteCode, "Capture command was rejected");
+      safeError(response, 400, remoteCode, "Control command was rejected");
     } else if (remoteCode === "RATE_LIMITED") {
-      safeError(response, 429, remoteCode, "Capture command rate limit exceeded");
+      safeError(response, 429, remoteCode, "Control command rate limit exceeded");
     } else if (remoteCode === "CAPABILITY_UNAVAILABLE" || remoteCode === "SIDECAR_UNAVAILABLE") {
-      safeError(response, 503, remoteCode, "Capture command capability is unavailable");
+      safeError(response, 503, remoteCode, "Control command capability is unavailable");
     } else {
-      safeError(response, 503, "SIDECAR_UNAVAILABLE", "Capture command is unavailable");
+      safeError(response, 503, "SIDECAR_UNAVAILABLE", "Control command is unavailable");
     }
   }
+}
+
+function configurationMutationStatus(result: ConfigurationMutationResult): number {
+  if (result.ok) return 200;
+  if (result.diagnostic.code === "STALE_REVISION" || result.diagnostic.code === "CONFLICT") return 409;
+  if (result.diagnostic.code === "NOT_FOUND") return 404;
+  if (result.diagnostic.code === "INVALID_CONFIGURATION" || result.diagnostic.code === "CONSUMER_DISABLED") return 400;
+  return 503;
 }
 
 export async function createConsoleGateway(options: ConsoleGatewayOptions): Promise<ConsoleGateway> {
@@ -238,6 +279,71 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
   const staticAssets = await StaticAssetStore.create(options.staticRoot);
   const limiter = new FixedWindowRateLimiter(options.maximumRequestsPerWindow ?? 120, options.rateWindowMs ?? 60_000);
   const bootstrapLimiter = new FixedWindowRateLimiter(10, 60_000);
+  const invalidationLog = options.invalidationLog ?? new BoundedInvalidationLog();
+  const publishInvalidation = (
+    type: "capability.updated" | "session.updated" | "job.updated" | "configuration.updated" | "alert.updated",
+    entityId?: string,
+  ): void => {
+    const revision = invalidationLog.currentRevision + 1;
+    invalidationLog.publish({
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      eventId: `gateway-${type}-${revision}`,
+      type,
+      ...(entityId === undefined ? {} : { entityId }),
+      revision,
+      occurredAt: new Date().toISOString(),
+    });
+  };
+  const maximumSseConnections = options.maximumSseConnections ?? 8;
+  if (!Number.isSafeInteger(maximumSseConnections) || maximumSseConnections < 1 || maximumSseConnections > MAX_SSE_CONNECTIONS) {
+    throw new Error("maximumSseConnections is invalid");
+  }
+  const minimumSsePendingBytes = invalidationLog.maximumBytes + 16_384;
+  const maximumSsePendingBytes = options.maximumSsePendingBytes ?? minimumSsePendingBytes;
+  if (!Number.isSafeInteger(maximumSsePendingBytes) || maximumSsePendingBytes < minimumSsePendingBytes || maximumSsePendingBytes > MAX_SSE_PENDING_BYTES) {
+    throw new Error("maximumSsePendingBytes is invalid");
+  }
+  const sseHeartbeatMs = options.sseHeartbeatMs ?? 15_000;
+  if (!Number.isSafeInteger(sseHeartbeatMs) || sseHeartbeatMs < 100 || sseHeartbeatMs > 60_000) throw new Error("sseHeartbeatMs is invalid");
+  // Completion-based 2 Hz monitoring keeps the P1 status-to-UI P95 budget below one second
+  // without overlapping Control API calls when a previous observation is slow.
+  const pollingFallbackMs = options.pollingFallbackMs ?? 500;
+  if (!Number.isSafeInteger(pollingFallbackMs) || pollingFallbackMs < 100 || pollingFallbackMs > 60_000) throw new Error("pollingFallbackMs is invalid");
+  let activeSseConnections = 0;
+  const activeSseClosers = new Set<() => void>();
+  let monitorTimer: ReturnType<typeof setTimeout> | undefined;
+  let monitorStopped = false;
+  let monitorStarted = false;
+  let monitorSignatures: Readonly<Record<string, string>> | undefined;
+  const scheduleMonitor = (): void => {
+    if (monitorStopped) return;
+    monitorTimer = setTimeout(() => {
+      void withTimeout(queryTimeoutMs, (queryOptions) => options.queryPort.getOverview(queryOptions))
+        .then((overview) => {
+          const next = Object.freeze({
+            capabilities: JSON.stringify(overview.capabilities),
+            sessions: JSON.stringify(overview.recentSessions),
+            jobs: JSON.stringify(overview.jobs),
+            alerts: String(overview.alertCount),
+          });
+          if (monitorSignatures !== undefined) {
+            if (next.capabilities !== monitorSignatures["capabilities"]) publishInvalidation("capability.updated");
+            if (next.sessions !== monitorSignatures["sessions"]) publishInvalidation("session.updated");
+            if (next.jobs !== monitorSignatures["jobs"]) publishInvalidation("job.updated");
+            if (next.alerts !== monitorSignatures["alerts"]) publishInvalidation("alert.updated");
+          }
+          monitorSignatures = next;
+        })
+        .catch(() => undefined)
+        .finally(scheduleMonitor);
+    }, pollingFallbackMs);
+    monitorTimer.unref?.();
+  };
+  const ensureMonitor = (): void => {
+    if (monitorStarted) return;
+    monitorStarted = true;
+    scheduleMonitor();
+  };
 
   const server = http.createServer({
     maxHeaderSize: 16_384,
@@ -315,7 +421,10 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         safeError(response, 401, "UNAUTHORIZED", "Browser session is missing or expired");
         return;
       }
-      if (!authentication.csrfValid) {
+      const nativeEventStream = request.method === "GET"
+        && url.pathname === "/api/v1/invalidations"
+        && url.searchParams.size === 0;
+      if (!authentication.csrfValid && !nativeEventStream) {
         safeError(response, 403, "CSRF_REJECTED", "CSRF proof rejected");
         return;
       }
@@ -323,6 +432,224 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         executeView(response, schema, queryTimeoutMs, maximumJsonResponseBytes, operation);
       const executeCapture = <T>(schema: OutputSchema<T>, operation: (queryOptions: QueryOptions) => Promise<T>) =>
         executeCommand(response, schema, queryTimeoutMs, maximumJsonResponseBytes, operation);
+      if (nativeEventStream) {
+        ensureMonitor();
+        if (activeSseConnections >= maximumSseConnections) {
+          response.setHeader("retry-after", Math.ceil(pollingFallbackMs / 1_000));
+          safeError(response, 503, "RATE_LIMITED", "SSE connection limit exceeded; use polling fallback");
+          return;
+        }
+        const rawLastEventId = request.headers["last-event-id"];
+        const lastEventId = typeof rawLastEventId === "string" ? parseRevision(rawLastEventId) : undefined;
+        const invalidCursor = rawLastEventId !== undefined && lastEventId === undefined;
+        const afterRevision = lastEventId ?? invalidationLog.currentRevision;
+        const snapshot = invalidCursor ? undefined : invalidationLog.snapshot(afterRevision);
+        response.statusCode = 200;
+        response.setHeader("content-type", "text/event-stream; charset=utf-8");
+        response.setHeader("connection", "keep-alive");
+        response.setHeader("x-accel-buffering", "no");
+        response.flushHeaders();
+        response.write(`retry: ${pollingFallbackMs}\n\n`);
+        if (invalidCursor || snapshot?.resyncRequired === true) {
+          const resync = createResyncInvalidation(
+            invalidationLog.currentRevision,
+            invalidCursor ? "INVALID_CURSOR" : "STALE_REVISION",
+          );
+          response.write(encodeInvalidationFrame(resync));
+        } else {
+          for (const event of snapshot?.events ?? []) response.write(encodeInvalidationFrame(event));
+        }
+        let closed = false;
+        let unsubscribe = (): void => undefined;
+        const streamState: { heartbeat?: ReturnType<typeof setInterval> } = {};
+        const closeStream = (): void => {
+          if (closed) return;
+          closed = true;
+          unsubscribe();
+          if (streamState.heartbeat) clearInterval(streamState.heartbeat);
+          activeSseConnections -= 1;
+          activeSseClosers.delete(closeStream);
+          if (!response.destroyed) response.destroy();
+        };
+        const writeBounded = (frame: string): void => {
+          if (closed) return;
+          if (response.writableLength + Buffer.byteLength(frame) > maximumSsePendingBytes) {
+            closeStream();
+            return;
+          }
+          response.write(frame);
+        };
+        unsubscribe = invalidationLog.subscribe((_event, frame) => writeBounded(frame));
+        streamState.heartbeat = setInterval(() => writeBounded(`: heartbeat revision=${invalidationLog.currentRevision}\n\n`), sseHeartbeatMs);
+        streamState.heartbeat.unref();
+        activeSseConnections += 1;
+        activeSseClosers.add(closeStream);
+        request.once("close", closeStream);
+        return;
+      }
+      if (url.pathname === "/api/v1/invalidations/poll") {
+        ensureMonitor();
+        if (request.method !== "GET") {
+          safeError(response, 405, "INVALID_REQUEST", "Invalidation polling requires GET");
+          return;
+        }
+        for (const key of url.searchParams.keys()) {
+          if (key !== "afterRevision" && key !== "limit") {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid invalidation polling query");
+            return;
+          }
+        }
+        if (url.searchParams.getAll("afterRevision").length !== 1 || url.searchParams.getAll("limit").length > 1) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid invalidation polling query");
+          return;
+        }
+        const afterRevision = parseRevision(url.searchParams.get("afterRevision"));
+        const rawLimit = url.searchParams.get("limit");
+        const limit = rawLimit === null ? 100 : parseRevision(rawLimit);
+        if (afterRevision === undefined || limit === undefined || limit < 1 || limit > MAX_POLL_INVALIDATIONS) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid invalidation polling query");
+          return;
+        }
+        const snapshot = invalidationLog.snapshot(afterRevision, Math.min(limit, invalidationLog.maximumEvents));
+        const result: InvalidationPollResult = { ...snapshot, retryAfterMs: pollingFallbackMs };
+        sendJson(response, 200, {
+          schemaVersion: CONTROL_API_SCHEMA_VERSION,
+          requestId: randomUUID(),
+          observedAt: new Date().toISOString(),
+          ok: true,
+          result,
+        }, maximumJsonResponseBytes);
+        return;
+      }
+      const configurationCommand = url.pathname === `${CONSOLE_HTTP_API_PREFIX}${CONFIGURATION_HTTP_PATHS.draft}`
+        ? "config.validate"
+        : url.pathname === `${CONSOLE_HTTP_API_PREFIX}${CONFIGURATION_HTTP_PATHS.activate}`
+          ? "config.activate"
+          : url.pathname === `${CONSOLE_HTTP_API_PREFIX}${CONFIGURATION_HTTP_PATHS.rollback}`
+            ? "config.rollback"
+            : undefined;
+      const jobCommandMatch = /^\/api\/v1\/jobs\/([^/]+)\/(cancel|retry)$/u.exec(url.pathname);
+      if (jobCommandMatch !== null) {
+        if (request.method !== "POST" || url.searchParams.size !== 0 || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "INVALID_REQUEST", "Job command requires application/json POST");
+          return;
+        }
+        const commandPort = options.commandPort;
+        if (commandPort?.cancelJob === undefined || commandPort.retryJob === undefined) {
+          safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Job command capability is unavailable");
+          return;
+        }
+        const cancelJob = commandPort.cancelJob.bind(commandPort);
+        const retryJob = commandPort.retryJob.bind(commandPort);
+        try {
+          const decoded = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (!hasExactBodyFields(decoded, ["expectedRevision", "idempotencyKey"])) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid job command fields");
+            return;
+          }
+          const parsedJobId = jobIdSchema.safeParse(jobCommandMatch[1]);
+          const type = jobCommandMatch[2] === "cancel" ? "job.cancel" : "job.retry";
+          const parsed = controlRequestSchema.safeParse({
+            schemaVersion: CONTROL_API_SCHEMA_VERSION,
+            requestId: randomUUID(),
+            type,
+            jobId: jobCommandMatch[1],
+            ...decoded,
+          });
+          if (!parsedJobId.success || !parsed.success || (parsed.data.type !== "job.cancel" && parsed.data.type !== "job.retry")) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid job command");
+            return;
+          }
+          const jobRequest = parsed.data;
+          await executeCommand(response, jobCommandResultSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => {
+            const command = {
+              jobId: jobRequest.jobId,
+              expectedRevision: jobRequest.expectedRevision,
+              idempotencyKey: jobRequest.idempotencyKey,
+            };
+            const operation = jobRequest.type === "job.cancel"
+              ? cancelJob(command, queryOptions)
+              : retryJob(command, queryOptions);
+            return operation.then((result) => {
+              publishInvalidation("job.updated", result.job.jobId);
+              return result;
+            });
+          });
+        } catch (error) {
+          if (!response.headersSent) {
+            safeError(response, error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 400, "INVALID_REQUEST", "Job command is invalid or too large");
+          }
+        }
+        return;
+      }
+      if (configurationCommand !== undefined) {
+        if (request.method !== "POST" || url.searchParams.size !== 0 || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "INVALID_REQUEST", "Configuration command requires application/json POST");
+          return;
+        }
+        const commandPort = options.commandPort;
+        if (commandPort === undefined) {
+          safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Configuration command capability is unavailable");
+          return;
+        }
+        try {
+          const decoded = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          const fieldsValid = configurationCommand === "config.validate"
+            ? hasExactBodyFields(decoded, ["baseRevision", "draft", "scope"], ["projectId"])
+            : configurationCommand === "config.activate"
+              ? hasExactBodyFields(decoded, ["draftRevision", "expectedRevision", "idempotencyKey"])
+              : hasExactBodyFields(decoded, ["expectedRevision", "idempotencyKey", "targetRevision"]);
+          if (!fieldsValid) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid configuration command fields");
+            return;
+          }
+          const parsed = controlRequestSchema.safeParse({
+            schemaVersion: CONTROL_API_SCHEMA_VERSION,
+            requestId: randomUUID(),
+            type: configurationCommand,
+            ...decoded as Record<string, unknown>,
+          });
+          if (!parsed.success || (parsed.data.type !== "config.validate" && parsed.data.type !== "config.activate" && parsed.data.type !== "config.rollback")) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid configuration command");
+            return;
+          }
+          const configurationRequest = parsed.data;
+          if (configurationRequest.type === "config.validate") {
+            await executeCommand(response, configurationValidationResultSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) =>
+              commandPort.validateConfiguration({
+                baseRevision: configurationRequest.baseRevision,
+                scope: configurationRequest.scope,
+                ...(configurationRequest.projectId === undefined ? {} : { projectId: configurationRequest.projectId }),
+                draft: configurationRequest.draft,
+              }, queryOptions));
+          } else if (configurationRequest.type === "config.activate") {
+            await executeCommand(response, configurationMutationResultSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) =>
+              commandPort.activateConfiguration({
+                expectedRevision: configurationRequest.expectedRevision,
+                draftRevision: configurationRequest.draftRevision,
+                idempotencyKey: configurationRequest.idempotencyKey,
+              }, queryOptions).then((result) => {
+                if (result.ok) publishInvalidation("configuration.updated", `configuration-${result.revision}`);
+                return result;
+              }), configurationMutationStatus);
+          } else {
+            await executeCommand(response, configurationMutationResultSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) =>
+              commandPort.rollbackConfiguration({
+                expectedRevision: configurationRequest.expectedRevision,
+                targetRevision: configurationRequest.targetRevision,
+                idempotencyKey: configurationRequest.idempotencyKey,
+              }, queryOptions).then((result) => {
+                if (result.ok) publishInvalidation("configuration.updated", `configuration-${result.revision}`);
+                return result;
+              }), configurationMutationStatus);
+          }
+        } catch (error) {
+          if (!response.headersSent) {
+            safeError(response, error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 400, "INVALID_REQUEST", "Configuration command is invalid or too large");
+          }
+        }
+        return;
+      }
       if (url.pathname === "/api/v1/capture-jobs") {
         if (request.method !== "POST" || url.searchParams.size !== 0 || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
           safeError(response, 405, "INVALID_REQUEST", "Capture command requires application/json POST");
@@ -371,7 +698,10 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
               previewRevision: captureRequest.previewRevision,
               transcriptIdentityHash: captureRequest.transcriptIdentityHash,
               idempotencyKey: captureRequest.idempotencyKey,
-            }, queryOptions));
+            }, queryOptions).then((result) => {
+              publishInvalidation("session.updated", result.sessionId);
+              return result;
+            }));
           }
         } catch {
           if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Capture command is invalid or too large");
@@ -380,6 +710,26 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
       }
       if (request.method !== "GET") {
         safeError(response, 405, "INVALID_REQUEST", "Read-only endpoint requires GET");
+        return;
+      }
+      if (url.pathname === `${CONSOLE_HTTP_API_PREFIX}${CONFIGURATION_HTTP_PATHS.view}`) {
+        if (url.searchParams.getAll("projectId").length > 1 || [...url.searchParams.keys()].some((key) => key !== "projectId")) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid configuration query");
+          return;
+        }
+        const projectId = url.searchParams.get("projectId") ?? undefined;
+        const parsed = controlRequestSchema.safeParse({
+          schemaVersion: CONTROL_API_SCHEMA_VERSION,
+          requestId: randomUUID(),
+          type: "config.get",
+          ...(projectId === undefined ? {} : { projectId }),
+        });
+        if (!parsed.success || parsed.data.type !== "config.get") {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid configuration query");
+          return;
+        }
+        const configurationRequest = parsed.data;
+        await execute(configurationStateSchema, (queryOptions) => options.queryPort.getConfiguration(configurationRequest.projectId, queryOptions));
         return;
       }
       const page = parsePage(url.searchParams);
@@ -465,6 +815,9 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
     },
     async close() {
       if (!server.listening) return;
+      monitorStopped = true;
+      if (monitorTimer !== undefined) clearTimeout(monitorTimer);
+      for (const closeStream of [...activeSseClosers]) closeStream();
       server.close();
       await once(server, "close");
       listeningAddress = undefined;

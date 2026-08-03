@@ -10,6 +10,31 @@ import { CONTROL_API_SCHEMA_VERSION, type ControlRequest } from "@zhiloop/contro
 import { ControlClientError, UnixSocketControlClient } from "./control-client.js";
 
 const NOW = "2026-08-03T12:00:00.000Z";
+const configuration = {
+  schemaVersion: 1 as const,
+  runtime: {
+    sessionScanIntervalMs: 60_000,
+    followDebounceMs: 1_000,
+    workerPollIntervalMs: 1_000,
+    extractionDelayMs: 300_000,
+    workerConcurrency: 2,
+    scanBatchSize: 100,
+    captureBatchSize: 100,
+    captureRetry: { maxAttempts: 5, baseDelayMs: 1_000, maximumDelayMs: 60_000, jitterRatio: 0.2 },
+    alerts: {
+      enabled: true,
+      notify: false,
+      minimumSeverity: "WARNING" as const,
+      spoolDepth: { warning: 100, error: 1_000 },
+      spoolOldestAgeMs: { warning: 60_000, error: 600_000 },
+      cursorLagEvents: { warning: 1_000, error: 10_000 },
+      failedJobs: { warning: 1, error: 10 },
+      hookSilenceMs: { warning: 3_600_000, error: 21_600_000 },
+      quietHours: { enabled: false, startMinute: 1_320, endMinute: 480, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], utcOffsetMinutes: 480 },
+    },
+  },
+  future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+};
 
 describe("UnixSocketControlClient", () => {
   const servers: Server[] = [];
@@ -95,6 +120,29 @@ describe("UnixSocketControlClient", () => {
         case "jobs.list":
           result = { items: [] };
           break;
+        case "job.cancel":
+        case "job.retry":
+          result = {
+            schemaVersion: 1,
+            action: request.type === "job.cancel" ? "CANCEL" : "RETRY",
+            disposition: "APPLIED",
+            job: {
+              schemaVersion: 1,
+              jobId: request.jobId,
+              jobType: "AUTOMATIC_INGESTION_SCAN",
+              revision: request.expectedRevision + 1,
+              status: request.type === "job.cancel" ? "CANCELLED" : "QUEUED",
+              attempt: 1,
+              maxAttempts: 3,
+              progress: 0,
+              reasonCode: request.type === "job.cancel" ? "JOB_CANCELLED" : "JOB_QUEUED",
+              observedAt: NOW,
+              lastTransitionAt: NOW,
+              retryable: request.type === "job.retry",
+              evidenceRefs: [],
+            },
+          };
+          break;
         case "session.get":
           result = {
             summary: {
@@ -161,8 +209,44 @@ describe("UnixSocketControlClient", () => {
             },
           };
           break;
+        case "config.get":
+          result = {
+            view: {
+              schemaVersion: 1,
+              revision: 1,
+              hash: "c".repeat(64),
+              ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+              effective: configuration,
+              sources: {},
+            },
+            drafts: [],
+            history: [],
+          };
+          break;
+        case "config.validate":
+          result = {
+            ok: true,
+            draft: {
+              draftRevision: 7,
+              baseRevision: request.baseRevision,
+              scope: request.scope,
+              ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+              configuration,
+              changedPaths: Object.keys(request.draft),
+              requiresRestart: false,
+              activatable: true,
+              diagnostics: [],
+            },
+          };
+          break;
+        case "config.activate":
+          result = { ok: true, revision: 2, hash: "d".repeat(64), status: "EFFECTIVE" };
+          break;
+        case "config.rollback":
+          result = { ok: true, revision: 3, hash: "e".repeat(64), status: "ROLLED_BACK" };
+          break;
         default:
-          throw new Error(`unexpected request ${request.type}`);
+          throw new Error("unexpected request");
       }
       return {
         schemaVersion: CONTROL_API_SCHEMA_VERSION,
@@ -180,6 +264,16 @@ describe("UnixSocketControlClient", () => {
     await expect(client.getSession("session-1", options)).resolves.toMatchObject({ summary: { sessionId: "session-1" } });
     await expect(client.listSessionEvents("session-1", { limit: 1 }, options)).resolves.toEqual({ items: [] });
     await expect(client.listJobs({ limit: 1 }, options)).resolves.toEqual({ items: [] });
+    await expect(client.cancelJob({
+      jobId: "job-1",
+      expectedRevision: 2,
+      idempotencyKey: "operator:cancel:client:one",
+    }, options)).resolves.toMatchObject({ action: "CANCEL", job: { revision: 3 } });
+    await expect(client.retryJob({
+      jobId: "job-1",
+      expectedRevision: 3,
+      idempotencyKey: "operator:retry:client:one",
+    }, options)).resolves.toMatchObject({ action: "RETRY", job: { revision: 4 } });
     await expect(client.getDiagnostics(options)).resolves.toMatchObject({ ledgerSequence: 0 });
     await expect(client.previewCapture("session-1", options)).resolves.toMatchObject({ previewRevision: 1 });
     await expect(client.commitCapture({
@@ -188,6 +282,23 @@ describe("UnixSocketControlClient", () => {
       transcriptIdentityHash: "a".repeat(64),
       idempotencyKey: "capture:session-1:revision-1",
     }, options)).resolves.toMatchObject({ appendedEvents: 0 });
+    await expect(client.getConfiguration("project-a", options)).resolves.toMatchObject({ view: { projectId: "project-a", revision: 1 } });
+    await expect(client.validateConfiguration({
+      baseRevision: 1,
+      scope: "PROJECT",
+      projectId: "project-a",
+      draft: { "runtime.workerConcurrency": 3 },
+    }, options)).resolves.toMatchObject({ ok: true, draft: { draftRevision: 7 } });
+    await expect(client.activateConfiguration({
+      expectedRevision: 1,
+      draftRevision: 7,
+      idempotencyKey: "config:activate:revision-7",
+    }, options)).resolves.toMatchObject({ ok: true, revision: 2, status: "EFFECTIVE" });
+    await expect(client.rollbackConfiguration({
+      expectedRevision: 2,
+      targetRevision: 1,
+      idempotencyKey: "config:rollback:revision-1",
+    }, options)).resolves.toMatchObject({ ok: true, revision: 3, status: "ROLLED_BACK" });
   });
 
   it("rejects mismatched request IDs and invalid result fields", async () => {
@@ -238,6 +349,15 @@ describe("UnixSocketControlClient", () => {
     }));
     const client = new UnixSocketControlClient({ socketPath, maximumResponseBytes: 512 });
     await expect(client.getOverview({ signal: new AbortController().signal })).rejects.toMatchObject({ code: "PROTOCOL" });
+  });
+
+  it("rejects oversized configuration drafts before opening the Unix socket", async () => {
+    const client = new UnixSocketControlClient({ socketPath: "/tmp/zhiloop-not-contacted.sock" });
+    await expect(client.validateConfiguration({
+      baseRevision: 1,
+      scope: "GLOBAL",
+      draft: { padding: "x".repeat(1_100_000) },
+    }, { signal: new AbortController().signal })).rejects.toMatchObject({ code: "PROTOCOL" });
   });
 
   it("rejects trailing protocol frames after the bounded response", async () => {

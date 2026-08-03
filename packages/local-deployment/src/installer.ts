@@ -152,8 +152,12 @@ export const REQUIRED_LOCAL_RELEASE_FILES = Object.freeze([
   "apps/console-gateway/dist/main.js",
   "apps/console-web/dist/index.html",
   "node_modules/@zhiloop/console-gateway/package.json",
+  "node_modules/@zhiloop/automatic-ingestion/package.json",
+  "node_modules/@zhiloop/configuration-service/package.json",
   "node_modules/@zhiloop/control-api/package.json",
+  "node_modules/@zhiloop/job-runtime/package.json",
   "node_modules/@zhiloop/local-deployment/package.json",
+  "node_modules/@zhiloop/observability/package.json",
   "node_modules/zod/package.json",
 ]);
 

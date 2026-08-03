@@ -1,6 +1,10 @@
 import type {
   CAPABILITY_STATUSES,
   INJECTION_STATUSES,
+  JOB_ATTEMPT_STATUSES,
+  JOB_CANCELLATION_STATUSES,
+  JOB_IDEMPOTENCY_STATUSES,
+  JOB_LEASE_STATUSES,
   JOB_STATUSES,
   STAGE_STATUSES,
 } from "./constants.js";
@@ -8,13 +12,21 @@ import type {
 export type CapabilityStatus = (typeof CAPABILITY_STATUSES)[number];
 export type StageStatus = (typeof STAGE_STATUSES)[number];
 export type JobStatus = (typeof JOB_STATUSES)[number];
+export type JobAttemptStatus = (typeof JOB_ATTEMPT_STATUSES)[number];
+export type JobLeaseStatus = (typeof JOB_LEASE_STATUSES)[number];
+export type JobCancellationStatus = (typeof JOB_CANCELLATION_STATUSES)[number];
+export type JobIdempotencyStatus = (typeof JOB_IDEMPOTENCY_STATUSES)[number];
 export type InjectionStatus = (typeof INJECTION_STATUSES)[number];
-export type StateMachineKind = "capability" | "stage" | "job" | "injection";
+export type StateMachineKind = "capability" | "stage" | "job" | "jobAttempt" | "jobLease" | "jobCancellation" | "jobIdempotency" | "injection";
 
 type StatusFor<K extends StateMachineKind> = K extends "capability" ? CapabilityStatus
   : K extends "stage" ? StageStatus
     : K extends "job" ? JobStatus
-      : InjectionStatus;
+      : K extends "jobAttempt" ? JobAttemptStatus
+        : K extends "jobLease" ? JobLeaseStatus
+          : K extends "jobCancellation" ? JobCancellationStatus
+            : K extends "jobIdempotency" ? JobIdempotencyStatus
+              : InjectionStatus;
 
 const capabilityTransitions: Readonly<Record<CapabilityStatus, ReadonlySet<CapabilityStatus>>> = {
   NOT_IMPLEMENTED: new Set(["DISABLED"]),
@@ -47,6 +59,33 @@ const jobTransitions: Readonly<Record<JobStatus, ReadonlySet<JobStatus>>> = {
   CANCELLED: new Set(),
 };
 
+const jobAttemptTransitions: Readonly<Record<JobAttemptStatus, ReadonlySet<JobAttemptStatus>>> = {
+  RUNNING: new Set(["SUCCEEDED", "RETRYABLE_FAILED", "TERMINAL_FAILED", "CANCELLED", "LEASE_LOST"]),
+  SUCCEEDED: new Set(),
+  RETRYABLE_FAILED: new Set(),
+  TERMINAL_FAILED: new Set(),
+  CANCELLED: new Set(),
+  LEASE_LOST: new Set(),
+};
+
+const jobLeaseTransitions: Readonly<Record<JobLeaseStatus, ReadonlySet<JobLeaseStatus>>> = {
+  ACTIVE: new Set(["EXPIRED", "RELEASED"]),
+  EXPIRED: new Set(),
+  RELEASED: new Set(),
+};
+
+const jobCancellationTransitions: Readonly<Record<JobCancellationStatus, ReadonlySet<JobCancellationStatus>>> = {
+  NOT_REQUESTED: new Set(["REQUESTED"]),
+  REQUESTED: new Set(["ACKNOWLEDGED", "REJECTED"]),
+  ACKNOWLEDGED: new Set(),
+  REJECTED: new Set(),
+};
+
+const jobIdempotencyTransitions: Readonly<Record<JobIdempotencyStatus, ReadonlySet<JobIdempotencyStatus>>> = {
+  RESERVED: new Set(["COMPLETED"]),
+  COMPLETED: new Set(),
+};
+
 const injectionTransitions: Readonly<Record<InjectionStatus, ReadonlySet<InjectionStatus>>> = {
   PENDING: new Set(["RETRIEVING", "DISABLED", "INVALID_INPUT", "ERROR"]),
   RETRIEVING: new Set([
@@ -68,6 +107,10 @@ const transitions = {
   capability: capabilityTransitions,
   stage: stageTransitions,
   job: jobTransitions,
+  jobAttempt: jobAttemptTransitions,
+  jobLease: jobLeaseTransitions,
+  jobCancellation: jobCancellationTransitions,
+  jobIdempotency: jobIdempotencyTransitions,
   injection: injectionTransitions,
 } as const;
 

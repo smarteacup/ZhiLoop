@@ -288,6 +288,9 @@ describe("ingestion cursors", () => {
 
     const reopened = new SqliteEventLedger(filename, { clock: CLOCK });
     expect(reopened.loadIngestionCursor<{ byteOffset: number }>("codex-transcript:session-a")?.cursor.byteOffset).toBe(20);
+    expect(reopened.rebaseIngestionCursor("codex-transcript:session-a")).toBe("REBASED");
+    expect(reopened.loadIngestionCursor("codex-transcript:session-a")).toBeUndefined();
+    expect(reopened.rebaseIngestionCursor("codex-transcript:session-a")).toBe("NOT_FOUND");
     reopened.close();
     const database = new DatabaseSync(filename, { readOnly: true });
     expect((database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);

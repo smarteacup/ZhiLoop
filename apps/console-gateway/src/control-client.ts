@@ -7,10 +7,14 @@ import {
   capabilityPageSchema,
   captureCommitResultSchema,
   capturePreviewSchema,
+  configurationMutationResultSchema,
+  configurationStateSchema,
+  configurationValidationResultSchema,
   controlResponseSchema,
   diagnosticsSchema,
   eventMetadataPageSchema,
   jobPageSchema,
+  jobCommandResultSchema,
   overviewSchema,
   sessionDetailSchema,
   sessionPageSchema,
@@ -20,9 +24,13 @@ import {
 
 import type {
   CaptureCommitCommand,
+  ConfigurationActivateCommand,
+  ConfigurationDraftCommand,
+  ConfigurationRollbackCommand,
   ControlCommandPort,
   ControlQueryPort,
   PageQuery,
+  JobOperatorCommand,
   QueryOptions,
 } from "./ports.js";
 
@@ -93,6 +101,10 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
     return this.execute(this.request("diagnostics.get"), diagnosticsSchema, options);
   }
 
+  public getConfiguration(projectId: string | undefined, options: QueryOptions) {
+    return this.execute(this.request("config.get", { ...(projectId === undefined ? {} : { projectId }) }), configurationStateSchema, options);
+  }
+
   public previewCapture(sessionId: string, options: QueryOptions) {
     return this.execute(this.request("capture.preview", { sessionId }), capturePreviewSchema, options);
   }
@@ -104,6 +116,31 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
       transcriptIdentityHash: command.transcriptIdentityHash,
       idempotencyKey: command.idempotencyKey,
     }), captureCommitResultSchema, options);
+  }
+
+  public validateConfiguration(command: ConfigurationDraftCommand, options: QueryOptions) {
+    return this.execute(this.request("config.validate", {
+      baseRevision: command.baseRevision,
+      scope: command.scope,
+      ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
+      draft: command.draft,
+    }), configurationValidationResultSchema, options);
+  }
+
+  public activateConfiguration(command: ConfigurationActivateCommand, options: QueryOptions) {
+    return this.execute(this.request("config.activate", { ...command }), configurationMutationResultSchema, options);
+  }
+
+  public rollbackConfiguration(command: ConfigurationRollbackCommand, options: QueryOptions) {
+    return this.execute(this.request("config.rollback", { ...command }), configurationMutationResultSchema, options);
+  }
+
+  public cancelJob(command: JobOperatorCommand, options: QueryOptions) {
+    return this.execute(this.request("job.cancel", { ...command }), jobCommandResultSchema, options);
+  }
+
+  public retryJob(command: JobOperatorCommand, options: QueryOptions) {
+    return this.execute(this.request("job.retry", { ...command }), jobCommandResultSchema, options);
   }
 
   private request<T extends ControlRequest["type"]>(type: T, fields: Record<string, unknown> = {}): ControlRequest {

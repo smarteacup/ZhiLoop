@@ -9,13 +9,17 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../../packages/automatic-ingestion" },
     { "path": "../../packages/codex-session-capture" },
     { "path": "../../packages/control-api" },
+    { "path": "../../packages/configuration-service" },
     { "path": "../../packages/conversation-ledger" },
     { "path": "../../packages/daemon-runtime" },
     { "path": "../../packages/hook-runtime" },
+    { "path": "../../packages/job-runtime" },
     { "path": "../../packages/local-deployment" },
     { "path": "../../packages/operational-read-model" },
+    { "path": "../../packages/observability" },
     { "path": "../../packages/plugin-runtime" },
     { "path": "../../packages/session-catalog" }
   ]

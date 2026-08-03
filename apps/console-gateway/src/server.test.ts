@@ -11,16 +11,32 @@ import {
   type CapabilitySnapshot,
   type CaptureCommitResult,
   type CapturePreview,
+  type ConfigurationMutationResult,
+  type ConfigurationState,
+  type ConfigurationValidationResult,
   type Diagnostics,
   type EventMetadata,
   type JobSnapshot,
+  type JobCommandResult,
   type Overview,
   type SessionDetail,
   type SessionSummary,
 } from "@zhiloop/control-api";
 
-import type { CaptureCommitCommand, ControlCommandPort, ControlQueryPort, Page, PageQuery, QueryOptions } from "./ports.js";
+import type {
+  CaptureCommitCommand,
+  ConfigurationActivateCommand,
+  ConfigurationDraftCommand,
+  ConfigurationRollbackCommand,
+  ControlCommandPort,
+  ControlQueryPort,
+  Page,
+  PageQuery,
+  QueryOptions,
+  JobOperatorCommand,
+} from "./ports.js";
 import { ControlClientError } from "./control-client.js";
+import { BoundedInvalidationLog } from "./invalidation.js";
 import { createConsoleGateway, type ConsoleGateway, type ConsoleGatewayAddress } from "./server.js";
 
 const NOW = "2026-08-03T12:00:00.000Z";
@@ -57,6 +73,7 @@ const job: JobSnapshot = {
   schemaVersion: CONTROL_API_SCHEMA_VERSION,
   jobId: "job-1",
   jobType: "SESSION_CAPTURE",
+  revision: 3,
   status: "SUCCEEDED",
   attempt: 1,
   maxAttempts: 3,
@@ -104,6 +121,44 @@ const diagnostics: Diagnostics = {
   storage: { healthy: true, databaseBytes: 4096 },
 };
 
+const consoleConfiguration = {
+  schemaVersion: 1 as const,
+  runtime: {
+    sessionScanIntervalMs: 60_000,
+    followDebounceMs: 1_000,
+    workerPollIntervalMs: 1_000,
+    extractionDelayMs: 300_000,
+    workerConcurrency: 2,
+    scanBatchSize: 100,
+    captureBatchSize: 100,
+    captureRetry: { maxAttempts: 5, baseDelayMs: 1_000, maximumDelayMs: 60_000, jitterRatio: 0.2 },
+    alerts: {
+      enabled: true,
+      notify: false,
+      minimumSeverity: "WARNING" as const,
+      spoolDepth: { warning: 100, error: 1_000 },
+      spoolOldestAgeMs: { warning: 60_000, error: 600_000 },
+      cursorLagEvents: { warning: 1_000, error: 10_000 },
+      failedJobs: { warning: 1, error: 10 },
+      hookSilenceMs: { warning: 3_600_000, error: 21_600_000 },
+      quietHours: { enabled: false, startMinute: 1_320, endMinute: 480, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], utcOffsetMinutes: 480 },
+    },
+  },
+  future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+};
+
+const configurationState: ConfigurationState = {
+  view: {
+    schemaVersion: CONTROL_API_SCHEMA_VERSION,
+    revision: 1,
+    hash: "c".repeat(64),
+    effective: consoleConfiguration,
+    sources: {},
+  },
+  drafts: [],
+  history: [],
+};
+
 class FakeQueryPort implements ControlQueryPort {
   public overview: Overview = overview;
   public failure: Error | undefined;
@@ -138,6 +193,10 @@ class FakeQueryPort implements ControlQueryPort {
     return this.result("diagnostics", diagnostics, options);
   }
 
+  public getConfiguration(projectId: string | undefined, options: QueryOptions): Promise<ConfigurationState> {
+    return this.result(`configuration:${projectId ?? "GLOBAL"}`, configurationState, options);
+  }
+
   private result<T>(call: string, value: T, options: QueryOptions): Promise<T> {
     this.calls.push(call);
     if (this.failure) return Promise.reject(this.failure);
@@ -151,6 +210,7 @@ class FakeQueryPort implements ControlQueryPort {
 class FakeCommandPort implements ControlCommandPort {
   public calls: string[] = [];
   public failure: Error | undefined;
+  public mutationResult: ConfigurationMutationResult = { ok: true, revision: 2, hash: "d".repeat(64), status: "EFFECTIVE" };
 
   public async previewCapture(sessionId: string): Promise<CapturePreview> {
     if (this.failure) throw this.failure;
@@ -162,6 +222,49 @@ class FakeCommandPort implements ControlCommandPort {
     if (this.failure) throw this.failure;
     this.calls.push(`commit:${command.sessionId}:${command.previewRevision}:${command.idempotencyKey}`);
     return { schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 3, duplicateEvents: 0, cursor: { byteOffset: 100, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: NOW, lastTransitionAt: NOW, retryable: false, evidenceRefs: [] } };
+  }
+
+  public async validateConfiguration(command: ConfigurationDraftCommand): Promise<ConfigurationValidationResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`config:validate:${command.scope}:${command.projectId ?? "GLOBAL"}:${command.baseRevision}`);
+    return {
+      ok: true,
+      draft: {
+        draftRevision: 7,
+        baseRevision: command.baseRevision,
+        scope: command.scope,
+        ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
+        configuration: consoleConfiguration,
+        changedPaths: Object.keys(command.draft),
+        requiresRestart: false,
+        activatable: true,
+        diagnostics: [],
+      },
+    };
+  }
+
+  public async activateConfiguration(command: ConfigurationActivateCommand): Promise<ConfigurationMutationResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`config:activate:${command.expectedRevision}:${command.draftRevision}:${command.idempotencyKey}`);
+    return this.mutationResult;
+  }
+
+  public async rollbackConfiguration(command: ConfigurationRollbackCommand): Promise<ConfigurationMutationResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`config:rollback:${command.expectedRevision}:${command.targetRevision}:${command.idempotencyKey}`);
+    return this.mutationResult.ok ? { ...this.mutationResult, status: "ROLLED_BACK" } : this.mutationResult;
+  }
+
+  public async cancelJob(command: JobOperatorCommand): Promise<JobCommandResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`job:cancel:${command.jobId}:${command.expectedRevision}:${command.idempotencyKey}`);
+    return { schemaVersion: 1, action: "CANCEL", disposition: "APPLIED", job: { ...job, revision: command.expectedRevision + 1, status: "CANCELLED", reasonCode: "JOB_CANCELLED" } };
+  }
+
+  public async retryJob(command: JobOperatorCommand): Promise<JobCommandResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`job:retry:${command.jobId}:${command.expectedRevision}:${command.idempotencyKey}`);
+    return { schemaVersion: 1, action: "RETRY", disposition: "APPLIED", job: { ...job, revision: command.expectedRevision + 1, status: "QUEUED", reasonCode: "JOB_QUEUED", progress: 0 } };
   }
 }
 
@@ -218,6 +321,38 @@ describe("Console Gateway security boundary", () => {
 
   function authorizedHeaders(browser: AuthenticatedBrowser): Record<string, string> {
     return { cookie: browser.cookie, "x-zhiloop-csrf": browser.csrf };
+  }
+
+  function publish(log: BoundedInvalidationLog, revision: number): void {
+    log.publish({
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      eventId: `event-${revision}`,
+      type: "session.updated",
+      entityId: "session-1",
+      revision,
+      occurredAt: NOW,
+      reasonCode: "CAPTURED_CURRENT",
+    });
+  }
+
+  async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, expected: string): Promise<string> {
+    const decoder = new TextDecoder();
+    let collected = "";
+    const timeout = new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timed out waiting for ${expected}`)), 2_000);
+      timer.unref();
+    });
+    return Promise.race([
+      (async () => {
+        while (!collected.includes(expected)) {
+          const next = await reader.read();
+          if (next.done) throw new Error(`stream ended before ${expected}`);
+          collected += decoder.decode(next.value, { stream: true });
+        }
+        return collected;
+      })(),
+      timeout,
+    ]);
   }
 
   it("uses a one-time fragment-compatible bootstrap and hardened browser session", async () => {
@@ -303,6 +438,280 @@ describe("Console Gateway security boundary", () => {
     expect((await fetch(`${address?.origin}/api/v1/sessions?limit=${MAX_PAGE_SIZE + 1}`, { headers })).status).toBe(400);
   });
 
+  it("maps strict configuration get, draft, activation and rollback contracts", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    const commandHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const state = await fetch(`${address?.origin}/api/v1/configuration?projectId=project-a`, { headers: readHeaders });
+    expect(state.status).toBe(200);
+    expect((await state.json() as { result: ConfigurationState }).result.view.revision).toBe(1);
+
+    const draft = await fetch(`${address?.origin}/api/v1/configuration/draft`, {
+      method: "POST",
+      headers: commandHeaders,
+      body: JSON.stringify({ baseRevision: 1, scope: "PROJECT", projectId: "project-a", draft: { "runtime.workerConcurrency": 3 } }),
+    });
+    expect(draft.status).toBe(200);
+    expect((await draft.json() as { result: ConfigurationValidationResult }).result).toMatchObject({ ok: true, draft: { draftRevision: 7 } });
+
+    const activate = await fetch(`${address?.origin}/api/v1/configuration/activate`, {
+      method: "POST",
+      headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 1, draftRevision: 7, idempotencyKey: "config:activate:revision-7" }),
+    });
+    expect(activate.status).toBe(200);
+    expect((await activate.json() as { result: ConfigurationMutationResult }).result).toMatchObject({ ok: true, status: "EFFECTIVE" });
+
+    const rollback = await fetch(`${address?.origin}/api/v1/configuration/rollback`, {
+      method: "POST",
+      headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 2, targetRevision: 1, idempotencyKey: "config:rollback:revision-1" }),
+    });
+    expect(rollback.status).toBe(200);
+    expect((await rollback.json() as { result: ConfigurationMutationResult }).result).toMatchObject({ ok: true, status: "ROLLED_BACK" });
+    expect(queryPort.calls).toEqual(["configuration:project-a"]);
+    expect(commandPort.calls).toEqual([
+      "config:validate:PROJECT:project-a:1",
+      "config:activate:1:7:config:activate:revision-7",
+      "config:rollback:2:1:config:rollback:revision-1",
+    ]);
+  });
+
+  it("rejects unknown, scope-mismatched and oversized configuration inputs", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    const headers = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const unknown = await fetch(`${address?.origin}/api/v1/configuration/draft`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ baseRevision: 1, scope: "GLOBAL", draft: {}, rawPrompt: "forbidden" }),
+    });
+    expect(unknown.status).toBe(400);
+    expect(await unknown.text()).not.toContain("forbidden");
+    expect((await fetch(`${address?.origin}/api/v1/configuration/draft`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ baseRevision: 1, scope: "PROJECT", draft: {} }),
+    })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/configuration/draft`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ baseRevision: 1, scope: "GLOBAL", draft: { padding: "x".repeat(20_000) } }),
+    })).status).toBe(413);
+    expect((await fetch(`${address?.origin}/api/v1/configuration/draft`, { headers: readHeaders })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/configuration?projectId=bad%0Aid`, { headers: readHeaders })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/configuration?projectId=a&projectId=b`, { headers: readHeaders })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/configuration?unknown=1`, { headers: readHeaders })).status).toBe(400);
+    expect(commandPort.calls).toEqual([]);
+    expect(queryPort.calls).toEqual([]);
+  });
+
+  it("preserves configuration stale, conflict and unavailable HTTP semantics without leaking details", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" };
+    const activateBody = JSON.stringify({ expectedRevision: 1, draftRevision: 7, idempotencyKey: "config:activate:revision-7" });
+    commandPort.mutationResult = { ok: false, diagnostic: { code: "STALE_REVISION", retryable: false } };
+    const stale = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+    expect(stale.status).toBe(409);
+    expect(await stale.text()).toContain("STALE_REVISION");
+
+    commandPort.failure = new ControlClientError("private config value", "REMOTE_ERROR", "CONFLICT");
+    const conflict = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.text()).not.toContain("private config value");
+
+    commandPort.failure = new ControlClientError("private socket path", "REMOTE_ERROR", "SIDECAR_UNAVAILABLE");
+    const unavailable = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.text()).not.toContain("private socket path");
+
+    for (const [remoteCode, expectedStatus] of [
+      ["NOT_FOUND", 404],
+      ["INVALID_REQUEST", 400],
+      ["RATE_LIMITED", 429],
+    ] as const) {
+      commandPort.failure = new ControlClientError("private remote detail", "REMOTE_ERROR", remoteCode);
+      const response = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+      expect(response.status, remoteCode).toBe(expectedStatus);
+      expect(await response.text()).not.toContain("private remote detail");
+    }
+    commandPort.failure = new ControlClientError("private protocol detail", "PROTOCOL");
+    const protocolFailure = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+    expect(protocolFailure.status).toBe(503);
+    expect(await protocolFailure.text()).not.toContain("private protocol detail");
+
+    commandPort.failure = undefined;
+    for (const [code, expectedStatus] of [
+      ["NOT_FOUND", 404],
+      ["INVALID_CONFIGURATION", 400],
+      ["COMPONENT_APPLY_FAILED", 503],
+    ] as const) {
+      commandPort.mutationResult = { ok: false, diagnostic: { code, retryable: false } };
+      const response = await fetch(`${address?.origin}/api/v1/configuration/activate`, { method: "POST", headers, body: activateBody });
+      expect(response.status, code).toBe(expectedStatus);
+      expect(await response.text()).toContain(code);
+    }
+
+    queryPort.failure = new Error("private effective configuration");
+    const unavailableRead = await fetch(`${address?.origin}/api/v1/configuration`, { headers: authorizedHeaders(browser) });
+    expect(unavailableRead.status).toBe(503);
+    expect(await unavailableRead.text()).not.toContain("private effective configuration");
+  });
+
+  it("returns capability unavailable when configuration mutation wiring is absent", async () => {
+    await start({ commandPort: undefined });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const response = await fetch(`${address?.origin}/api/v1/configuration/activate`, {
+      method: "POST",
+      headers: { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 1, draftRevision: 7, idempotencyKey: "config:activate:revision-7" }),
+    });
+    expect(response.status).toBe(503);
+    expect(await response.text()).toContain("CAPABILITY_UNAVAILABLE");
+  });
+
+  it("streams live invalidations with cookie-only EventSource auth and bounded heartbeats", async () => {
+    const invalidationLog = new BoundedInvalidationLog({ maximumEvents: 4, maximumBytes: 4_096 });
+    await start({ invalidationLog, sseHeartbeatMs: 100, pollingFallbackMs: 750 });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const controller = new AbortController();
+    const response = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie },
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    expect(await readUntil(reader, ": heartbeat revision=0")).toContain("retry: 750");
+    publish(invalidationLog, 1);
+    const live = await readUntil(reader, '"revision":1');
+    expect(live).toContain("event: session.updated");
+    expect(live).not.toContain("Safe session title");
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+  });
+
+  it("publishes observed background state changes within the P1 one-second UI budget without request overlap", async () => {
+    await start({ sseHeartbeatMs: 100, pollingFallbackMs: 100 });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const controller = new AbortController();
+    const response = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie },
+      signal: controller.signal,
+    });
+    const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    await readUntil(reader, ": heartbeat revision=0");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    queryPort.overview = { ...queryPort.overview, alertCount: 1 };
+    const startedAt = performance.now();
+    const update = await readUntil(reader, "event: alert.updated");
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(update).toContain('"revision":1');
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+  });
+
+  it("resumes after Last-Event-ID and emits one resync signal after replay expiry", async () => {
+    const invalidationLog = new BoundedInvalidationLog({ maximumEvents: 2, maximumBytes: 4_096 });
+    publish(invalidationLog, 1);
+    publish(invalidationLog, 2);
+    publish(invalidationLog, 3);
+    await start({ invalidationLog });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+
+    const resumedController = new AbortController();
+    const resumed = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie, "last-event-id": "1" },
+      signal: resumedController.signal,
+    });
+    const resumedReader = resumed.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    const replay = await readUntil(resumedReader, '"revision":3');
+    expect(replay).toContain('"revision":2');
+    expect(replay).not.toContain('"revision":1');
+    resumedController.abort();
+    await resumedReader.cancel().catch(() => undefined);
+
+    const staleController = new AbortController();
+    const stale = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie, "last-event-id": "0" },
+      signal: staleController.signal,
+    });
+    const staleReader = stale.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    const resync = await readUntil(staleReader, "resync.required");
+    expect(resync).toContain('"reasonCode":"SOURCE_UNAVAILABLE"');
+    expect(resync).toContain("id: 3");
+    expect(resync).not.toContain('"type":"session.updated"');
+    staleController.abort();
+    await staleReader.cancel().catch(() => undefined);
+
+    const invalidController = new AbortController();
+    const invalid = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie, "last-event-id": "03" },
+      signal: invalidController.signal,
+    });
+    const invalidReader = invalid.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    const invalidResync = await readUntil(invalidReader, "resync.required");
+    expect(invalidResync).toContain('"reasonCode":"INVALID_INPUT"');
+    expect(invalidResync).toContain('"eventId":"resync-invalid-cursor-3"');
+    invalidController.abort();
+    await invalidReader.cancel().catch(() => undefined);
+  });
+
+  it("serves a bounded polling fallback contract with cursor and resync semantics", async () => {
+    const invalidationLog = new BoundedInvalidationLog({ maximumEvents: 3, maximumBytes: 4_096 });
+    publish(invalidationLog, 1);
+    publish(invalidationLog, 2);
+    publish(invalidationLog, 3);
+    await start({ invalidationLog, pollingFallbackMs: 1_250 });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = authorizedHeaders(browser);
+    const first = await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=0&limit=2`, { headers });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { result: { events: { revision: number }[]; nextRevision: number; hasMore: boolean; retryAfterMs: number } };
+    expect(firstBody.result).toMatchObject({ nextRevision: 2, hasMore: true, retryAfterMs: 1_250 });
+    expect(firstBody.result.events.map(({ revision }) => revision)).toEqual([1, 2]);
+    const second = await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=${firstBody.result.nextRevision}&limit=2`, { headers });
+    expect((await second.json() as { result: { events: { revision: number }[] } }).result.events.map(({ revision }) => revision)).toEqual([3]);
+    const future = await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=4`, { headers });
+    expect((await future.json() as { result: { resyncRequired: boolean; events: unknown[] } }).result).toMatchObject({ resyncRequired: true, events: [] });
+    expect((await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=01`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=0&afterRevision=1`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=0&unknown=1`, { headers })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/invalidations/poll?afterRevision=0`, {
+      method: "POST",
+      headers: { ...headers, origin: address?.origin ?? "" },
+    })).status).toBe(405);
+  });
+
+  it("rejects unsafe SSE connection, pending-buffer, heartbeat and fallback limits", async () => {
+    const invalidationLog = new BoundedInvalidationLog({ maximumEvents: 2, maximumBytes: 4_096 });
+    const base = { queryPort, staticRoot, bootstrapToken: BOOTSTRAP_TOKEN, invalidationLog };
+    await expect(createConsoleGateway({ ...base, maximumSseConnections: 0 })).rejects.toThrow(/maximumSseConnections/u);
+    await expect(createConsoleGateway({ ...base, maximumSsePendingBytes: 4_096 })).rejects.toThrow(/maximumSsePendingBytes/u);
+    await expect(createConsoleGateway({ ...base, sseHeartbeatMs: 99 })).rejects.toThrow(/sseHeartbeatMs/u);
+    await expect(createConsoleGateway({ ...base, pollingFallbackMs: 99 })).rejects.toThrow(/pollingFallbackMs/u);
+  });
+
+  it("caps concurrent SSE connections and advertises polling fallback", async () => {
+    await start({ maximumSseConnections: 1, pollingFallbackMs: 1_250 });
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const controller = new AbortController();
+    const first = await fetch(`${address?.origin}/api/v1/invalidations`, {
+      headers: { cookie: browser.cookie },
+      signal: controller.signal,
+    });
+    expect(first.status).toBe(200);
+    const limited = await fetch(`${address?.origin}/api/v1/invalidations`, { headers: { cookie: browser.cookie } });
+    expect(limited.status).toBe(503);
+    expect(limited.headers.get("retry-after")).toBe("2");
+    expect(await limited.text()).toContain("polling fallback");
+    controller.abort();
+    await first.body?.cancel().catch(() => undefined);
+  });
+
   it("binds capture preview and commit to strict authenticated commands", async () => {
     await start();
     const browser = (await authenticate()).browser as AuthenticatedBrowser;
@@ -316,6 +725,39 @@ describe("Console Gateway security boundary", () => {
     expect(commandPort.calls).toEqual(["preview:session-1", "commit:session-1:7:capture:session-1:revision-7"]);
     const forged = await fetch(`${address?.origin}/api/v1/capture-jobs`, { method: "POST", headers, body: JSON.stringify({ sessionId: "session-1", dryRun: true, unexpected: "field" }) });
     expect(forged.status).toBe(400);
+  });
+
+  it("forwards strict revision-bound Job commands and publishes only safe results", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" };
+    const cancel = await fetch(`${address?.origin}/api/v1/jobs/job-1/cancel`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ expectedRevision: 3, idempotencyKey: "operator:cancel:gateway:one" }),
+    });
+    expect(cancel.status).toBe(200);
+    expect(await cancel.json()).toMatchObject({ result: { action: "CANCEL", disposition: "APPLIED", job: { jobId: "job-1", revision: 4 } } });
+    const retry = await fetch(`${address?.origin}/api/v1/jobs/job-1/retry`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ expectedRevision: 4, idempotencyKey: "operator:retry:gateway:one" }),
+    });
+    expect(retry.status).toBe(200);
+    expect(commandPort.calls).toEqual([
+      "job:cancel:job-1:3:operator:cancel:gateway:one",
+      "job:retry:job-1:4:operator:retry:gateway:one",
+    ]);
+    expect((await fetch(`${address?.origin}/api/v1/jobs/job-1/cancel`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ expectedRevision: 3, idempotencyKey: "operator:cancel:gateway:two", extra: true }),
+    })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/jobs/job-1/cancel`, {
+      method: "POST",
+      headers: { ...headers, "x-zhiloop-csrf": "forged-token-that-is-long-enough" },
+      body: JSON.stringify({ expectedRevision: 3, idempotencyKey: "operator:cancel:gateway:three" }),
+    })).status).toBe(403);
   });
 
   it("preserves stale-preview conflicts without reflecting Sidecar details", async () => {

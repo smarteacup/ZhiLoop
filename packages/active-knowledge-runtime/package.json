@@ -1,0 +1,54 @@
+{
+  "name": "@zhiloop/active-knowledge-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/closure-verifier",
+      "@zhiloop/codex-context-injection",
+      "@zhiloop/config",
+      "@zhiloop/confirmation-writeback",
+      "@zhiloop/context-orchestrator",
+      "@zhiloop/domain",
+      "@zhiloop/feedback-engine",
+      "@zhiloop/interaction-policy",
+      "@zhiloop/knowledge-mcp",
+      "@zhiloop/knowledge-reranker",
+      "@zhiloop/query-context",
+      "@zhiloop/retrieval-engine",
+      "@zhiloop/retrieval-evaluation",
+      "@zhiloop/runtime-audit-store",
+      "@zhiloop/stop-continuation"
+    ],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/closure-verifier": "0.0.0",
+    "@zhiloop/codex-context-injection": "0.0.0",
+    "@zhiloop/config": "0.0.0",
+    "@zhiloop/confirmation-writeback": "0.0.0",
+    "@zhiloop/context-orchestrator": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/feedback-engine": "0.0.0",
+    "@zhiloop/interaction-policy": "0.0.0",
+    "@zhiloop/knowledge-mcp": "0.0.0",
+    "@zhiloop/knowledge-reranker": "0.0.0",
+    "@zhiloop/query-context": "0.0.0",
+    "@zhiloop/retrieval-engine": "0.0.0",
+    "@zhiloop/retrieval-evaluation": "0.0.0",
+    "@zhiloop/runtime-audit-store": "0.0.0",
+    "@zhiloop/stop-continuation": "0.0.0"
+  }
+}

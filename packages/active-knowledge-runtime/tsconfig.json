@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../closure-verifier" },
+    { "path": "../codex-context-injection" },
+    { "path": "../config" },
+    { "path": "../confirmation-writeback" },
+    { "path": "../context-orchestrator" },
+    { "path": "../domain" },
+    { "path": "../feedback-engine" },
+    { "path": "../interaction-policy" },
+    { "path": "../knowledge-mcp" },
+    { "path": "../knowledge-reranker" },
+    { "path": "../query-context" },
+    { "path": "../retrieval-engine" },
+    { "path": "../retrieval-evaluation" },
+    { "path": "../runtime-audit-store" },
+    { "path": "../stop-continuation" }
+  ]
+}

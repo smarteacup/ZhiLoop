@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../config" },
+    { "path": "../conversation-ledger" },
+    { "path": "../conversation-normalizer" },
+    { "path": "../domain" },
+    { "path": "../episode-builder" },
+    { "path": "../evidence-engine" },
+    { "path": "../evidence-policy" },
+    { "path": "../knowledge-compiler" },
+    { "path": "../knowledge-indexer" },
+    { "path": "../knowledge-registry" },
+    { "path": "../markdown-repository" },
+    { "path": "../scope-resolver" }
+  ]
+}

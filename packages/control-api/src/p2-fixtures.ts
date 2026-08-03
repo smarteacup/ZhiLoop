@@ -1,0 +1,80 @@
+import type { BidirectionalProvenance, CandidatePreview, ExtractionSnapshot } from "./p2-contracts.js";
+
+const observedAt = "2026-08-04T08:00:00.000Z";
+const snapshotIdentityHash = "a".repeat(64);
+
+export const REDACTED_P2_CONTRACT_FIXTURES = Object.freeze({
+  snapshot: Object.freeze({
+    schemaVersion: 1,
+    snapshotId: "snapshot_demo_02",
+    revision: 1,
+    identityHash: snapshotIdentityHash,
+    sessionId: "session_demo_02",
+    transcriptIdentityHash: "b".repeat(64),
+    sourceSequence: { from: 20, to: 42 },
+    cursor: { byteOffset: 8_192, lineNumber: 240 },
+    completeness: {
+      status: "PARTIAL_SNAPSHOT",
+      sourceClosed: false,
+      unsupportedEventTypes: ["future_tool_event_v2"],
+    },
+    previousSnapshotId: "snapshot_demo_01",
+    compilerVersion: "compiler-v2",
+    policyHash: "c".repeat(64),
+    configurationHash: "d".repeat(64),
+    createdAt: observedAt,
+  } satisfies ExtractionSnapshot),
+  candidatePreview: Object.freeze({
+    schemaVersion: 1,
+    previewId: "preview_demo_01",
+    revision: 3,
+    snapshot: { snapshotId: "snapshot_demo_02", revision: 1, identityHash: snapshotIdentityHash },
+    extractionKey: "e".repeat(64),
+    compilerVersion: "compiler-v2",
+    policyHash: "c".repeat(64),
+    status: "READY",
+    candidates: [{
+      candidateId: "candidate_demo_01",
+      episodeIds: ["episode_demo_01"],
+      compilerVersion: "compiler-v2",
+      subjectKey: "project.console.snapshot-contract",
+      kind: "DESIGN",
+      title: "Immutable extraction snapshot",
+      summary: "Bind extraction to a versioned source range and policy.",
+      confidence: 0.92,
+      scope: "PROJECT",
+      evidenceVerdict: "SUPPORTS",
+      policyDecision: "PUBLISH",
+      policyReasonCodes: ["EVIDENCE_SUPPORTED"],
+    }],
+    diagnostics: [],
+    createdAt: observedAt,
+    expiresAt: "2026-08-04T08:10:00.000Z",
+  } satisfies CandidatePreview),
+  provenance: Object.freeze({
+    schemaVersion: 1,
+    root: { type: "SNAPSHOT", snapshotId: "snapshot_demo_02", revision: 1 },
+    upstream: [{
+      edgeId: "edge_event_snapshot_01",
+      relationType: "SNAPSHOT_INCLUDES_EVENT",
+      from: {
+        type: "EVENT",
+        sessionId: "session_demo_02",
+        turnId: "turn_demo_01",
+        eventId: "event_demo_01",
+        sourceSequence: 20,
+      },
+      to: { type: "SNAPSHOT", snapshotId: "snapshot_demo_02", revision: 1 },
+      observedAt,
+    }],
+    downstream: [{
+      edgeId: "edge_snapshot_episode_01",
+      relationType: "SNAPSHOT_DERIVED_EPISODE",
+      from: { type: "SNAPSHOT", snapshotId: "snapshot_demo_02", revision: 1 },
+      to: { type: "EPISODE", episodeId: "episode_demo_01" },
+      observedAt,
+    }],
+    completeness: "PARTIAL_UNSUPPORTED_EVENT_TYPES",
+    unsupportedEventTypes: ["future_tool_event_v2"],
+  } satisfies BidirectionalProvenance),
+});

@@ -6,62 +6,62 @@
 
 | 指标 | 数值 |
 |---|---:|
-| CR 标识 | `main@85aeb89+progressive-knowledge-disclosure` |
-| CR 耗时 | 97s |
-| 🔴 高风险 | 1 个 |
-| 🟡 中风险 | 0 个 |
+| CR 标识 | `main@144cecc+rendered-budget-follow-up` |
+| CR 耗时 | 212s |
+| 🔴 高风险 | 0 个 |
+| 🟡 中风险 | 2 个 |
 | 🟢 低风险 | 0 个 |
-| 修复程度 | 已修复 1/1（100%） |
+| 修复程度 | 已修复 2/2（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
-| 总 CR 次数 | 47 次 |
-| 总耗时 | 22747s |
+| 总 CR 次数 | 48 次 |
+| 总耗时 | 22959s |
 | 🔴 高风险累计 | 222 个 |
-| 🟡 中风险累计 | 304 个 |
+| 🟡 中风险累计 | 306 个 |
 | 🟢 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
 
 ## 改动说明
 
-本次变更把知识注入从统一 L2/L3 调整为渐进式披露。自动 UserPrompt 首次上下文会为 Binding Rule 保留 L2 门禁摘要，其他候选只提供 L1 简介；Codex 再用 `ckl.get` 定向展开所选知识到 L2 边界或 L3 正文与证据。
+本次变更修正渐进披露的两个生产化问题。Token 上限从只核算内部 `ContextEnvelope` 改为核算完整 `additionalContext`，安全前缀、Authority 语义、渐进披露协议、Trace 元数据和知识目录均进入同一固定点估算；编排器和 Hook 复用新模块 `@zhiloop/context-renderer`，避免两套规则漂移。
 
-运行中接口同步调整：`ckl.search/related` 返回 L1 Pointer，`ckl.get.targetDetailLevel` 为可选新增字段，不传时仍保持旧 L3 行为。Push 与 Pull 继续复用 current version、状态和 QueryContext Scope 校验；自动高风险信号不再批量注入 L3，而由显式 Pull 或有限闭环补充。
+目录预算新增 `disclosedItems` 与 `omittedItems`。存在合格但未展示的知识时，注入内容提供结构化 `progressiveDisclosure.directory.nextAction`，模型可以先用窄化 `ckl.search` 找回 L1 Pointer，再按需用 `ckl.get` 展开 L2/L3；Binding Rule 仍优先以 L2 保留。
 
-默认策略从 L2 改为 L1，Pointer 上限从 3 提高到 8，硬预算仍为 800 tokens。OpenSpec、ADR/TDD、插件 Skill、MVP/P5 Gate 和真实会话模拟已同步。
+`ContextOrchestrationRequest.traceId` 以及两个预算计数字段成为内部必填契约，相关 Schema、调用方、Gate 和文档已同步。项目尚未部署，没有外部兼容调用方；默认 800-token 配置、Scope/Status/current-version 门禁和 OFF/SHADOW/ACTIVE 回滚语义均未放宽。
 
 ## 风险矩阵
 
 | 维度 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增/接口重构 | 🔴 高 | `packages/stop-continuation/src/types.ts:4`、`packages/stop-continuation/src/service.ts:174` | MCP Expansion 类型加入 L2 后，Stop context continuation 原端口会同时接受 L2，可能把仅有边界的结果当成满足 L3 required knowledge。 | 高风险任务闭环、缺失证据补充和完成门禁。 | 新增 `KnowledgeMcpEvidencedExpansionDelta` 收窄端口，并在运行时强制 `toDetailLevel=L3_EVIDENCED`；新增伪造 L2 delta 回归测试，已修复。 |
+| 增/新增字段 | 🟡 中 | `packages/codex-context-injection/src/service.ts` | Hook 的运行时边界最初只用 `>= 0` 校验 `omittedItems`，错误 Provider 可能传入小数或非安全整数并产生失真的目录元数据。 | ACTIVE 注入的预算可信度和 continuation 决策。 | 对 max/estimated/disclosed/omitted 全部增加 `Number.isSafeInteger` 门禁，并加入小数省略数拒绝回归，已修复。 |
+| 删/测试重构 | 🟡 中 | `packages/model-codex-exec/src/model.test.ts` | 并发全仓测试下，5ms timer 可能在 Fake Process 注册 abort listener 前触发；事件不会回放，导致用例等待到 Vitest 5s 总超时。生产 `NodeCodexExecProcess` 已处理 pre-aborted signal，但测试替身未遵守同一端口语义。 | CI/Gate 稳定性，不影响生产 Adapter。 | Fake Process 在注册 listener 前检查 `signal.aborted` 并立即 reject；完整 Gate 重跑稳定通过，已修复。 |
 
 ## 配置检查
 
-| 配置 | 代码默认值 | 部署 YAML | 结论 |
-|---|---|---|---|
-| `injection.defaultLevel` | `L1_POINTER` | `L1_POINTER` | 一致 |
-| `levels.L1_POINTER.maxItems` | 8 | 8 | 一致 |
-| `levels.L2_COMPACT.maxItems` | 8 | 8 | 一致 |
-| `defaultMaxTokens` | 800 | 800 | 未扩大硬预算 |
+| 配置 | 变更前 | 变更后 | 结论 |
+|---|---:|---:|---|
+| `injection.defaultMaxTokens` | 800 | 800 | 硬预算未扩大，核算对象改为最终渲染文本 |
+| `injection.defaultLevel` | `L1_POINTER` | `L1_POINTER` | 渐进披露默认层级未变化 |
+| OFF/SHADOW/ACTIVE | 已启用 | 已启用 | 发布与快速回滚门禁未变化 |
 
-仓库没有 pre/prod/inner 多环境注入配置；受检 YAML 通过配置加载器与默认值契约测试。该默认行为变化仍受既有 OFF/SHADOW/ACTIVE rollout 和快速回滚保护。
+仓库没有 pre/prod/inner 多环境注入配置；本次没有新增部署配置项。新增 workspace 依赖由 allowlist、TypeScript Project References 和 import policy 共同约束。
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| OpenSpec strict validate | 1/1 通过 |
-| ZhiLoop Skill validate | 通过 |
-| 渐进披露专项 | 72/72 通过 |
-| Stop/MCP/Orchestrator 回归 | 31/31 通过 |
-| 真实会话模拟 | 7/7 场景通过；L1→L2/L3 定向展开通过 |
+| OpenSpec strict validate | `progressive-knowledge-disclosure` 有效，19/19 任务完成 |
+| 渐进披露专项 | 34/34 通过 |
+| 共享 Renderer 直接测试 | 3/3；Statements 95.83%、Branches 94.44%、Functions 100%、Lines 94.44% |
+| 真实会话模拟 | 7/7 场景通过；截断后 `ckl.search` → L2/L3 展开通过 |
+| Workspace/import policy | 38/38 通过 |
 | 架构/Gate | 51/51 通过 |
-| 模块测试 | 626/626 通过 |
-| 覆盖率 | Lines 96.86%、Branches 89.73%、Functions 97.91% |
+| 模块测试 | 630/630 通过 |
+| 全仓覆盖率 | Statements 94.47%、Branches 89.81%、Functions 97.99%、Lines 96.86% |
 
 ## Review 结论
 
-新增接口保持旧 `ckl.get` 缺省 L3 兼容，Scope/状态/版本门禁没有放宽。发现的 1 个高风险闭环类型退化已通过类型收窄、运行时校验和回归测试闭环，无遗留 actionable finding。
+最终渲染预算、Binding Rule 保留、截断可发现性、Scope/Status/version 校验和搜索后定向展开均有直接自动化证据。发现的两个中风险问题已闭环，无遗留 actionable finding；性能上自动路径最多 8 条候选且无新增 I/O，固定点序列化开销有界，未发现当前部署规模下的瓶颈。

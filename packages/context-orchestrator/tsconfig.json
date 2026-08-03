@@ -6,7 +6,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
-    { "path": "../config" }, { "path": "../domain" }, { "path": "../knowledge-reranker" },
+    { "path": "../config" }, { "path": "../context-renderer" }, { "path": "../domain" }, { "path": "../knowledge-reranker" },
     { "path": "../query-context" }, { "path": "../schemas" }
   ]
 }

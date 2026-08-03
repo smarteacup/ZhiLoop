@@ -15,7 +15,7 @@ const pointerEnvelope = {
     evidence: "NONE",
     reasonCodes: ["REQUESTED_COMPLEXITY_LEVEL"],
   },
-  budget: { maxTokens: 800, estimatedTokens: 120, truncated: false },
+  budget: { maxTokens: 800, estimatedTokens: 120, truncated: false, disclosedItems: 1, omittedItems: 0 },
   items: [{
     id: "knowledge.context.pointer",
     version: 1,

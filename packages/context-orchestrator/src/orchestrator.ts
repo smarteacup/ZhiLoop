@@ -1,6 +1,5 @@
-import { Buffer } from "node:buffer";
-
 import type { InjectionPolicy } from "@zhiloop/config";
+import { withAdditionalContextTokenEstimate } from "@zhiloop/context-renderer";
 import type {
   ContextAuthority,
   ContextComplexityLevel,
@@ -40,10 +39,6 @@ function sentence(value: string): string {
   const normalized = value.trim();
   const match = /^(.{1,300}?[.!?。！？])(?:\s|$)/u.exec(normalized);
   return (match?.[1] ?? normalized.slice(0, 300)).trim();
-}
-
-function estimateTokens(value: unknown): number {
-  return Math.max(1, Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 3));
 }
 
 function authority(item: RerankedKnowledge): ContextAuthority {
@@ -207,6 +202,7 @@ function draftEnvelope(
   level: ContextComplexityLevel,
   reasons: Set<string>,
   maxTokens: number,
+  eligibleCandidateCount: number,
   items: readonly ContextEnvelopeItem[],
   taskContract: TaskContractBlock | undefined,
   truncated: boolean,
@@ -225,24 +221,23 @@ function draftEnvelope(
       evidence: properties.evidence,
       reasonCodes: [...reasons],
     },
-    budget: { maxTokens, estimatedTokens: 1, truncated },
+    budget: {
+      maxTokens,
+      estimatedTokens: 1,
+      truncated,
+      disclosedItems: items.length,
+      omittedItems: Math.max(0, eligibleCandidateCount - items.length),
+    },
     items,
     ...(taskContract === undefined ? {} : { taskContract }),
   };
-  let estimatedTokens = estimateTokens(base);
-  let envelope: ContextEnvelope = { ...base, budget: { ...base.budget, estimatedTokens } };
-  for (let iteration = 0; iteration < 3; iteration += 1) {
-    const next = estimateTokens(envelope);
-    if (next === estimatedTokens) break;
-    estimatedTokens = next;
-    envelope = { ...envelope, budget: { ...envelope.budget, estimatedTokens } };
-  }
-  return envelope;
+  return withAdditionalContextTokenEstimate(base, request.traceId);
 }
 
 export class ContextOrchestrator implements ContextOrchestratorPort {
   orchestrate(request: ContextOrchestrationRequest): ContextEnvelope {
     if (!validText(request.runId, 500)) throw new Error("runId is invalid");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,499}$/u.test(request.traceId)) throw new Error("traceId is invalid");
     if (request.requestedLevel !== undefined && !CONTEXT_COMPLEXITY_LEVELS.includes(request.requestedLevel)) {
       throw new Error("requestedLevel is invalid");
     }
@@ -283,7 +278,7 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
           : selectedLevel;
         const next = [...output, itemFor(candidate, itemLevel)];
         const trialLevel = highestDetailLevel(next, selectedLevel);
-        const trial = draftEnvelope(request, trialLevel, reasons, maxTokens, next, undefined, false);
+        const trial = draftEnvelope(request, trialLevel, reasons, maxTokens, candidates.length, next, undefined, false);
         if (trial.budget.estimatedTokens > maxTokens) {
           truncated = true;
           break;
@@ -313,7 +308,7 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
         reasons.add("TASK_CONTRACT_OMITTED_FOR_DYNAMIC_KNOWLEDGE");
         truncated = true;
       } else {
-        const trial = draftEnvelope(request, level, reasons, maxTokens, selected, taskContract, truncated);
+        const trial = draftEnvelope(request, level, reasons, maxTokens, candidates.length, selected, taskContract, truncated);
         if (trial.budget.estimatedTokens > maxTokens) {
           taskContract = undefined;
           reasons.add("TASK_CONTRACT_OMITTED_BY_BUDGET");
@@ -322,19 +317,19 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
       }
     }
 
-    let envelope = draftEnvelope(request, level, reasons, maxTokens, selected, taskContract, truncated);
+    let envelope = draftEnvelope(request, level, reasons, maxTokens, candidates.length, selected, taskContract, truncated);
     if (envelope.budget.estimatedTokens > maxTokens && taskContract === undefined
       && reasons.has("TASK_CONTRACT_OMITTED_BY_BUDGET")) {
       reasons.delete(request.requestedLevel !== undefined
         ? "REQUESTED_COMPLEXITY_LEVEL"
         : request.feedback !== undefined ? "FEEDBACK_COMPLEXITY_LEVEL" : "DEFAULT_COMPLEXITY_LEVEL");
-      envelope = draftEnvelope(request, level, reasons, maxTokens, selected, undefined, truncated);
+      envelope = draftEnvelope(request, level, reasons, maxTokens, candidates.length, selected, undefined, truncated);
     }
     while (envelope.budget.estimatedTokens > maxTokens && selected.length > 0) {
       selected = selected.slice(0, -1);
       truncated = true;
       reasons.add("TOKEN_BUDGET_TRUNCATED");
-      envelope = draftEnvelope(request, selected.length === 0 ? "L0_NONE" : level, reasons, maxTokens, selected, undefined, truncated);
+      envelope = draftEnvelope(request, selected.length === 0 ? "L0_NONE" : level, reasons, maxTokens, candidates.length, selected, undefined, truncated);
     }
     if (envelope.budget.estimatedTokens > maxTokens) throw new Error("ContextEnvelope metadata exceeds token budget");
     const parsed = parseContextEnvelope(envelope);

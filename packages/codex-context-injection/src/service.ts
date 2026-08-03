@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 import type { ContextEnvelopeItem, KnowledgeScope } from "@zhiloop/domain";
+import { estimateAdditionalContextTokens } from "@zhiloop/context-renderer";
 import { fingerprintRetrievalConfiguration } from "@zhiloop/retrieval-evaluation";
 
 import { renderAdditionalContext } from "./renderer.js";
@@ -61,7 +62,14 @@ function validContext(value: ActiveContextResult, input: UserPromptSubmitInput):
     && trace.complexity.level === envelope.complexity.level
     && trace.complexity.estimatedTokens === envelope.budget.estimatedTokens
     && trace.complexity.maxTokens === envelope.budget.maxTokens
+    && Number.isSafeInteger(envelope.budget.maxTokens) && envelope.budget.maxTokens >= 1
+    && Number.isSafeInteger(envelope.budget.estimatedTokens) && envelope.budget.estimatedTokens >= 1
     && envelope.budget.estimatedTokens <= envelope.budget.maxTokens
+    && Number.isSafeInteger(envelope.budget.disclosedItems)
+    && envelope.budget.disclosedItems === envelope.items.length
+    && Number.isSafeInteger(envelope.budget.omittedItems) && envelope.budget.omittedItems >= 0
+    && (envelope.budget.omittedItems === 0 || envelope.budget.truncated)
+    && estimateAdditionalContextTokens(envelope, trace.traceId) === envelope.budget.estimatedTokens
     && sameInjection(envelope.items, trace.injection.items)
     && envelope.items.every((item) => scopeMatches(item.scope, trace.query));
 }

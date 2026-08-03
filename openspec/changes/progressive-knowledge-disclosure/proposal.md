@@ -9,6 +9,8 @@ ZhiLoop 当前默认把召回知识按 `L2_COMPACT` 一次性注入，候选较�
 - `ckl.search` 和 `ckl.related` 默认返回 L1 知识简介，避免运行中搜索再次批量注入紧凑正文。
 - `ckl.get` 支持按需从 L1 展开到 L2，或从 L1/L2 展开到 L3 正文和证据。
 - 保持 Scope、状态、当前版本、权限和去重校验在 Push 与 Pull 两条链路一致。
+- 以最终渲染后的 `additionalContext` 而不是内部 Envelope 作为硬 token 预算的核算对象。
+- 目录被截断时公开已展示/省略数量和可执行的下一步搜索提示。
 - 增加渐进披露链路模拟、专项测试、Trace 和使用反馈覆盖。
 
 ## Capabilities

@@ -199,7 +199,13 @@ describe("CodexExecStructuredGenerationModel", () => {
     const process: CodexExecProcessPort = {
       run: async (value) => {
         observedSignal = value.signal;
-        return await new Promise((_resolve, reject) => value.signal.addEventListener("abort", () => reject(new Error("secret")), { once: true }));
+        return await new Promise((_resolve, reject) => {
+          if (value.signal.aborted) {
+            reject(value.signal.reason);
+            return;
+          }
+          value.signal.addEventListener("abort", () => reject(new Error("secret")), { once: true });
+        });
       },
     };
     const model = await CodexExecStructuredGenerationModel.create({ cwd: await cwd(), process, timeoutMs: 5 });

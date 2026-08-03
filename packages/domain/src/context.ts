@@ -62,6 +62,8 @@ export interface ContextEnvelope {
     readonly maxTokens: number;
     readonly estimatedTokens: number;
     readonly truncated: boolean;
+    readonly disclosedItems: number;
+    readonly omittedItems: number;
   };
   readonly items: readonly ContextEnvelopeItem[];
   readonly taskContract?: TaskContractBlock;

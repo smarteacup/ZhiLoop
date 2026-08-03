@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { loadInjectionPolicy } from "@zhiloop/config";
+import { estimateAdditionalContextTokens, renderAdditionalContext } from "@zhiloop/context-renderer";
 import { readFileSync } from "node:fs";
 import type { KnowledgeAsset } from "@zhiloop/domain";
 import type { RerankedKnowledge } from "@zhiloop/knowledge-reranker";
@@ -39,6 +40,7 @@ function candidate(
 function request(candidates: readonly RerankedKnowledge[], overrides: Record<string, unknown> = {}) {
   return {
     runId: "run-context-1",
+    traceId: "trace-context-1",
     queryContext: resolveQueryContext({
       prompt: "symbol ContextOrchestrator in packages/context-orchestrator/src/orchestrator.ts",
       project,
@@ -147,7 +149,7 @@ describe("ContextOrchestrator", () => {
     const envelope = new ContextOrchestrator().orchestrate(request([
       candidate("knowledge.context.feedback-rule", 2, { kind: "RULE", status: "ACCEPTED" }),
       candidate("knowledge.context.feedback-reference", 1),
-    ], { feedback }));
+    ], { feedback, policy: { ...DEFAULT_CONFIGURATION.injection, defaultMaxTokens: 1_600 } }));
     expect(envelope.items.map((item) => item.detailLevel)).toEqual(["L2_COMPACT", "L1_POINTER"]);
     expect(envelope.complexity.reasonCodes).toContain("AUTOMATIC_PROGRESSIVE_DISCLOSURE");
     expect(envelope.items.every((item) => !("content" in item))).toBe(true);
@@ -187,15 +189,23 @@ describe("ContextOrchestrator", () => {
         status: "ACCEPTED", scope: { level: "TASK", taskId: "task-context", projectId: project.projectId },
       }),
     ];
-    const full = new ContextOrchestrator().orchestrate(request(values, { requestedLevel: "L1_POINTER" }));
+    const expandedPolicy = { ...DEFAULT_CONFIGURATION.injection, defaultMaxTokens: 1_600 };
+    const full = new ContextOrchestrator().orchestrate(request(values, {
+      requestedLevel: "L1_POINTER", policy: expandedPolicy,
+    }));
     expect(full.items.map((item) => item.id)).toEqual([
       "knowledge.context.task", "knowledge.context.symbol", "knowledge.context.project-fact", "knowledge.context.global-reference",
     ]);
     const budgeted = new ContextOrchestrator().orchestrate(request(values, {
       requestedLevel: "L1_POINTER", maxTokens: Math.max(180, full.budget.estimatedTokens - 80),
+      policy: expandedPolicy,
     }));
     expect(budgeted.items[0]?.id).toBe("knowledge.context.task");
     expect(budgeted.budget.truncated).toBe(true);
+    expect(budgeted.budget.disclosedItems).toBe(budgeted.items.length);
+    expect(budgeted.budget.omittedItems).toBe(values.length - budgeted.items.length);
+    expect(estimateAdditionalContextTokens(budgeted, "trace-context-1")).toBe(budgeted.budget.estimatedTokens);
+    expect(budgeted.budget.estimatedTokens).toBeLessThanOrEqual(budgeted.budget.maxTokens);
   });
 
   it("reserves the first automatic slot for a binding rule and discloses other candidates as pointers", () => {
@@ -221,6 +231,17 @@ describe("ContextOrchestrator", () => {
       ["knowledge.context.symbol-reference", "L1_POINTER"],
     ]);
     expect(envelope.complexity).toMatchObject({ level: "L2_COMPACT", breadth: 2, evidence: "POINTER" });
+
+    const constrained = new ContextOrchestrator().orchestrate(request([
+      candidate("knowledge.context.large-reference-one", 1, { summary: "reference ".repeat(100) }),
+      candidate("knowledge.context.required-rule", 8, { kind: "REQUIREMENT", status: "ACCEPTED" }),
+      candidate("knowledge.context.large-reference-two", 2, { summary: "reference ".repeat(100) }),
+    ]));
+    expect(constrained.items[0]).toMatchObject({
+      id: "knowledge.context.required-rule", authority: "BINDING_RULE", detailLevel: "L2_COMPACT",
+    });
+    expect(constrained.budget.omittedItems).toBeGreaterThan(0);
+    expect(constrained.budget.estimatedTokens).toBeLessThanOrEqual(constrained.budget.maxTokens);
   });
 
   it("orders module, user, team, and global scopes without widening the query", () => {
@@ -232,7 +253,10 @@ describe("ContextOrchestrator", () => {
         scope: { level: "MODULE", projectId: project.projectId, modulePaths: ["packages/context-orchestrator"] },
       }),
     ];
-    const envelope = new ContextOrchestrator().orchestrate(request(values, { requestedLevel: "L1_POINTER" }));
+    const envelope = new ContextOrchestrator().orchestrate(request(values, {
+      requestedLevel: "L1_POINTER",
+      policy: { ...DEFAULT_CONFIGURATION.injection, defaultMaxTokens: 1_600 },
+    }));
     expect(envelope.items.map((item) => item.id)).toEqual([
       "knowledge.context.module", "knowledge.context.user", "knowledge.context.team", "knowledge.context.global",
     ]);
@@ -241,12 +265,13 @@ describe("ContextOrchestrator", () => {
   it("downgrades evidenced content to a pointer before exhausting the budget", () => {
     const envelope = new ContextOrchestrator().orchestrate(request([
       candidate("knowledge.context.large", 1, { body: "evidence ".repeat(5_000) }),
-    ], { requestedLevel: "L3_EVIDENCED", maxTokens: 300 }));
+    ], { requestedLevel: "L3_EVIDENCED", maxTokens: 700 }));
     expect(envelope.complexity).toMatchObject({
       level: "L1_POINTER",
       reasonCodes: ["REQUESTED_COMPLEXITY_LEVEL", "TOKEN_BUDGET_LEVEL_DOWNGRADE"],
     });
     expect(envelope.items).toHaveLength(1);
+    expect(renderAdditionalContext(envelope, "trace-context-1").length).toBeGreaterThan(0);
   });
 
   it("omits Task Contract before displacing dynamic knowledge", () => {
@@ -273,6 +298,7 @@ describe("ContextOrchestrator", () => {
     expect(envelope.items.map((item) => item.id)).toEqual(["knowledge.context.valid"]);
     expect(envelope.complexity.reasonCodes).toContain("INELIGIBLE_CANDIDATE_IGNORED");
     expect(() => new ContextOrchestrator().orchestrate(request([], { runId: "bad\nrun" }))).toThrow("runId");
+    expect(() => new ContextOrchestrator().orchestrate(request([], { traceId: "bad trace" }))).toThrow("traceId");
     expect(() => new ContextOrchestrator().orchestrate(request([], { maxTokens: 0 }))).toThrow("maxTokens");
     expect(() => new ContextOrchestrator().orchestrate(request([], {
       requestedLevel: "L9_UNKNOWN",

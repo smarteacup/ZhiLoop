@@ -15,8 +15,8 @@ Hook -> Event Ledger -> Session/Turn -> Episode
  -> Compiler -> Candidate Repository
  -> Verifier Registry -> Evidence Policy
  -> Markdown -> SQLite/FTS
- -> Query Context -> Retrieval -> Rerank -> L2 Context Envelope
- -> ACTIVE UserPrompt injection -> ckl.search/get
+ -> Query Context -> Retrieval -> Rerank -> mixed L1/L2 Context Envelope
+ -> ACTIVE UserPrompt injection -> omitted-aware ckl.search/get
  -> Closure Verifier -> Stop one-shot correction
 ```
 
@@ -30,8 +30,8 @@ Hook -> Event Ledger -> Session/Turn -> Episode
 | Markdown 人可读 | 读取真实 `current.md` 并断言 Front Matter、状态和正文 | 通过 |
 | SQLite/FTS 可检索 | 五条同项目资产和一条外项目控制资产均投影并命中 FTS | 通过 |
 | 同项目召回、其他项目不泄漏 | 项目 A 返回自己的 5 条；项目 B 只返回自己的控制资产；Scope diagnostics 可解释 | 通过 |
-| 默认控制注入复杂度 | ACTIVE Hook 生成 L2；800-token 预算选择 3 条并显式 `truncated=true` | 通过 |
-| 按需展开 | 从 L2 Experience 指针经 `ckl.get` 展开 L3 正文和两条 Evidence Summary | 通过 |
+| 默认控制注入复杂度 | ACTIVE Hook 保留 Binding L2 和 Reference L1；完整 `additionalContext` 在 800-token 内选择 2 条，并显示省略 3 条及 `ckl.search` 动作 | 通过 |
+| 按需展开 | `ckl.search` 找到省略的 Experience L1 指针，再经 `ckl.get` 展开 L3 正文和两条 Evidence Summary | 通过 |
 | Authority 分层 | `ckl.search` 同时返回 Binding Rule、Accepted Decision、Reference，类型明确 | 通过 |
 | Retrieval explain 完整 | 5 条结果均含 channel reason、rank、Evidence、Episode 和复杂度原因轴 | 通过 |
 | Stop 只续跑一次 | 缺少独立 release Gate 时产生一次 correction delta；recursive Stop 拦截；第三次达到上限 | 通过 |
@@ -62,13 +62,13 @@ Implementation 的生命周期有意最高为 `IMPLEMENTED`，不能为了字面
 
 | 指标 | 结果 | 门槛 |
 |---|---:|---:|
-| Workspace/import policy | 37/37 | 全通过 |
-| 模块测试 | 623/623 | 全通过 |
+| Workspace/import policy | 38/38 | 全通过 |
+| 模块测试 | 630/630 | 全通过 |
 | 架构/Gate 测试 | 51/51 | 全通过 |
-| Statements | 94.62% | >=90% |
-| Lines | 96.90% | >=90% |
-| Branches | 89.94% | >=85% |
-| Functions | 98.04% | >=90% |
+| Statements | 94.47% | >=90% |
+| Lines | 96.86% | >=90% |
+| Branches | 89.81% | >=85% |
+| Functions | 97.99% | >=90% |
 | Recall@5 / Precision@5 | 100% / 100% | >=90% / >=80% |
 | Retrieval Traceability | 100% | 100% |
 | Scope leak / forbidden hit | 0 / 0 | <1% / 0 |

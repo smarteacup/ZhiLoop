@@ -26,8 +26,9 @@ flowchart LR
     Candidates["Reranked candidates"] --> Eligibility["Status eligibility"]
     Eligibility --> Priority["Binding reservation; Scope > Authority > Status > Rank"]
     Priority --> Level["Mixed L1/L2 initial disclosure"]
-    Level --> Budget["Conservative token budget"]
+    Level --> Renderer["Shared Context Renderer"]
     Contract["Optional Task Contract"] --> Budget
+    Renderer --> Budget["Final additionalContext token budget"]
     Budget --> Schema["ContextEnvelope schema validation"]
     Schema --> Output["Immutable envelope"]
 ```
@@ -44,9 +45,9 @@ Authority 独立编码为 `BINDING_RULE`、`ACCEPTED_DECISION`、`VERIFIED_FACT`
 
 ## 5. 排序、预算与降级
 
-候选只接受 `ACCEPTED/IMPLEMENTED/VERIFIED`。自动首次注入为最高优先级 Binding Rule 保留首个槽位，再按 Scope 接近程度、Authority、状态、Rerank rank、Asset ID 排序；Binding Rule 生成 L2，其他候选生成 L1。默认总预算 800 tokens，使用 UTF-8 JSON 字节数除以 3 的保守估算。
+候选只接受 `ACCEPTED/IMPLEMENTED/VERIFIED`。自动首次注入为最高优先级 Binding Rule 保留首个槽位，再按 Scope 接近程度、Authority、状态、Rerank rank、Asset ID 排序；Binding Rule 生成 L2，其他候选生成 L1。默认总预算 800 tokens，使用 UTF-8 字节数除以 3 的保守估算，核算对象是包含安全前缀、Authority 语义、渐进披露协议、Trace 元数据和知识目录的最终 `additionalContext`，不是内部 Envelope。
 
-超预算时先截断低优先级候选；非 L1 层连一个候选也放不下时降为 L1；仍放不下则 L0。Task Contract 只使用剩余预算，不能挤掉已经选择的动态知识。所有选择、升级、降级和截断均写入 reason codes。
+超预算时先截断低优先级候选；非 L1 层连一个候选也放不下时降为 L1；仍放不下则 L0。Task Contract 只使用剩余预算，不能挤掉已经选择的动态知识。预算同时记录 `disclosedItems` 和合格但未展示的 `omittedItems`；后者大于 0 时 Renderer 输出窄化 `ckl.search` 的结构化 `nextAction`。所有选择、升级、降级和截断均写入 reason codes。
 
 ## 6. Schema 与配置
 
@@ -54,12 +55,13 @@ Authority 独立编码为 `BINDING_RULE`、`ACCEPTED_DECISION`、`VERIFIED_FACT`
 
 ## 7. 性能指标与风险
 
-目标：默认 Envelope 不超过 800 tokens；单次编排不发起 I/O；候选上限来自检索层 30，输出上限 8。
+目标：最终 `additionalContext` 不超过 800 tokens；单次编排不发起 I/O；候选上限来自检索层 30，输出上限 8。
 
 | 风险 | 缓解 |
 |---|---|
 | 字符与模型 tokenizer 差异 | 采用偏保守的 3 bytes/token，CKL-505 持续审计真实复杂度 |
 | Reason code 本身挤占预算 | 优先省略普通 level reason，保留异常/截断原因和动态知识 |
+| 协议开销挤掉已召回知识 | 编排与 Hook 复用紧凑的共享 Renderer；截断后显式提示继续搜索 |
 | L4 泄露过多对话 | 自动路径硬性降为 L3，显式展开才携带 Episode ID |
 | 输入候选绕过 Scope | Orchestrator 不扩大 Scope；CKL-502 负责资格门禁，CKL-506/507 再做项目隔离契约测试 |
 
@@ -70,3 +72,4 @@ Authority 独立编码为 `BINDING_RULE`、`ACCEPTED_DECISION`、`VERIFIED_FACT`
 - 全仓 461/461 module tests、40/40 architecture/Gate tests；26 workspaces。
 - 全仓 Lines 96.82%、Branches 90.05%；npm 官方 registry 审计 0 vulnerabilities。
 - Review 发现并修复“全部候选不合格仍保留 L2”以及 `scopeMatched=false` 防御缺口，无遗留 actionable finding。
+- 2026-08-03 收尾回归：完整渲染预算、Binding 保留、disclosed/omitted 计数和搜索动作专项通过；共享 Renderer 直接测试 3/3。

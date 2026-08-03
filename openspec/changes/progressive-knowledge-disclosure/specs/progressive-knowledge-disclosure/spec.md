@@ -52,3 +52,17 @@ Risk, ambiguity or conflict signals MUST NOT automatically inject all candidate 
 #### Scenario: High-risk implementation prompt
 - **WHEN** a high-risk prompt matches binding and reference knowledge
 - **THEN** the initial envelope contains binding compact summaries and reference pointers, and detailed evidence is obtained only through explicit Pull or bounded closure continuation
+
+### Requirement: Final rendered context budget
+The system MUST calculate and enforce the automatic injection token ceiling against the complete rendered `additionalContext`, including authority guidance, progressive-disclosure protocol, trace metadata and the selected knowledge directory.
+
+#### Scenario: Protocol overhead competes with knowledge pointers
+- **WHEN** the Context Envelope alone fits but the complete rendered `additionalContext` would exceed the configured ceiling
+- **THEN** the orchestrator removes the lowest-priority optional entries until the complete rendered output fits, while preserving an eligible binding rule whenever it can fit
+
+### Requirement: Discoverable directory truncation
+The system SHALL expose how many eligible candidates were disclosed and omitted, and SHALL provide a machine-readable next action when eligible knowledge is omitted from the initial directory.
+
+#### Scenario: Eligible candidates exceed the initial directory budget
+- **WHEN** one or more eligible candidates are omitted by the token or item budget
+- **THEN** the rendered progressive-disclosure metadata reports the disclosed and omitted counts and directs Codex to use a narrower `ckl.search` query to continue discovery

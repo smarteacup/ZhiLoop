@@ -2,7 +2,7 @@
 
 **状态**：Implemented  
 **任务**：CKL-506  
-**最后更新**：2026-08-02
+**最后更新**：2026-08-03
 
 ## 1. 目标与不变量
 
@@ -24,7 +24,7 @@
 }
 ```
 
-`additionalContext` 作为额外 developer context；默认较大输出会 spill，因此 CKL 保持 800-token Envelope 默认预算，不把 limit 配为 0。参考：[Codex Hooks](https://developers.openai.com/codex/config-advanced#hooks)。
+`additionalContext` 作为额外 developer context；默认较大输出会 spill，因此 CKL 保持 800-token 最终渲染预算，不把 limit 配为 0。参考：[Codex Hooks](https://developers.openai.com/codex/config-advanced#hooks)。
 
 ## 3. 方案与备选
 
@@ -65,15 +65,15 @@ Rollout 使用单对象原子快照和单调 revision：
 
 ## 6. 一致性与 Scope 门禁
 
-Service 校验：prompt fingerprint、Envelope/Trace run ID、project/task、复杂度、token budget、注入项 ID/版本/Scope/Authority/detailLevel 完全一致。PROJECT/MODULE/SYMBOL 必须匹配 Trace project；TASK 必须匹配 task；GLOBAL 仅在 QueryContext 允许时通过；USER/TEAM 当前不注入。
+Service 校验：prompt fingerprint、Envelope/Trace run ID、project/task、复杂度、token budget、注入项 ID/版本/Scope/Authority/detailLevel 完全一致。它还用共享 Renderer 复算完整 `additionalContext`，要求结果与 `estimatedTokens` 相等且不超过上限；`disclosedItems` 必须等于实际目录条数，`omittedItems > 0` 必须同时标记截断。PROJECT/MODULE/SYMBOL 必须匹配 Trace project；TASK 必须匹配 task；GLOBAL 仅在 QueryContext 允许时通过；USER/TEAM 当前不注入。
 
-Renderer 以稳定 JSON 保存 Scope、Status、Authority、Run ID、Trace ID、复杂度和 Task Contract。前置文本明确 REFERENCE 不是指令，知识正文中的 instruction-like 文本只作为 JSON 数据。序列化器在无安全输出时返回空字符串，匹配 Codex 的失败开放契约。
+Renderer 以稳定 JSON 保存 Scope、Status、Authority、Run ID、Trace ID、复杂度和 Task Contract。前置文本明确 REFERENCE 不是指令，知识正文中的 instruction-like 文本只作为 JSON 数据。目录被截断时，`progressiveDisclosure.directory` 给出 eligible/disclosed/omitted 数量及 `ckl.search` 下一步动作。序列化器在无安全输出时返回空字符串，匹配 Codex 的失败开放契约。
 
 ## 7. Deadline、性能与错误处理
 
 内部 deadline 可配置但硬限制 `1..500 ms`，默认 500 ms。到期先标记 timeout，再 Abort Provider；即使 Provider 的 abort rejection 先赢得 Promise race，也仍归类为 `TIMEOUT`。timer 在所有路径清理并 `unref`。
 
-Provider 错误只输出限长、去 NUL/换行的本地 diagnostic，不进入 Codex stdout。热路径只做一次 Provider 调用、线性一致性检查与最多 800-token Envelope 的 JSON 序列化。
+Provider 错误只输出限长、去 NUL/换行的本地 diagnostic，不进入 Codex stdout。热路径只做一次 Provider 调用、线性一致性检查、一次最终渲染预算复核与最多 800-token `additionalContext` 的 JSON 序列化。
 
 ## 8. 风险与缓解
 
@@ -83,6 +83,8 @@ Provider 错误只输出限长、去 NUL/换行的本地 diagnostic，不进入 
 | 关闭后迟到请求继续注入 | 完成前重新校验 rollout revision/mode |
 | Provider 忽略 Abort | Promise race 在 500ms 返回；迟到结果不可影响本次输出 |
 | 参考内容提示注入 | 显式 Authority 语义、JSON 数据边界、用户和高优先级指令优先声明 |
+| Envelope 合格但协议头导致真实输出超预算 | 编排器与 Hook 共用 `@zhiloop/context-renderer` 并复核固定点估算 |
+| 截断后模型不知道还有知识 | 输出省略数量和机器可读的 `ckl.search` continuation action |
 | Feature evidence 被调用者篡改 | structured clone + recursive freeze + SHA-256 形态校验 |
 | Hook 错误阻断 Codex | 所有失败返回无 `output`，命令序列化为空 stdout |
 
@@ -93,3 +95,4 @@ Provider 错误只输出限长、去 NUL/换行的本地 diagnostic，不进入 
 - 全仓 485/485 module tests、40/40 architecture/Gate tests；28 workspaces。
 - 全仓 Lines 97.04%、Branches 90.21%；npm 官方 registry 审计 0 vulnerabilities。
 - Review 修复递归冻结、真实配置指纹形态、Abort 拒绝竞态归类和 Trace ID 边界，无遗留 actionable finding。
+- 2026-08-03 收尾回归：Injection 15/15；覆盖最终渲染预算复核、预算伪造拒绝及截断目录 continuation 元数据。

@@ -12,6 +12,7 @@ import {
 } from "../packages/codex-context-injection/dist/index.js";
 import { DEFAULT_CONFIGURATION } from "../packages/config/dist/index.js";
 import { ContextOrchestrator } from "../packages/context-orchestrator/dist/index.js";
+import { estimateAdditionalContextTokens } from "../packages/context-renderer/dist/index.js";
 import { normalizeConversations } from "../packages/conversation-normalizer/dist/index.js";
 import { SqliteEventLedger } from "../packages/conversation-ledger/dist/index.js";
 import { ClosureVerifier } from "../packages/closure-verifier/dist/index.js";
@@ -331,6 +332,7 @@ function activeContext(registry, requestedProject, requestedTaskId, runId) {
       const rerank = await new KnowledgeReranker().rerank(queryContext, retrieval.items);
       const envelope = new ContextOrchestrator().orchestrate({
         runId,
+        traceId: `trace-${runId}`,
         queryContext,
         candidates: rerank.items,
         policy: DEFAULT_CONFIGURATION.injection,
@@ -450,17 +452,21 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     assert.equal(same.retrieval.diagnostics.some((item) => item.code === "SCOPE_FILTERED"
       && item.assetId === "implementation.other.traceable-compiler"), true);
     assert.equal(same.envelope.complexity.level, "L2_COMPACT");
-    assert.equal(same.envelope.items.length, 4);
+    assert.equal(same.envelope.items.length, 2);
     assert.equal(same.envelope.budget.estimatedTokens <= DEFAULT_CONFIGURATION.injection.defaultMaxTokens, true);
+    assert.equal(estimateAdditionalContextTokens(same.envelope, same.trace.traceId), same.envelope.budget.estimatedTokens);
     assert.equal(same.envelope.budget.truncated, true);
+    assert.equal(same.envelope.budget.disclosedItems, 2);
+    assert.equal(same.envelope.budget.omittedItems, 3);
     assert.equal(same.envelope.items.filter((item) => item.authority === "BINDING_RULE")
       .every((item) => item.detailLevel === "L2_COMPACT"), true);
     assert.equal(same.envelope.items.filter((item) => item.authority !== "BINDING_RULE")
       .every((item) => item.detailLevel === "L1_POINTER"), true);
     assert.deepEqual(new Set(same.envelope.items.map((item) => item.authority)), new Set([
-      "BINDING_RULE", "ACCEPTED_DECISION", "REFERENCE",
+      "BINDING_RULE", "ACCEPTED_DECISION",
     ]));
-    assert.equal(same.envelope.taskContract?.contractId, "contract-mvp-final");
+    assert.equal(same.envelope.taskContract, undefined);
+    assert.equal(same.envelope.complexity.reasonCodes.includes("TASK_CONTRACT_OMITTED_BY_BUDGET"), true);
 
     const other = await activeContext(registry, otherProject, taskId, "run-mvp-other").execute();
     assert.deepEqual(other.retrieval.items.map((item) => item.asset.id), ["implementation.other.traceable-compiler"]);
@@ -501,6 +507,8 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     assert.equal(injection.status, "INJECTED");
     assert.match(serializeUserPromptHookResult(injection), /L2_COMPACT/u);
     assert.match(injection.output.hookSpecificOutput.additionalContext, /BINDING_RULE/u);
+    assert.match(injection.output.hookSpecificOutput.additionalContext, /"omittedItems":3/u);
+    assert.match(injection.output.hookSpecificOutput.additionalContext, /"nextAction":\{"instruction":.*"tool":"ckl.search"/u);
     assert.doesNotMatch(injection.output.hookSpecificOutput.additionalContext, /implementation\.other\.traceable-compiler/u);
 
     const mcp = new KnowledgeMcpService(mcpBackend(registry));
@@ -510,7 +518,7 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     assert.deepEqual(new Set(mcpSearch.items.map((item) => item.authority)), new Set([
       "BINDING_RULE", "ACCEPTED_DECISION", "REFERENCE",
     ]));
-    const expandable = liveContext.envelope.items.find((item) => item.kind === "EXPERIENCE");
+    const expandable = mcpSearch.items.find((item) => item.kind === "EXPERIENCE");
     assert.ok(expandable);
     const expanded = await mcp.get({
       id: expandable.id,

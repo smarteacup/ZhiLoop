@@ -27,3 +27,10 @@
 - [x] 5.1 Run module tests, architecture gates, typecheck, lint and coverage checks
 - [x] 5.2 Review security, compatibility, token budget, duplicate expansion and closure-continuation risks
 - [x] 5.3 Commit and push the completed change
+
+## 6. Production-readiness follow-up
+
+- [x] 6.1 Extract a shared Context Renderer and enforce the token ceiling against the complete rendered `additionalContext`
+- [x] 6.2 Add disclosed/omitted directory counts and a machine-readable `ckl.search` continuation action
+- [x] 6.3 Add regression tests for rendered-budget trimming, binding preservation and truncation discoverability
+- [x] 6.4 Synchronize implementation documents and run full build, test, lint, coverage and review gates

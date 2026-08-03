@@ -25,7 +25,7 @@ ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Cont
 
 - 系统设计：MVP Implementation Baseline
 - P0-P7：全部完成并通过 Gate
-- 自动化验证：623 项模块测试、51 项架构/Gate 测试
+- 自动化验证：630 项模块测试、51 项架构/Gate 测试
 - 运行模式：未启用，保持纯本地源码与测试状态
 
 ## 本地验证

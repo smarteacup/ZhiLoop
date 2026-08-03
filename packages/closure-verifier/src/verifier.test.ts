@@ -13,7 +13,7 @@ const contextEnvelope: ContextEnvelope = {
     level: "L2_COMPACT", breadth: 1, depth: "COMPACT", authority: "REFERENCE", evidence: "POINTER",
     reasonCodes: ["DEFAULT_COMPLEXITY_LEVEL"],
   },
-  budget: { maxTokens: 800, estimatedTokens: 240, truncated: false },
+  budget: { maxTokens: 800, estimatedTokens: 240, truncated: false, disclosedItems: 1, omittedItems: 0 },
   items: [{
     id: "knowledge.required", version: 1, subjectKey: "knowledge.required", kind: "IMPLEMENTATION",
     status: "IMPLEMENTED", scope: { level: "PROJECT", projectId: "project-a" }, authority: "REFERENCE",

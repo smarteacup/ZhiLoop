@@ -5,7 +5,7 @@
   "type": "module",
   "zhiloop": {
     "allowedWorkspaceDependencies": [
-      "@zhiloop/config", "@zhiloop/domain", "@zhiloop/knowledge-reranker", "@zhiloop/query-context", "@zhiloop/schemas"
+      "@zhiloop/config", "@zhiloop/context-renderer", "@zhiloop/domain", "@zhiloop/knowledge-reranker", "@zhiloop/query-context", "@zhiloop/schemas"
     ],
     "allowedExternalDependencies": ["node:*"]
   },
@@ -13,6 +13,7 @@
   "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
   "dependencies": {
     "@zhiloop/config": "0.0.0",
+    "@zhiloop/context-renderer": "0.0.0",
     "@zhiloop/domain": "0.0.0",
     "@zhiloop/knowledge-reranker": "0.0.0",
     "@zhiloop/query-context": "0.0.0",

@@ -207,8 +207,8 @@ const scenarios = [
     expectedIds: [requirementId],
     expectedDetails: { [requirementId]: "L2_COMPACT" },
     expansions: [
-      { id: "dms.output.message-contract", targetDetailLevel: "L2_COMPACT" },
-      { id: "dms.idempotency.codis-key", targetDetailLevel: "L3_EVIDENCED" },
+      { id: "dms.output.message-contract", searchQuery: "character_type hit_rule exp_flag", targetDetailLevel: "L2_COMPACT" },
+      { id: "dms.idempotency.codis-key", searchQuery: "Codis", targetDetailLevel: "L3_EVIDENCED" },
     ],
   },
   {
@@ -218,7 +218,7 @@ const scenarios = [
     expectedStatus: "INJECTED",
     expectedLevel: "L2_COMPACT",
     expectedIds: ["dms.device.lookup-retry"],
-    expansions: [{ id: "dms.device.lookup-retry", targetDetailLevel: "L3_EVIDENCED" }],
+    expansions: [{ id: "dms.device.lookup-retry", searchQuery: "DeviceService", targetDetailLevel: "L3_EVIDENCED" }],
   },
   {
     name: "PublicLog 字段契约",
@@ -226,10 +226,10 @@ const scenarios = [
     prompt: "`sec_ai_tachograph_reminder` 的 character_type、hit_rule 和 exp_flag 应该怎么输出？",
     expectedStatus: "INJECTED",
     expectedLevel: "L2_COMPACT",
-    expectedIds: ["dms.output.message-contract", "dms.logging.publiclog-output"],
+    expectedIds: ["dms.output.message-contract"],
     expansions: [
-      { id: "dms.output.message-contract", targetDetailLevel: "L2_COMPACT" },
-      { id: "dms.logging.publiclog-output", targetDetailLevel: "L3_EVIDENCED" },
+      { id: "dms.output.message-contract", searchQuery: "character_type hit_rule exp_flag", targetDetailLevel: "L2_COMPACT" },
+      { id: "dms.logging.publiclog-output", searchQuery: "PublicLog", targetDetailLevel: "L3_EVIDENCED" },
     ],
   },
   {
@@ -239,10 +239,10 @@ const scenarios = [
     signals: { risk: "HIGH", ambiguous: false, conflicting: false },
     expectedStatus: "INJECTED",
     expectedLevel: "L2_COMPACT",
-    expectedIds: ["dms.device.lookup-retry"],
+    expectedIds: [requirementId],
     expansions: [
-      { id: "dms.device.lookup-retry", targetDetailLevel: "L3_EVIDENCED" },
-      { id: "dms.idempotency.codis-key", targetDetailLevel: "L3_EVIDENCED" },
+      { id: "dms.device.lookup-retry", searchQuery: "DeviceService", targetDetailLevel: "L3_EVIDENCED" },
+      { id: "dms.idempotency.codis-key", searchQuery: "Codis", targetDetailLevel: "L3_EVIDENCED" },
     ],
   },
   {
@@ -297,6 +297,7 @@ async function activeContext(registry, scenario, runId) {
   const signals = scenario.signals ?? { risk: "LOW", ambiguous: false, conflicting: false };
   const envelope = new ContextOrchestrator().orchestrate({
     runId,
+    traceId: `trace-${runId}`,
     queryContext,
     candidates: rerank.items,
     policy: DEFAULT_CONFIGURATION.injection,
@@ -339,11 +340,29 @@ async function simulate(registry, rollout, scenario, index) {
     assert.equal(context.envelope.items.find((item) => item.id === id)?.detailLevel, detailLevel, `${scenario.name}: ${id} detail`);
   }
   if (scenario.expectedStatus === "NO_CONTEXT") assert.deepEqual(ids, [], scenario.name);
+  const modelDiscovery = [];
   const modelSelectedExpansions = [];
   const mcp = new KnowledgeMcpService(mcpBackend(registry));
   for (const selection of scenario.expansions ?? []) {
-    const visible = context.envelope.items.find((item) => item.id === selection.id);
-    assert.ok(visible, `${scenario.name}: model cannot select invisible pointer ${selection.id}`);
+    let visible = context.envelope.items.find((item) => item.id === selection.id);
+    if (visible === undefined && context.envelope.budget.omittedItems > 0) {
+      const discovered = await mcp.search({
+        query: selection.searchQuery ?? selection.id,
+        limit: 8,
+        knownItems: context.envelope.items.map((item) => ({
+          id: item.id, version: item.version, detailLevel: item.detailLevel,
+        })),
+      }, context.queryContext, new AbortController().signal);
+      visible = discovered.items.find((item) => item.id === selection.id);
+      modelDiscovery.push({
+        tool: "ckl.search",
+        query: selection.searchQuery ?? selection.id,
+        omittedItems: context.envelope.budget.omittedItems,
+        returnedIds: discovered.items.map((item) => item.id),
+        selectedId: selection.id,
+      });
+    }
+    assert.ok(visible, `${scenario.name}: model cannot select invisible pointer ${selection.id}; discovery=${JSON.stringify(modelDiscovery.at(-1))}`);
     assert.ok(visible.detailLevel === "L1_POINTER" || visible.detailLevel === "L2_COMPACT");
     const result = await mcp.get({
       id: visible.id,
@@ -393,6 +412,8 @@ async function simulate(registry, rollout, scenario, index) {
       estimatedTokens: context.envelope.budget.estimatedTokens,
       maxTokens: context.envelope.budget.maxTokens,
       truncated: context.envelope.budget.truncated,
+      disclosedItems: context.envelope.budget.disclosedItems,
+      omittedItems: context.envelope.budget.omittedItems,
       items: context.envelope.items.map((item) => ({
         id: item.id,
         authority: item.authority,
@@ -403,6 +424,7 @@ async function simulate(registry, rollout, scenario, index) {
         evidenceSummaryCount: "evidenceSummary" in item ? item.evidenceSummary.length : 0,
       })),
     },
+    modelDiscovery,
     modelSelectedExpansions,
   };
 }

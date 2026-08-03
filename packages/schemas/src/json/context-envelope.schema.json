@@ -29,11 +29,13 @@
     "budget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["maxTokens", "estimatedTokens", "truncated"],
+      "required": ["maxTokens", "estimatedTokens", "truncated", "disclosedItems", "omittedItems"],
       "properties": {
         "maxTokens": { "type": "integer", "minimum": 1, "maximum": 4000 },
         "estimatedTokens": { "type": "integer", "minimum": 1, "maximum": 4000 },
-        "truncated": { "type": "boolean" }
+        "truncated": { "type": "boolean" },
+        "disclosedItems": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "omittedItems": { "type": "integer", "minimum": 0 }
       }
     },
     "items": {

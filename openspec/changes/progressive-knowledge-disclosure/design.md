@@ -75,6 +75,12 @@ sequenceDiagram
 
 `targetDetailLevel` 初期允许缺省；缺省保持旧行为 L3，避免现有调用方静默降低信息量。新注入提示和 ZhiLoop Skill 使用显式目标等级。完成一个兼容周期后再评估是否把缺省值改为 L2。
 
+### 6. 预算以最终渲染输出为准
+
+抽取独立的 Context Renderer，作为编排器和 Codex Hook 的共同依赖。编排器在候选选择阶段使用真实 Trace ID 和完整渲染协议计算固定点 token 估算，Hook 在输出前复核同一估算值，避免 Envelope 合格但加上协议头后超预算。
+
+Envelope 的预算元数据增加 `disclosedItems` 和 `omittedItems`。当 `omittedItems > 0` 时，Renderer 在 `progressiveDisclosure.directory` 中输出机器可读的 `ckl.search` 下一步动作；省略数量只统计已通过 Scope/状态过滤的合格候选，不把不可用知识伪装成可继续发现的内容。
+
 ## Risks / Trade-offs
 
 - [模型未展开相关参考知识] → 首次强制注入 Binding Rule；渲染明确展开条件；闭环根据 required knowledge 做一次定向补充。
@@ -83,6 +89,8 @@ sequenceDiagram
 - [工具调用增加延迟] → 只获取被选择的 ID，支持 current/version 校验与 knownItems 去重；不增加 Hook 的 500ms deadline。
 - [旧调用方不传目标等级] → 缺省 L3 保持兼容，文档和新调用显式传值。
 - [Pull 绕过资格过滤] → Service 在每次 search/related/get 时重新读取 current 并复用 Scope/Status eligibility。
+- [Envelope 预算不等于真实注入大小] → 编排与 Hook 复用同一个最终 Renderer 和 token 估算函数。
+- [目录截断对模型不可见] → 输出 disclosed/omitted 计数和窄化 `ckl.search` 的结构化 nextAction。
 
 ## Migration Plan
 
@@ -102,6 +110,8 @@ sequenceDiagram
 | `ckl.get` 展开结果实际使用率 | 不低于 70% | Feedback/closure trace |
 | 未展开导致的闭环重试率 | 低于 5% | Stop continuation metrics |
 | Push/Pull Scope 违规 | 0 | 安全测试与诊断 |
+| 最终 `additionalContext` 超预算 | 0 | Renderer/Hook 预算断言 |
+| 截断目录无继续发现提示 | 0 | 渐进披露元数据断言 |
 
 ## Open Questions
 

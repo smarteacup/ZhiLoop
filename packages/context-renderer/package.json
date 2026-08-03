@@ -1,17 +1,15 @@
 {
-  "name": "@zhiloop/codex-context-injection",
+  "name": "@zhiloop/context-renderer",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "zhiloop": {
-    "allowedWorkspaceDependencies": ["@zhiloop/context-renderer", "@zhiloop/domain", "@zhiloop/retrieval-evaluation"],
+    "allowedWorkspaceDependencies": ["@zhiloop/domain"],
     "allowedExternalDependencies": ["node:*"]
   },
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
   "dependencies": {
-    "@zhiloop/context-renderer": "0.0.0",
-    "@zhiloop/domain": "0.0.0",
-    "@zhiloop/retrieval-evaluation": "0.0.0"
+    "@zhiloop/domain": "0.0.0"
   }
 }

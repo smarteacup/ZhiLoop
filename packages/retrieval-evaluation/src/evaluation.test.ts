@@ -85,6 +85,8 @@ function trace(
       maxTokens: options.maxTokens ?? 800,
       estimatedTokens: options.estimatedTokens ?? 200,
       truncated: options.truncated ?? false,
+      disclosedItems: items.length,
+      omittedItems: Math.max(0, retrievedItems.length - items.length),
     },
     items,
   };
@@ -133,7 +135,7 @@ describe("Retrieval Trace", () => {
     const envelope: ContextEnvelope = {
       schemaVersion: 1, runId: "wrong", projectId: project.projectId, taskId: "task-a",
       complexity: { level: "L0_NONE", breadth: 0, depth: "NONE", authority: "NONE", evidence: "NONE", reasonCodes: ["NO_RETRIEVED_KNOWLEDGE"] },
-      budget: { maxTokens: 800, estimatedTokens: 100, truncated: false }, items: [],
+      budget: { maxTokens: 800, estimatedTokens: 100, truncated: false, disclosedItems: 0, omittedItems: 0 }, items: [],
     };
     const input = {
       traceId: "trace-invalid", runId: "run-evaluation", queryContext,

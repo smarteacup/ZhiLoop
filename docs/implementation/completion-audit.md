@@ -56,6 +56,7 @@
 | CKL-505 | `packages/retrieval-evaluation` | Trace、四轴原因、Golden 指标和配置指纹 | 通过 |
 | CKL-506 | `packages/codex-context-injection` | OFF/SHADOW/ACTIVE、500ms、失败开放、回滚 | 通过 |
 | CKL-507 | `packages/knowledge-mcp` | search/get/related/check、Scope/current/L2→L3 与架构测试 | 通过 |
+| 渐进披露收尾 | `packages/context-renderer`、Orchestrator、Injection | 完整渲染预算、Binding 保留、截断计数/搜索动作与真实链路模拟 | 通过 |
 | P5 Gate | Golden Retrieval、ACTIVE 注入、MCP 展开 | `scripts/p5-gate.test.mjs` | 通过 |
 | CKL-601 | `packages/closure-verifier` | deterministic/semantic Gate、Boundary、timeout 单测 | 通过 |
 | CKL-602 | `packages/stop-continuation` | 精确 delta、counter、递归拦截、deadline 单测 | 通过 |
@@ -87,9 +88,9 @@
 | 生命周期 | Requirement/Design/Decision=`ACCEPTED`；Implementation 按安全上限=`IMPLEMENTED`；Experience=`VERIFIED` |
 | 发布 | 五类资产写为可读 Markdown，随后投影进同一 SQLite/FTS；另加一个外项目隔离控制资产 |
 | 召回 | 项目 A 召回自己的 5 条并过滤控制资产；项目 B 只召回自己的控制资产 |
-| 注入 | ACTIVE UserPrompt 路径默认生成 L2，800-token 预算只选 3 条并明确 `truncated=true` |
-| Authority | L2 标注 Binding/Reference；`ckl.search` 的完整 5 条明确区分 Binding Rule、Accepted Decision、Reference |
-| 展开 | 从已注入 Experience 的 L2 指针通过 `ckl.get` 定向扩展到 L3 和两条 Evidence Summary |
+| 注入 | ACTIVE UserPrompt 路径生成 Binding L2 + Reference L1；完整 `additionalContext` 在 800-token 内选择 2 条，报告 `disclosedItems=2`、`omittedItems=3` 和搜索动作 |
+| Authority | 初始目录保留 Binding Rule；`ckl.search` 的完整 5 条明确区分 Binding Rule、Accepted Decision、Reference |
+| 展开 | 根据截断提示用 `ckl.search` 找到 Experience L1 指针，再通过 `ckl.get` 定向扩展到 L3 和两条 Evidence Summary |
 | Explain | Trace 对全部 5 条保留 channel reason、rank、Evidence、Episode 与 risk/ambiguity/conflict/budget 原因 |
 | 闭环 | 缺少独立 release Gate 时只产生一次 correction delta；递归 Stop 被拦截，第三次达到 counter 上限 |
 | 人工介入 | Evidence 决策均非 `ASK_USER`，interaction 为 `NONE`，`createReviewTasks=false` |
@@ -102,10 +103,10 @@
 npm run check
 ```
 
-- Workspace/import policy：37 个 Workspace 通过。
+- Workspace/import policy：38 个 Workspace 通过。
 - 架构与 Gate：51/51。
-- 模块测试：623/623。
-- 覆盖率：Statements 94.62%、Branches 89.94%、Functions 98.04%、Lines 96.90%。
+- 模块测试：630/630。
+- 覆盖率：Statements 94.47%、Branches 89.81%、Functions 97.99%、Lines 96.86%。
 - 最终单流 Gate：约 143～201ms，重复执行通过。
 - 所有文件系统副作用均位于系统临时目录；未写用户 Home 或业务仓库。
 

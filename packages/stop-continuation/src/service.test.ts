@@ -18,7 +18,7 @@ const closureInput: ClosureVerificationInput = {
   contextEnvelope: {
     schemaVersion: 1, runId: "run-stop", projectId: "project-a", taskId: "turn-a",
     complexity: { level: "L1_POINTER", breadth: 0, depth: "POINTER", authority: "NONE", evidence: "NONE", reasonCodes: ["REQUESTED_COMPLEXITY_LEVEL"] },
-    budget: { maxTokens: 800, estimatedTokens: 100, truncated: false }, items: [],
+  budget: { maxTokens: 800, estimatedTokens: 100, truncated: false, disclosedItems: 0, omittedItems: 0 }, items: [],
   },
   diff: { changedPaths: ["packages/a.ts"], summary: "Implemented." },
   toolResults: [], tests: [{ testId: "test-a", status: "PASSED", summary: "Passed." }],

@@ -18,6 +18,7 @@ export interface ContextFeedbackHint {
 
 export interface ContextOrchestrationRequest {
   readonly runId: string;
+  readonly traceId: string;
   readonly queryContext: QueryContext;
   readonly candidates: readonly RerankedKnowledge[];
   readonly policy: InjectionPolicy;

@@ -1,7 +1,7 @@
 # ZhiLoop 实施进度与验证记录
 
 **当前里程碑**：P0～P7 与 MVP 最终单流 Gate 全部完成  
-**记录日期**：2026-08-02  
+**记录日期**：2026-08-03  
 **运行状态**：未安装 Hook、未启动 Daemon、未修改用户 Codex/CCM 配置
 
 ## 1. 模块交付记录
@@ -58,6 +58,7 @@
 | CKL-704 | 完成 | `749e085` | Daemon 生命周期、Hook/MCP 快路径、Worker 单飞和结构化健康 | 614 项模块测试、48 项架构/Gate 测试；8 高/7 中风险，全部修复；专项行 100%、分支 94.11% |
 | CKL-705 | 完成 | `a2b5c00` | 默认 read-only `codex exec`、结构化 Schema/result、JSONL 脱敏诊断、取消和有界进程输出 | 623 项模块测试、50 项架构/Gate 测试；专项行 96.00%、分支 88.46%；O(n²) 输出统计瓶颈已修复 |
 | MVP Final Gate | 通过 | `06149cc` | 同一任务贯穿捕获、编译、Evidence、Markdown/SQLite、召回、L2 注入、MCP 展开和 Stop 一次续跑 | 623 项模块测试、51 项架构/Gate 测试；同流约 143～201ms；无间接拼接证据 |
+| 渐进披露生产化收尾 | 完成 | — | 共享 Context Renderer、完整 `additionalContext` 预算、disclosed/omitted 计数、结构化 `ckl.search` continuation、搜索后 L2/L3 展开模拟 | 630 项模块测试、51 项架构/Gate 测试；38 workspaces；真实会话 7 场景通过；Lines 96.86%、Branches 89.81% |
 
 ## 2. P0 Gate 证据
 

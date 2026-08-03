@@ -18,7 +18,7 @@ function envelope(taskId) {
   return {
     schemaVersion: 1, runId: `run-${taskId}`, projectId: project.projectId, taskId,
     complexity: { level: "L1_POINTER", breadth: 0, depth: "POINTER", authority: "NONE", evidence: "NONE", reasonCodes: ["REQUESTED_COMPLEXITY_LEVEL"] },
-    budget: { maxTokens: 800, estimatedTokens: 100, truncated: false }, items: [],
+    budget: { maxTokens: 800, estimatedTokens: 100, truncated: false, disclosedItems: 0, omittedItems: 0 }, items: [],
   };
 }
 

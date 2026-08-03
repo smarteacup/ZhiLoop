@@ -51,7 +51,7 @@ flowchart LR
 
 ### Push 与 Pull
 
-- **Push**：`UserPromptSubmit` 注入动态筛选后的 L1 目录，并为 Binding Rule 保留 L2 门禁摘要；预算不超过 800 tokens，内部 deadline 为 500 ms，超时不注入并开放失败。
+- **Push**：`UserPromptSubmit` 注入动态筛选后的 L1 目录，并为 Binding Rule 保留 L2 门禁摘要；共享 Renderer 保证完整 `additionalContext` 不超过 800 tokens，截断时公开省略数量和 `ckl.search` 下一步动作；内部 deadline 为 500 ms，超时不注入并开放失败。
 - **Pull**：`ckl.search/related` 返回更多 L1 指针；`ckl.get` 按知识 ID 定向展开到 L2 边界或 L3 正文与证据；`ckl.check` 复核当前版本。
 - Pull 结果必须继续遵守当前项目、用户和全局 Scope，不能绕过状态与权限过滤。
 - 重复拉取同一知识时返回引用或差量，避免正文反复进入上下文。

@@ -657,13 +657,14 @@ And Codex 修改了项目代码
 And 当前会话中的关联测试通过
 When Session 被后台编译
 Then 系统生成 DESIGN、DECISION、IMPLEMENTATION 和 EXPERIENCE 候选
-And IMPLEMENTATION/EXPERIENCE 根据代码和测试达到 VERIFIED
+And IMPLEMENTATION 根据代码和测试达到 IMPLEMENTED、EXPERIENCE 达到 VERIFIED
 And 已发布知识以 Markdown 可读
 And SQLite/FTS 可检索该知识
 And 在同项目后续相关问题中召回
 And 在其他项目中不默认召回
-And 默认只注入 L2_COMPACT Context Envelope
-And Codex 可以通过 ckl.get 定向展开目标知识
+And 默认注入 Binding L2 与 Reference L1 的混合 Context Envelope
+And 完整 additionalContext 不超过预算，截断目录显示省略数量和搜索动作
+And Codex 可以通过 ckl.search 继续发现、通过 ckl.get 定向展开目标知识
 And 参考知识、已接受决策和强制规则被明确区分
 And Stop 阶段检测到缺少门禁证据时只续跑一次
 And Stop 续跑只包含知识增量或纠偏增量

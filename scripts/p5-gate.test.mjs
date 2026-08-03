@@ -60,7 +60,7 @@ async function gateFixture() {
       const retrieval = await engine.retrieve({ context: queryContext, policy: DEFAULT_CONFIGURATION.retrieval });
       const rerank = await reranker.rerank(queryContext, retrieval.items);
       const envelope = orchestrator.orchestrate({
-        runId: `run-${testCase.caseId}`, queryContext, candidates: rerank.items,
+        runId: `run-${testCase.caseId}`, traceId: `trace-${testCase.caseId}`, queryContext, candidates: rerank.items,
         policy: DEFAULT_CONFIGURATION.injection, signals: { risk: "LOW", ambiguous: false, conflicting: false },
       });
       const trace = buildRetrievalTrace({

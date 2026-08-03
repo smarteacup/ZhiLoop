@@ -534,6 +534,8 @@ interface ContextEnvelope {
     authorityMix: ContextAuthority[];
     evidence: "NONE" | "POINTER" | "SUMMARY" | "FULL";
     tokenBudget: number;
+    disclosedItems: number;
+    omittedItems: number;
     expandable: boolean;
   };
   retrievalTraceId: string;
@@ -723,7 +725,8 @@ sequenceDiagram
 7. Context Orchestrator 根据任务风险、歧义、知识冲突、项目特异性、上下文压力和模型可用能力选择 `L0-L4`。
 8. 默认生成混合 Envelope：Binding Rule 以 `L2_COMPACT` 主动注入，其他候选以 `L1_POINTER` 简介注入；不自动批量注入正文。
 9. 运行中通过 `ckl.search/related` 发现更多 L1 指针，通过 `ckl.get` 定向展开到 L2 或 L3，并用 `ckl.check` 复核当前版本。
-10. 输出 `ContextEnvelope` 和完整 Retrieval Trace。
+10. 预分配 Trace ID，使用共享 Renderer 按完整 `additionalContext` 核算预算；记录 disclosed/omitted 数量，截断时提供 `ckl.search` 下一步动作。
+11. 输出 `ContextEnvelope` 和完整 Retrieval Trace。
 
 向量服务不可用时，系统必须使用精确匹配、FTS5、Scope 和关系索引降级。
 
@@ -1125,7 +1128,8 @@ retention:
 | 索引与 Markdown 不一致 | 中 | 中 | contentHash、indexVersion、可重建投影和 doctor 检查 |
 | Hook 影响 Codex 响应 | 高 | 低 | 捕获路径只入队；注入/闭环设置独立 deadline；全部失败开放 |
 | 知识持续增长导致噪声 | 中 | 高 | subject 合并、状态过滤、版本去重、召回评估 |
-| 过量知识注入导致上下文膨胀 | 高 | 中 | 默认 L1 目录、Binding L2 保留、Token Budget、运行中定向 L2/L3 展开 |
+| 过量知识注入导致上下文膨胀 | 高 | 中 | 默认 L1 目录、Binding L2 保留、最终渲染 Token Budget、运行中定向 L2/L3 展开 |
+| 目录截断导致已召回知识不可发现 | 高 | 中 | disclosed/omitted 计数、结构化 `ckl.search` nextAction、真实链路模拟 |
 | 过少注入导致模型误解项目事实 | 高 | 中 | 闭环返回 `RETRY_WITH_CONTEXT`，按知识 ID 提升深度 |
 | 知识内容被误当成强制指令 | 高 | 中 | Authority 分层，REFERENCE 与 BINDING_RULE 分区编码 |
 | 闭环验证自我强化原有误判 | 高 | 中 | 确定性门禁优先、隔离验证上下文、独立 reason codes |

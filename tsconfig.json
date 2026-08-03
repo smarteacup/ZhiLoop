@@ -25,6 +25,7 @@
     { "path": "./packages/query-context" },
     { "path": "./packages/retrieval-engine" },
     { "path": "./packages/knowledge-reranker" },
+    { "path": "./packages/context-renderer" },
     { "path": "./packages/context-orchestrator" },
     { "path": "./packages/retrieval-evaluation" },
     { "path": "./packages/codex-context-injection" },

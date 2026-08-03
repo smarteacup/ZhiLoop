@@ -41,7 +41,9 @@ function validateEnvelope(request: VersionedMcpRequest, maximumBytes: number): v
   const encoded = JSON.stringify(request);
   if (Buffer.byteLength(encoded, "utf8") > maximumBytes) throw new Error("MCP request exceeds byte limit");
   if (request.schemaVersion !== 1 || !SAFE_ID.test(request.requestId)) throw new Error("MCP request envelope is invalid");
-  if (request.tool === "ckl.get" && !SAFE_ID.test(request.attemptId)) throw new Error("MCP injection attempt identity is invalid");
+  if (request.tool === "ckl.get" && request.attemptId !== undefined && !SAFE_ID.test(request.attemptId)) {
+    throw new Error("MCP injection attempt identity is invalid");
+  }
   const allowed = new Set(["schemaVersion", "requestId", "context", "tool", "input", ...(request.tool === "ckl.get" ? ["attemptId"] : [])]);
   if (Object.keys(request).some((key) => !allowed.has(key))) throw new Error("MCP request contains an unknown field");
 }
@@ -127,13 +129,14 @@ export class VersionedKnowledgeMcpRuntime {
     const latencyMs = Math.max(0, Math.round(performance.now() - started));
     const getResult = result as Awaited<ReturnType<VersionedMcpRuntimeDependencies["service"]["get"]>>;
     const expansionAudits = getResult.items.map((item) => {
+      const attribution = request.attemptId ?? "STANDALONE";
       const record = {
         schemaVersion: 1 as const,
         expansionId: expansionId([
-          request.requestId, request.attemptId, getResult.traceId,
+          request.requestId, attribution, getResult.traceId,
           item.id, item.version, item.fromDetailLevel, item.toDetailLevel,
         ]),
-        attemptId: request.attemptId,
+        ...(request.attemptId === undefined ? {} : { attemptId: request.attemptId }),
         traceId: getResult.traceId,
         tool: "ckl.get" as const,
         knowledgeId: item.id,

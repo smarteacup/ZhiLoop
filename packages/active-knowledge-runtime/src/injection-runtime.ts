@@ -36,7 +36,7 @@ function terminalStatus(status: Awaited<ReturnType<UserPromptInjectionService["h
 } {
   switch (status) {
     case "SHADOWED": return { status: "SHADOWED", reason: "ROLLOUT_SHADOW" };
-    case "INJECTED": return { status: "INJECTED", reason: "DELIVERED_TO_CODEX" };
+    case "INJECTED": return { status: "INJECTED", reason: "HOOK_CONTEXT_GENERATED" };
     case "NO_CONTEXT": return { status: "NO_CONTEXT", reason: "NO_ELIGIBLE_CONTEXT" };
     case "ROLLED_BACK": return { status: "ROLLED_BACK", reason: "ROLLOUT_REVISION_CHANGED" };
     case "TIMEOUT": return { status: "TIMEOUT", reason: "USER_PROMPT_DEADLINE_EXCEEDED" };

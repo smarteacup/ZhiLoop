@@ -23,12 +23,16 @@ export interface InjectionAttemptRecord {
   readonly reasonCode: string;
   readonly createdAt: string;
   readonly completedAt?: string;
+  /** Durable proof emitted only after the Hook transport client accepted the response. */
+  readonly deliveryEvidenceRef?: string;
+  readonly deliveredAt?: string;
 }
 
 export interface McpExpansionAuditRecord {
   readonly schemaVersion: 1;
   readonly expansionId: string;
-  readonly attemptId: string;
+  /** Absent for detached search → get flows that are not attributable to a Hook attempt. */
+  readonly attemptId?: string;
   readonly traceId: string;
   readonly tool: "ckl.search" | "ckl.get" | "ckl.related" | "ckl.check";
   readonly knowledgeId: string;

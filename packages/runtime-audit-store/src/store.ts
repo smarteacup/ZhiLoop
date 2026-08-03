@@ -18,6 +18,17 @@ const TERMINAL = new Set<InjectionDeliveryStatus>([
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,499}$/u;
 const REASON = /^[A-Z][A-Z0-9_]{0,99}$/u;
 
+interface InjectionRow {
+  readonly attempt_id: string;
+  readonly session_id: string;
+  readonly turn_id: string;
+  readonly trace_id: string;
+  readonly status: string;
+  readonly revision: number;
+  readonly created_at: string;
+  readonly payload_json: string;
+}
+
 export class RuntimeAuditConflictError extends Error {
   override readonly name = "RuntimeAuditConflictError";
 }
@@ -69,7 +80,7 @@ export class SqliteRuntimeAuditStore implements Disposable {
       CREATE INDEX IF NOT EXISTS injection_session_idx ON injection_attempts(session_id, created_at DESC, attempt_id);
       CREATE TABLE IF NOT EXISTS mcp_expansions (
         expansion_id TEXT PRIMARY KEY NOT NULL,
-        attempt_id TEXT NOT NULL,
+        attempt_id TEXT,
         trace_id TEXT NOT NULL,
         knowledge_id TEXT NOT NULL,
         knowledge_version INTEGER NOT NULL,
@@ -90,10 +101,11 @@ export class SqliteRuntimeAuditStore implements Disposable {
   }
 
   beginInjection(record: InjectionAttemptRecord): InjectionAttemptRecord {
-    this.#validateAttempt(record);
-    if (record.status !== "PENDING" || record.revision !== 0 || record.completedAt !== undefined) {
+    if (record.status !== "PENDING" || record.revision !== 0 || record.completedAt !== undefined
+      || record.deliveryEvidenceRef !== undefined || record.deliveredAt !== undefined) {
       throw new Error("new injection attempt must be pending at revision zero");
     }
+    this.#validateAttempt(record);
     const serialized = payload(record);
     try {
       this.#database.prepare(`
@@ -122,7 +134,9 @@ export class SqliteRuntimeAuditStore implements Disposable {
     const current = this.getInjection(attemptId);
     if (current === undefined) throw new Error("injection attempt was not found");
     if (current.revision !== expectedRevision || current.status !== "PENDING") {
-      if (current.revision === expectedRevision + 1 && current.status === status
+      if ((current.revision === expectedRevision + 1
+        || (current.revision === expectedRevision + 2 && current.deliveryEvidenceRef !== undefined))
+        && current.status === status
         && current.reasonCode === reasonCode && current.completedAt === completedAt) return current;
       throw new RuntimeAuditConflictError("injection attempt changed concurrently");
     }
@@ -134,29 +148,96 @@ export class SqliteRuntimeAuditStore implements Disposable {
     return structuredClone(next);
   }
 
+  acknowledgeInjectionDelivery(
+    attemptId: string,
+    expectedRevision: number,
+    deliveryEvidenceRef: string,
+    deliveredAt: string,
+  ): InjectionAttemptRecord {
+    assertIdentity(attemptId, "attemptId");
+    assertIdentity(deliveryEvidenceRef, "deliveryEvidenceRef");
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || !canonicalTimestamp(deliveredAt)) {
+      throw new Error("injection delivery acknowledgement is invalid");
+    }
+    const current = this.getInjection(attemptId);
+    if (current === undefined) throw new Error("injection attempt was not found");
+    if (current.deliveryEvidenceRef !== undefined || current.deliveredAt !== undefined) {
+      if (current.status === "INJECTED" && current.revision === expectedRevision + 1
+        && current.deliveryEvidenceRef === deliveryEvidenceRef && current.deliveredAt === deliveredAt) return current;
+      throw new RuntimeAuditConflictError("injection delivery acknowledgement changed concurrently");
+    }
+    if (current.status !== "INJECTED" || current.revision !== expectedRevision) {
+      throw new RuntimeAuditConflictError("only an unacknowledged INJECTED attempt may be acknowledged");
+    }
+    if (current.completedAt === undefined || Date.parse(deliveredAt) < Date.parse(current.completedAt)) {
+      throw new Error("delivery acknowledgement cannot precede injection completion");
+    }
+    const next: InjectionAttemptRecord = {
+      ...current,
+      deliveryEvidenceRef,
+      deliveredAt,
+      revision: current.revision + 1,
+    };
+    this.#validateAttempt(next);
+    const result = this.#database.prepare(`
+      UPDATE injection_attempts SET revision=?,payload_json=?
+      WHERE attempt_id=? AND revision=? AND status='INJECTED'
+    `).run(next.revision, payload(next), attemptId, expectedRevision);
+    if (result.changes !== 1) {
+      const raced = this.getInjection(attemptId);
+      if (raced?.revision === expectedRevision + 1 && raced.status === "INJECTED"
+        && raced.deliveryEvidenceRef === deliveryEvidenceRef && raced.deliveredAt === deliveredAt) return raced;
+      throw new RuntimeAuditConflictError("injection delivery acknowledgement changed concurrently");
+    }
+    return structuredClone(next);
+  }
+
   getInjection(attemptId: string): InjectionAttemptRecord | undefined {
-    const row = this.#database.prepare("SELECT payload_json FROM injection_attempts WHERE attempt_id=?")
-      .get(attemptId) as { payload_json: string } | undefined;
-    return row === undefined ? undefined : parse<InjectionAttemptRecord>(row.payload_json);
+    assertIdentity(attemptId, "attemptId");
+    const row = this.#database.prepare(`
+      SELECT attempt_id,session_id,turn_id,trace_id,status,revision,created_at,payload_json
+      FROM injection_attempts WHERE attempt_id=?
+    `).get(attemptId) as InjectionRow | undefined;
+    if (row === undefined) return undefined;
+    return this.#decodeInjectionRow(row);
+  }
+
+  #decodeInjectionRow(row: InjectionRow): InjectionAttemptRecord {
+    let record: InjectionAttemptRecord;
+    try {
+      if (Buffer.byteLength(row.payload_json, "utf8") > MAX_RECORD_BYTES) throw new Error("record exceeds byte limit");
+      record = parse<InjectionAttemptRecord>(row.payload_json);
+      this.#validateAttempt(record);
+    }
+    catch { throw new Error("persisted injection attempt is corrupt"); }
+    if (record.attemptId !== row.attempt_id || record.sessionId !== row.session_id
+      || record.turnId !== row.turn_id || record.traceId !== row.trace_id || record.status !== row.status
+      || record.revision !== row.revision || record.createdAt !== row.created_at) {
+      throw new Error("persisted injection attempt columns do not match payload");
+    }
+    return record;
   }
 
   listInjections(sessionId: string, limit = 50): RuntimeAuditPage<InjectionAttemptRecord> {
     assertIdentity(sessionId, "sessionId");
     validateLimit(limit);
     const rows = this.#database.prepare(`
-      SELECT payload_json FROM injection_attempts WHERE session_id=? ORDER BY created_at DESC,attempt_id LIMIT ?
-    `).all(sessionId, limit + 1) as Array<{ payload_json: string }>;
-    return { items: rows.slice(0, limit).map((row) => parse(row.payload_json)), truncated: rows.length > limit };
+      SELECT attempt_id,session_id,turn_id,trace_id,status,revision,created_at,payload_json
+      FROM injection_attempts WHERE session_id=? ORDER BY created_at DESC,attempt_id LIMIT ?
+    `).all(sessionId, limit + 1) as unknown as InjectionRow[];
+    return { items: rows.slice(0, limit).map((row) => this.#decodeInjectionRow(row)), truncated: rows.length > limit };
   }
 
   recordMcpExpansion(record: McpExpansionAuditRecord): McpExpansionAuditRecord {
     this.#validateExpansion(record);
-    if (this.getInjection(record.attemptId) === undefined) throw new Error("MCP expansion requires a persisted injection attempt");
+    if (record.attemptId !== undefined && this.getInjection(record.attemptId) === undefined) {
+      throw new Error("MCP expansion requires a persisted injection attempt when attemptId is present");
+    }
     try {
       this.#database.prepare(`
         INSERT INTO mcp_expansions(expansion_id,attempt_id,trace_id,knowledge_id,knowledge_version,occurred_at,payload_json)
         VALUES(?,?,?,?,?,?,?)
-      `).run(record.expansionId, record.attemptId, record.traceId, record.knowledgeId, record.knowledgeVersion, record.occurredAt, payload(record));
+      `).run(record.expansionId, record.attemptId ?? null, record.traceId, record.knowledgeId, record.knowledgeVersion, record.occurredAt, payload(record));
     } catch (error) {
       const existing = this.getMcpExpansion(record.expansionId);
       if (existing !== undefined && JSON.stringify(existing) === JSON.stringify(record)) return existing;
@@ -213,16 +294,27 @@ export class SqliteRuntimeAuditStore implements Disposable {
     for (const [name, value] of [["attemptId", record.attemptId], ["sessionId", record.sessionId], ["turnId", record.turnId], ["traceId", record.traceId], ["runId", record.runId]] as const) {
       assertIdentity(value, name);
     }
-    if (record.schemaVersion !== 1 || !Number.isSafeInteger(record.rolloutRevision) || record.rolloutRevision < 0
+    const acknowledged = record.deliveryEvidenceRef !== undefined || record.deliveredAt !== undefined;
+    if (record.deliveryEvidenceRef !== undefined) assertIdentity(record.deliveryEvidenceRef, "deliveryEvidenceRef");
+    if (record.schemaVersion !== 1 || (record.status !== "PENDING" && !TERMINAL.has(record.status))
+      || !Number.isSafeInteger(record.rolloutRevision) || record.rolloutRevision < 0
       || !Number.isSafeInteger(record.revision) || record.revision < 0 || !REASON.test(record.reasonCode)
       || !canonicalTimestamp(record.createdAt) || (record.completedAt !== undefined && !canonicalTimestamp(record.completedAt))
+      || (record.deliveredAt !== undefined && !canonicalTimestamp(record.deliveredAt))
+      || (record.status === "PENDING") !== (record.completedAt === undefined)
+      || acknowledged !== (record.deliveryEvidenceRef !== undefined && record.deliveredAt !== undefined)
+      || (acknowledged && (record.status !== "INJECTED" || record.revision !== 2
+        || record.completedAt === undefined || Date.parse(record.deliveredAt as string) < Date.parse(record.completedAt)))
+      || (!acknowledged && record.status !== "PENDING" && record.revision !== 1)
+      || (record.status === "PENDING" && record.revision !== 0)
       || record.envelope.runId !== record.runId) throw new Error("injection attempt is invalid");
   }
 
   #validateExpansion(record: McpExpansionAuditRecord): void {
-    for (const [name, value] of [["expansionId", record.expansionId], ["attemptId", record.attemptId], ["traceId", record.traceId], ["knowledgeId", record.knowledgeId]] as const) {
+    for (const [name, value] of [["expansionId", record.expansionId], ["traceId", record.traceId], ["knowledgeId", record.knowledgeId]] as const) {
       assertIdentity(value, name);
     }
+    if (record.attemptId !== undefined) assertIdentity(record.attemptId, "attemptId");
     if (record.schemaVersion !== 1 || !Number.isSafeInteger(record.knowledgeVersion) || record.knowledgeVersion < 1
       || !Number.isSafeInteger(record.latencyMs) || record.latencyMs < 0 || !canonicalTimestamp(record.occurredAt)
       || (record.fromDetailLevel === "L2_COMPACT" && record.toDetailLevel !== "L3_EVIDENCED")) {

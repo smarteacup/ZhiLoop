@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import type { ContextEnvelope } from "@zhiloop/domain";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,10 +13,14 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true })));
 const now = "2026-08-03T00:00:00.000Z";
 
-function store(): SqliteRuntimeAuditStore {
+function databasePath(): string {
   const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-runtime-audit-"));
   directories.push(directory);
-  return new SqliteRuntimeAuditStore(path.join(directory, "audit.sqlite"));
+  return path.join(directory, "audit.sqlite");
+}
+
+function store(): SqliteRuntimeAuditStore {
+  return new SqliteRuntimeAuditStore(databasePath());
 }
 
 function envelope(): ContextEnvelope {
@@ -62,6 +67,97 @@ describe("SqliteRuntimeAuditStore", () => {
     expect(JSON.stringify(value.getMcpExpansion("expansion-1"))).not.toContain("content");
     expect(() => value.recordMcpExpansion({ ...expansion, expansionId: "expansion-missing", attemptId: "missing" }))
       .toThrow("requires a persisted");
+  });
+
+  it("acknowledges only terminal INJECTED with evidence CAS and exact idempotency", () => {
+    using value = store();
+    value.beginInjection(attempt());
+    const completed = value.completeInjection("attempt-1", 0, "INJECTED", "HOOK_CONTEXT_GENERATED", now);
+    expect(completed).not.toHaveProperty("deliveryEvidenceRef");
+    const acknowledged = value.acknowledgeInjectionDelivery("attempt-1", 1, "hook-client:receipt-1", now);
+    expect(acknowledged).toMatchObject({
+      status: "INJECTED", revision: 2, deliveryEvidenceRef: "hook-client:receipt-1", deliveredAt: now,
+    });
+    expect(value.acknowledgeInjectionDelivery("attempt-1", 1, "hook-client:receipt-1", now)).toEqual(acknowledged);
+    expect(value.completeInjection("attempt-1", 0, "INJECTED", "HOOK_CONTEXT_GENERATED", now)).toEqual(acknowledged);
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 1, "hook-client:receipt-2", now))
+      .toThrow(RuntimeAuditConflictError);
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 2, "hook-client:receipt-1", now))
+      .toThrow(RuntimeAuditConflictError);
+  });
+
+  it("survives restart and resolves same-evidence concurrent ACK while rejecting different evidence", () => {
+    const filename = databasePath();
+    const first = new SqliteRuntimeAuditStore(filename);
+    first.beginInjection(attempt());
+    first.completeInjection("attempt-1", 0, "INJECTED", "HOOK_CONTEXT_GENERATED", now);
+    first.close();
+
+    const left = new SqliteRuntimeAuditStore(filename);
+    const right = new SqliteRuntimeAuditStore(filename);
+    const acknowledged = left.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-1", now);
+    expect(right.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-1", now)).toEqual(acknowledged);
+    expect(() => right.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-other", now))
+      .toThrow(RuntimeAuditConflictError);
+    left.close(); right.close();
+
+    using restarted = new SqliteRuntimeAuditStore(filename);
+    expect(restarted.getInjection("attempt-1")).toEqual(acknowledged);
+  });
+
+  it("rejects SHADOW ACK, invalid time/evidence and corrupt persisted acknowledgement", () => {
+    const filename = databasePath();
+    const value = new SqliteRuntimeAuditStore(filename);
+    value.beginInjection(attempt());
+    value.completeInjection("attempt-1", 0, "SHADOWED", "ROLLOUT_SHADOW", now);
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-1", now))
+      .toThrow("only an unacknowledged INJECTED");
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 1, "bad\nevidence", now)).toThrow("invalid");
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-1", "not-a-time")).toThrow("invalid");
+    expect(() => value.acknowledgeInjectionDelivery("missing", 1, "transport:receipt-1", now)).toThrow("not found");
+    value.close();
+
+    const database = new DatabaseSync(filename);
+    const row = database.prepare("SELECT payload_json FROM injection_attempts WHERE attempt_id=?").get("attempt-1") as { payload_json: string };
+    const corrupt = { ...(JSON.parse(row.payload_json) as InjectionAttemptRecord), deliveryEvidenceRef: "transport:forged" };
+    database.prepare("UPDATE injection_attempts SET payload_json=? WHERE attempt_id=?").run(JSON.stringify(corrupt), "attempt-1");
+    database.close();
+    const reopened = new SqliteRuntimeAuditStore(filename);
+    expect(() => reopened.getInjection("attempt-1")).toThrow("corrupt");
+    expect(() => reopened.listInjections("session-1")).toThrow("corrupt");
+    reopened.close();
+
+    const columns = new DatabaseSync(filename);
+    columns.prepare("UPDATE injection_attempts SET payload_json=?,revision=? WHERE attempt_id=?")
+      .run(row.payload_json, 99, "attempt-1");
+    columns.close();
+    using mismatched = new SqliteRuntimeAuditStore(filename);
+    expect(() => mismatched.getInjection("attempt-1")).toThrow("columns do not match");
+  });
+
+  it("rejects ACK timestamps before completion", () => {
+    using value = store();
+    const completedAt = "2026-08-03T00:00:01.000Z";
+    value.beginInjection(attempt());
+    value.completeInjection("attempt-1", 0, "INJECTED", "HOOK_CONTEXT_GENERATED", completedAt);
+    expect(() => value.acknowledgeInjectionDelivery("attempt-1", 1, "transport:receipt-1", now))
+      .toThrow("cannot precede");
+  });
+
+  it("persists detached MCP get expansions without inventing an injection attempt", () => {
+    const filename = databasePath();
+    const value = new SqliteRuntimeAuditStore(filename);
+    const detached: McpExpansionAuditRecord = {
+      schemaVersion: 1, expansionId: "expansion-standalone", traceId: "trace-search-get",
+      tool: "ckl.get", knowledgeId: "knowledge-1", knowledgeVersion: 3,
+      fromDetailLevel: "L1_POINTER", toDetailLevel: "L2_COMPACT", latencyMs: 2, used: false, occurredAt: now,
+    };
+    expect(value.recordMcpExpansion(detached)).toEqual(detached);
+    expect(value.getMcpExpansion("expansion-standalone")).toEqual(detached);
+    expect(value.listMcpExpansions("attempt-1").items).toEqual([]);
+    value.close();
+    using restarted = new SqliteRuntimeAuditStore(filename);
+    expect(restarted.getMcpExpansion("expansion-standalone")).toEqual(detached);
   });
 
   it("persists closure contract, gates, decision, delta, continuation and interaction", () => {

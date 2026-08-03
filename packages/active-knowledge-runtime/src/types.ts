@@ -33,6 +33,12 @@ export interface RuntimeAuditStorePort {
     reasonCode: string,
     completedAt: string,
   ): InjectionAttemptRecord;
+  acknowledgeInjectionDelivery(
+    attemptId: string,
+    expectedRevision: number,
+    deliveryEvidenceRef: string,
+    deliveredAt: string,
+  ): InjectionAttemptRecord;
   getInjection(attemptId: string): InjectionAttemptRecord | undefined;
   listInjections(sessionId: string, limit?: number): RuntimeAuditPage<InjectionAttemptRecord>;
   recordMcpExpansion(record: McpExpansionAuditRecord): McpExpansionAuditRecord;
@@ -99,6 +105,17 @@ export interface ActiveInjectionRuntimeResult {
   readonly diagnostic?: string;
 }
 
+export interface InjectionDeliveryAcknowledgement {
+  readonly attemptId: string;
+  readonly expectedRevision: number;
+  readonly deliveryEvidenceRef: string;
+  readonly deliveredAt: string;
+}
+
+export interface InjectionDeliveryAcknowledgementPort {
+  acknowledge(request: InjectionDeliveryAcknowledgement): InjectionAttemptRecord;
+}
+
 export interface VersionedMcpRequestBase {
   readonly schemaVersion: 1;
   readonly requestId: string;
@@ -112,7 +129,7 @@ export type VersionedMcpRequest =
   })
   | (VersionedMcpRequestBase & {
     readonly tool: "ckl.get";
-    readonly attemptId: string;
+    readonly attemptId?: string;
     readonly input: Parameters<KnowledgeMcpService["get"]>[0];
   })
   | (VersionedMcpRequestBase & {

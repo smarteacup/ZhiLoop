@@ -10,6 +10,7 @@ import { SqliteRuntimeAuditStore } from "@zhiloop/runtime-audit-store";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ActiveKnowledgeInjectionRuntime } from "./injection-runtime.js";
+import { InjectionDeliveryAcknowledger } from "./delivery-acknowledgement.js";
 import { asset, fixedNow, injectionPolicy, query, reranked } from "./test-fixtures.js";
 import type {
   ActiveInjectionRuntimeDependencies,
@@ -104,6 +105,7 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
     const auditPort: RuntimeAuditStorePort = {
       beginInjection: (record) => { order.push("PENDING"); return values.audits.beginInjection(record); },
       completeInjection: (...args) => { order.push(args[2]); return values.audits.completeInjection(...args); },
+      acknowledgeInjectionDelivery: (...args) => values.audits.acknowledgeInjectionDelivery(...args),
       getInjection: (id) => values.audits.getInjection(id),
       listInjections: (id, limit) => values.audits.listInjections(id, limit),
       recordMcpExpansion: (record) => values.audits.recordMcpExpansion(record),
@@ -116,8 +118,17 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
     const result = await runtime({ retrieval: retrieval(), rollout, audits: auditPort, feedback: values.feedback }).handle(input());
     expect(order).toEqual(["PENDING", "INJECTED"]);
     expect(result).toMatchObject({ status: "INJECTED", attempt: { status: "INJECTED", revision: 1 } });
+    expect(result.attempt).not.toHaveProperty("deliveryEvidenceRef");
+    expect(result.attempt).not.toHaveProperty("deliveredAt");
     expect(result.hookOutput).toContain("additionalContext");
     expect(values.audits.listInjections("session-1").items[0]?.envelope.items[0]).toMatchObject({ id: "knowledge-1", version: 3 });
+    const acknowledged = new InjectionDeliveryAcknowledger(auditPort).acknowledge({
+      attemptId: result.attempt!.attemptId,
+      expectedRevision: result.attempt!.revision,
+      deliveryEvidenceRef: "hook-client:accepted-1",
+      deliveredAt: fixedNow,
+    });
+    expect(acknowledged).toMatchObject({ revision: 2, deliveryEvidenceRef: "hook-client:accepted-1", deliveredAt: fixedNow });
     values.audits.close(); values.feedback.close();
   });
 
@@ -168,6 +179,7 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
     const flaky: RuntimeAuditStorePort = {
       beginInjection: (record) => values.audits.beginInjection(record),
       completeInjection: (...args) => values.audits.completeInjection(...args),
+      acknowledgeInjectionDelivery: (...args) => values.audits.acknowledgeInjectionDelivery(...args),
       getInjection: (id) => {
         gets += 1;
         if (gets === 2) throw new Error("transient projection failure");
@@ -313,6 +325,7 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
     const unavailable: RuntimeAuditStorePort = {
       beginInjection: (record) => values.audits.beginInjection(record),
       completeInjection: () => { throw new Error("audit unavailable"); },
+      acknowledgeInjectionDelivery: (...args) => values.audits.acknowledgeInjectionDelivery(...args),
       getInjection: (id) => values.audits.getInjection(id),
       listInjections: (id, limit) => values.audits.listInjections(id, limit),
       recordMcpExpansion: (record) => values.audits.recordMcpExpansion(record),

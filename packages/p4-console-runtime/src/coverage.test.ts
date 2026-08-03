@@ -111,11 +111,23 @@ describe("strict P4 contracts", () => {
     expect(() => injectionAttemptSchema.parse({ ...attempt, runId: "run-b" })).toThrow("runId mismatch");
     expect(() => injectionAttemptSchema.parse({ ...attempt, completedAt: now })).toThrow("terminal status");
     expect(() => injectionAttemptSchema.parse({ ...attempt, status: "ERROR" })).toThrow("terminal status");
+    const acknowledged = {
+      ...attempt,
+      status: "INJECTED" as const,
+      revision: 2,
+      reasonCode: "HOOK_CONTEXT_GENERATED",
+      completedAt: now,
+      deliveryEvidenceRef: "hook-client:receipt-a",
+      deliveredAt: now,
+    };
+    expect(injectionAttemptSchema.parse(acknowledged).deliveryEvidenceRef).toBe("hook-client:receipt-a");
+    expect(() => injectionAttemptSchema.parse({ ...acknowledged, deliveredAt: undefined })).toThrow("present together");
     const expansion = {
       schemaVersion: 1, expansionId: "expansion-a", attemptId: "attempt-a", traceId: "trace-a", tool: "ckl.check",
       knowledgeId: "knowledge-a", knowledgeVersion: 1, fromDetailLevel: "L2_COMPACT", toDetailLevel: "L3_EVIDENCED", latencyMs: 0, used: false, occurredAt: now,
     } as const;
     expect(mcpExpansionSchema.parse(expansion).toDetailLevel).toBe("L3_EVIDENCED");
+    expect(mcpExpansionSchema.parse({ ...expansion, attemptId: undefined }).attemptId).toBeUndefined();
     expect(() => mcpExpansionSchema.parse({ ...expansion, toDetailLevel: "L2_COMPACT" })).toThrow("invalid detail");
     expect(closureRunSchema.parse({
       schemaVersion: 1, closureRunId: "closure-a", sessionId: "session-a", turnId: "turn-a",

@@ -98,15 +98,34 @@ export const injectionAttemptSchema = z.strictObject({
   reasonCode,
   createdAt: iso,
   completedAt: iso.optional(),
+  deliveryEvidenceRef: safeId.optional(),
+  deliveredAt: iso.optional(),
 }).superRefine((value, context) => {
   if (value.envelope.runId !== value.runId) context.addIssue({ code: "custom", path: ["envelope", "runId"], message: "runId mismatch" });
   if ((value.status === "PENDING") !== (value.completedAt === undefined)) {
     context.addIssue({ code: "custom", path: ["completedAt"], message: "terminal status/completion mismatch" });
   }
+  const acknowledged = value.deliveryEvidenceRef !== undefined || value.deliveredAt !== undefined;
+  if (acknowledged !== (value.deliveryEvidenceRef !== undefined && value.deliveredAt !== undefined)) {
+    context.addIssue({ code: "custom", path: ["deliveryEvidenceRef"], message: "delivery evidence and timestamp must be present together" });
+  }
+  if (acknowledged && (value.status !== "INJECTED" || value.revision !== 2)) {
+    context.addIssue({ code: "custom", path: ["status"], message: "acknowledged delivery requires revision two INJECTED" });
+  }
+  if (!acknowledged && value.status !== "PENDING" && value.revision !== 1) {
+    context.addIssue({ code: "custom", path: ["revision"], message: "unacknowledged terminal delivery requires revision one" });
+  }
+  if (value.status === "PENDING" && value.revision !== 0) {
+    context.addIssue({ code: "custom", path: ["revision"], message: "pending delivery requires revision zero" });
+  }
+  if (value.deliveredAt !== undefined && value.completedAt !== undefined
+    && Date.parse(value.deliveredAt) < Date.parse(value.completedAt)) {
+    context.addIssue({ code: "custom", path: ["deliveredAt"], message: "delivery cannot precede generation completion" });
+  }
 });
 
 export const mcpExpansionSchema = z.strictObject({
-  schemaVersion: z.literal(1), expansionId: safeId, attemptId: safeId, traceId: safeId,
+  schemaVersion: z.literal(1), expansionId: safeId, attemptId: safeId.optional(), traceId: safeId,
   tool: z.enum(["ckl.search", "ckl.get", "ckl.related", "ckl.check"]),
   knowledgeId: safeId, knowledgeVersion: z.number().int().positive(),
   fromDetailLevel: z.enum(["L1_POINTER", "L2_COMPACT"]),

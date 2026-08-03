@@ -236,7 +236,8 @@ describe("ActiveClosureRuntime", () => {
   it("persists a derived Task Contract and safe default for a low-impact interaction", async () => {
     const values = resources();
     const inputWithoutContract = closureInput("TEST_PASSED", true);
-    const { taskContract: _taskContract, ...contextEnvelope } = inputWithoutContract.contextEnvelope;
+    const { taskContract, ...contextEnvelope } = inputWithoutContract.contextEnvelope;
+    expect(taskContract).toBeDefined();
     const input = {
       ...inputWithoutContract,
       contextEnvelope,

@@ -37,7 +37,9 @@
     { "path": "./packages/feedback-engine" },
     { "path": "./packages/codex-backfill" },
     { "path": "./packages/plugin-runtime" },
-    { "path": "./apps/daemon" },
-    { "path": "./apps/cli" }
+    { "path": "./packages/local-deployment" },
+    { "path": "./packages/daemon-runtime" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/sidecar" }
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "name": "@zhiloop/sidecar",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "zhiloop-sidecar": "./dist/main.js",
+    "zhiloop": "./dist/deploy-main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/conversation-ledger": "0.0.0",
+    "@zhiloop/daemon": "0.0.0",
+    "@zhiloop/hook-runtime": "0.0.0",
+    "@zhiloop/local-deployment": "0.1.0",
+    "@zhiloop/plugin-runtime": "0.0.0"
+  }
+}

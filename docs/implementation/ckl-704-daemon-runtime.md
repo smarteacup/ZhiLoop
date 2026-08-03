@@ -2,7 +2,7 @@
 
 ## 1. 结论
 
-CKL-704 已完成。`apps/daemon` 不再是空占位，而是 ZhiLoop sidecar 的唯一应用编排入口：统一管理组件生命周期、Hook 快路径、MCP 请求、后台 worker 单飞与结构化健康快照。
+CKL-704 已完成。`packages/daemon-runtime` 是 ZhiLoop sidecar 的应用编排核：统一管理组件生命周期、Hook 快路径、MCP 请求、后台 worker 单飞与结构化健康快照；`apps/sidecar` 负责进程组合与 transport。
 
 本模块不复制 Ledger、Compiler、Retrieval、MCP、Closure 等领域逻辑。发行层把相应服务作为端口装配进 `ZhiLoopDaemonRuntime`，再由 `zhiloop-sidecar` 的进程 transport 暴露；进程打包、服务管理器注册和真实用户目录安装仍属于部署动作，本次没有执行。
 
@@ -65,7 +65,7 @@ DEGRADED -> 显式 start 重试
 Review 修复了 8 个高风险和 7 个中风险问题：启动/停止竞态、组件部分启动回滚、MCP 未随 shutdown 取消、shutdown deadline 被 `unref`、worker 游标倒退、worker 失败不进入 health、Hook 输出无界、组件健康类型/多行诊断污染，以及 clock/deadline/组件身份输入校验。
 
 ```text
-npx vitest run apps/daemon/src --coverage ...
+npx vitest run packages/daemon-runtime/src --coverage ...
 node --test scripts/daemon-runtime-boundary.test.mjs
 npm run check
 npm audit --audit-level=high --registry=https://registry.npmjs.org

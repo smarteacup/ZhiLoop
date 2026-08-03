@@ -1,0 +1,169 @@
+import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
+
+import type { SidecarApplication } from "./application.js";
+
+const MAX_TRANSPORT_BYTES = 5_500_000;
+const MAX_RESPONSE_BYTES = 1_048_576;
+
+type SidecarRequest =
+  | { readonly type: "hook"; readonly input: unknown }
+  | { readonly type: "health" }
+  | { readonly type: "worker" };
+
+interface SidecarResponse {
+  readonly ok: boolean;
+  readonly result?: unknown;
+  readonly errorCode?: string;
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof SyntaxError) return "INVALID_JSON";
+  if (error instanceof Error && "code" in error && typeof error.code === "string") return error.code.slice(0, 100);
+  return "REQUEST_FAILED";
+}
+
+function parseRequest(value: unknown): SidecarRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid request");
+  const type = (value as { type?: unknown }).type;
+  if (type === "hook") return { type, input: (value as { input?: unknown }).input };
+  if (type === "health" || type === "worker") return { type };
+  throw new Error("unsupported request");
+}
+
+async function readOne(socket: Socket, maximum: number): Promise<unknown> {
+  return await new Promise<unknown>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const cleanup = (): void => {
+      socket.off("data", onData);
+      socket.off("end", onEnd);
+      socket.off("error", onError);
+    };
+    const fail = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const onError = (error: Error): void => fail(error);
+    const onEnd = (): void => fail(new SyntaxError("transport message ended before newline"));
+    const onData = (chunk: Buffer): void => {
+      size += chunk.length;
+      if (size > maximum) {
+        fail(new RangeError("transport message too large"));
+        return;
+      }
+      chunks.push(chunk);
+      const combined = Buffer.concat(chunks);
+      const newline = combined.indexOf(0x0a);
+      if (newline < 0) return;
+      cleanup();
+      try {
+        resolve(JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    socket.on("data", onData);
+    socket.once("end", onEnd);
+    socket.once("error", onError);
+  });
+}
+
+async function handle(socket: Socket, application: SidecarApplication): Promise<void> {
+  let response: SidecarResponse;
+  try {
+    const request = parseRequest(await readOne(socket, MAX_TRANSPORT_BYTES));
+    const result = request.type === "hook"
+      ? await application.handleHook(request.input)
+      : request.type === "health"
+        ? await application.health()
+        : await application.runWorkerOnce();
+    response = { ok: true, result };
+  } catch (error) {
+    response = { ok: false, errorCode: errorCode(error) };
+  }
+  if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
+}
+
+async function removeStaleSocket(path: string): Promise<void> {
+  try {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink() || !stat.isSocket()) throw new Error("socket target must be absent or a Unix socket");
+    if (await socketIsLive(path)) throw new Error("another ZhiLoop sidecar already owns the Unix socket");
+    await unlink(path);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
+
+async function socketIsLive(path: string): Promise<boolean> {
+  return await new Promise<boolean>((resolvePromise, reject) => {
+    const socket = createConnection(path);
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolvePromise(value);
+    };
+    const timer = setTimeout(() => finish(true), 100);
+    socket.once("connect", () => finish(true));
+    socket.once("error", (error: Error & { code?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error.code === "ECONNREFUSED" || error.code === "ENOENT") resolvePromise(false);
+      else reject(error);
+    });
+  });
+}
+
+export async function startSidecarServer(path: string, application: SidecarApplication): Promise<Server> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await removeStaleSocket(path);
+  const server = createServer((socket) => {
+    socket.on("error", () => undefined);
+    void handle(socket, application).catch(() => socket.destroy());
+  });
+  await new Promise<void>((resolve, reject) => {
+    const failed = (error: Error): void => reject(error);
+    server.once("error", failed);
+    server.listen(path, () => {
+      server.off("error", failed);
+      resolve();
+    });
+  });
+  if (process.platform !== "win32") await chmod(path, 0o600);
+  return server;
+}
+
+export async function stopSidecarServer(server: Server, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+  await unlink(path).catch((error: unknown) => {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  });
+}
+
+export async function requestSidecar(path: string, request: SidecarRequest, timeoutMs: number): Promise<unknown> {
+  const socket = createConnection(path);
+  const timer = setTimeout(() => socket.destroy(new Error("sidecar request timed out")), timeoutMs);
+  timer.unref?.();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    socket.write(`${JSON.stringify(request)}\n`);
+    const response = await readOne(socket, MAX_RESPONSE_BYTES) as SidecarResponse;
+    if (typeof response !== "object" || response === null || response.ok !== true) {
+      throw new Error(`sidecar request failed: ${typeof response?.errorCode === "string" ? response.errorCode : "INVALID_RESPONSE"}`);
+    }
+    return response.result;
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
+  }
+}

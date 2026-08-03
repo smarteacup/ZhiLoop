@@ -9,6 +9,10 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../../packages/conversation-ledger" },
+    { "path": "../../packages/daemon-runtime" },
+    { "path": "../../packages/hook-runtime" },
+    { "path": "../../packages/local-deployment" },
     { "path": "../../packages/plugin-runtime" }
   ]
 }

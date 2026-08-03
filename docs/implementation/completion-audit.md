@@ -67,7 +67,7 @@
 | CKL-701 | App Server adapter | v2 event/final state/reconnect replay 与 boundary | 通过 |
 | CKL-702 | `packages/codex-backfill` | dry-run、策略、分页 checkpoint、恢复与 boundary | 通过 |
 | CKL-703 | Plugin + `packages/plugin-runtime` | 安装/卸载、CCM 合并、兼容、launcher、P7 Gate | 通过 |
-| CKL-704 | `apps/daemon` | lifecycle/rollback/cancel/single-flight/health 与 boundary | 通过 |
+| CKL-704 | `packages/daemon-runtime` | lifecycle/rollback/cancel/single-flight/health 与 boundary | 通过 |
 | CKL-705 | `packages/model-codex-exec` | 9 个专项测试、non-shell/read-only/structured-output boundary | 通过 |
 | P7 Gate | 插件临时目录 round-trip、兼容与失败开放 | `scripts/plugin-runtime-boundary.test.mjs` | 通过 |
 | CKL-X01 | 各入口 redaction、权限、大小/路径/Scope 门禁 | Hook/Ledger/Plugin/Codex Exec 安全正反测试 | 通过 |

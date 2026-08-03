@@ -20,6 +20,8 @@
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "node --test scripts/*.test.mjs && vitest run --coverage",
     "test:unit": "vitest run",
+    "release:local": "node scripts/build-local-release.mjs",
+    "verify:shadow": "node scripts/verify-shadow-install.mjs",
     "check:deps": "node scripts/check-workspace-dependencies.mjs && node scripts/check-source-imports.mjs",
     "check": "npm run check:deps && npm run lint && npm run build && npm run typecheck:test && npm run test"
   },

@@ -6,7 +6,7 @@ ZhiLoop 是一个面向 AI 编程代理的动态知识层。其核心架构 Code
 
 ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Contract。知识注入、任务契约和闭环验证都是可组合能力：默认向 AI 编程代理提供少量边界、门禁、已有能力和知识指针，运行中再按需展开。
 
-当前 P0-P7 源码实施基线已经完成：覆盖 Codex/App Server 对话沉淀、默认只读 `codex exec` 抽取、证据驱动知识生命周期、Markdown/SQLite、混合召回、可控注入、MCP 展开、有限闭环、历史回填、Codex/CCM 插件包装与 Daemon 应用编排。系统仍保持未部署状态，不会自行安装 Hook、启动后台进程或修改 `~/.codex`、`~/.ccm`、`~/.ckl` 和业务仓库。
+当前 P0-P7 源码实施与本地部署基线已经完成：覆盖 Codex/App Server 对话沉淀、默认只读 `codex exec` 抽取、证据驱动知识生命周期、Markdown/SQLite、混合召回、可控注入、MCP 展开、有限闭环、历史回填、Codex/CCM Hook 共存、sidecar 与可回滚部署。当前开发机已安装 `0.1.2`，仅运行 SHADOW：沉淀事件但不向模型注入内容；ACTIVE 和真实知识迁移仍未授权。
 
 ## 文档入口
 
@@ -16,6 +16,8 @@ ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Cont
 - [MVP 最终验收报告](docs/implementation/mvp-final-acceptance-report.md)
 - [实施计划完成审计](docs/implementation/completion-audit.md)
 - [版本兼容矩阵](docs/implementation/version-compatibility-matrix.md)
+- [本地部署与回滚](docs/deployment.md)
+- [CKL-706：本地 sidecar 与可回滚部署](docs/implementation/ckl-706-local-deployment.md)
 - [ADR-0001：模块化单体](docs/adr/0001-modular-monolith.md)
 - [ADR-0002：Markdown 与 SQLite](docs/adr/0002-markdown-sqlite-storage.md)
 - [ADR-0003：Codex 接入](docs/adr/0003-codex-integration.md)
@@ -24,9 +26,10 @@ ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Cont
 ## 当前状态
 
 - 系统设计：MVP Implementation Baseline
-- P0-P7：全部完成并通过 Gate
-- 自动化验证：630 项模块测试、51 项架构/Gate 测试
-- 运行模式：未启用，保持纯本地源码与测试状态
+- P0-P7 与本地部署：全部完成并通过 Gate
+- 自动化验证：665 项模块测试、52 项架构/Gate 测试
+- 运行模式：当前用户 `0.1.2` READY/SHADOW，LaunchAgent `dev.zhiloop.sidecar`
+- 真实验收：合成 Hook ledger `+1`、模型输出 `0` 字节、日志无正文、Codex Hook 可还原、CCM 配置 hash 不变
 
 ## 本地验证
 
@@ -36,4 +39,4 @@ npm run clean
 npm run check
 ```
 
-源码完成不等于已授权部署。真实启用还需要发行包提供 `zhiloop-sidecar` 进程 transport，并明确选择安装目录、服务管理方式和回滚窗口。
+`npm run check` 通过只表示源码与隔离部署门禁通过；真实 HOME 的安装、升级、ACTIVE 切换、知识迁移和 purge 仍是彼此独立的授权动作。当前只完成了本机 SHADOW 安装。

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ZhiLoopDaemonRuntime } from "../apps/daemon/dist/index.js";
+import { ZhiLoopDaemonRuntime } from "../packages/daemon-runtime/dist/index.js";
 import { evaluateSidecarCompatibility } from "../packages/plugin-runtime/dist/index.js";
 
 const compatibility = {

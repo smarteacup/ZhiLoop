@@ -148,7 +148,7 @@ Codex 接口依据：[Hooks](https://learn.chatgpt.com/docs/hooks)、[App Server
 ```mermaid
 flowchart TB
     subgraph Apps["应用层"]
-        D["apps/daemon"]
+        D["packages/daemon-runtime"]
         CLI["apps/cli"]
     end
 

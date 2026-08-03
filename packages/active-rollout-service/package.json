@@ -1,0 +1,28 @@
+{
+  "name": "@zhiloop/active-rollout-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/codex-context-injection",
+      "@zhiloop/retrieval-evaluation"
+    ],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/codex-context-injection": "0.0.0",
+    "@zhiloop/retrieval-evaluation": "0.0.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../active-knowledge-runtime" },
+    { "path": "../active-rollout-service" },
+    { "path": "../domain" },
+    { "path": "../feedback-engine" },
+    { "path": "../retrieval-evaluation" },
+    { "path": "../runtime-audit-store" }
+  ]
+}

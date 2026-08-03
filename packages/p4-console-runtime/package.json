@@ -1,0 +1,37 @@
+{
+  "name": "@zhiloop/p4-console-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/active-knowledge-runtime",
+      "@zhiloop/active-rollout-service",
+      "@zhiloop/domain",
+      "@zhiloop/feedback-engine",
+      "@zhiloop/retrieval-evaluation",
+      "@zhiloop/runtime-audit-store"
+    ],
+    "allowedExternalDependencies": ["node:*", "zod"],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/active-knowledge-runtime": "0.0.0",
+    "@zhiloop/active-rollout-service": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/feedback-engine": "0.0.0",
+    "@zhiloop/retrieval-evaluation": "0.0.0",
+    "@zhiloop/runtime-audit-store": "0.0.0",
+    "zod": "^4.4.3"
+  }
+}

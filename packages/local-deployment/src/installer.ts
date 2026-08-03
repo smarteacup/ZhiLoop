@@ -78,6 +78,7 @@ function configuration(paths: ReturnType<typeof resolveDeploymentPaths>): string
     schemaVersion: 1,
     rolloutMode: "SHADOW",
     socketPath: paths.socketPath,
+    codexSessionsRoot: paths.codexSessionsRoot,
     ledgerPath: paths.ledgerPath,
     spoolPath: paths.spoolDirectory,
     logPath: paths.sidecarLogPath,

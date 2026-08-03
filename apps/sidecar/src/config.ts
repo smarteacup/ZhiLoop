@@ -7,6 +7,7 @@ export interface SidecarConfig {
   readonly schemaVersion: 1;
   readonly rolloutMode: "SHADOW";
   readonly socketPath: string;
+  readonly codexSessionsRoot: string;
   readonly ledgerPath: string;
   readonly spoolPath: string;
   readonly logPath: string;
@@ -45,6 +46,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
     schemaVersion: 1,
     rolloutMode: "SHADOW",
     socketPath: absolutePath(value["socketPath"], "socketPath"),
+    codexSessionsRoot: absolutePath(value["codexSessionsRoot"], "codexSessionsRoot"),
     ledgerPath: absolutePath(value["ledgerPath"], "ledgerPath"),
     spoolPath: absolutePath(value["spoolPath"], "spoolPath"),
     logPath: absolutePath(value["logPath"], "logPath"),

@@ -31,6 +31,7 @@ export function resolveDeploymentPaths(home: string, version: string): Deploymen
     stateDirectory,
     configPath: join(stateDirectory, "config.json"),
     socketPath: join(stateDirectory, "run", "sidecar.sock"),
+    codexSessionsRoot: join(normalizedHome, ".codex", "sessions"),
     ledgerPath: join(stateDirectory, "knowledge", "events.sqlite"),
     spoolDirectory: join(stateDirectory, "spool"),
     logDirectory,

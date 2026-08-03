@@ -1,6 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import {
+  CodexSessionCaptureService,
+  type CaptureSessionReport,
+  type CaptureSessionRequest,
+  type TranscriptCursor,
+} from "@zhiloop/codex-session-capture";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { ZhiLoopDaemonRuntime, type DaemonHealthSnapshot, type DaemonWorkerCycle } from "@zhiloop/daemon";
 import { CodexHookHandler, LocalEventSpool, type HookCaptureResult, type HookEventSink } from "@zhiloop/hook-runtime";
@@ -23,11 +29,23 @@ function captureCode(result: HookCaptureResult): string {
 export class SidecarApplication {
   readonly #runtime: ZhiLoopDaemonRuntime;
   readonly #ledger: SqliteEventLedger;
+  readonly #capture: CodexSessionCaptureService;
+  readonly #log: SafeDiagnosticLog;
   #closed = false;
+  #captureTail: Promise<void> = Promise.resolve();
   #workerTail: Promise<void> = Promise.resolve();
 
   private constructor(config: SidecarConfig, ledger: SqliteEventLedger, spool: LocalEventSpool, log: SafeDiagnosticLog) {
     this.#ledger = ledger;
+    this.#log = log;
+    this.#capture = new CodexSessionCaptureService(
+      config.codexSessionsRoot,
+      { appendBatch: (events) => ledger.appendBatch(events) },
+      {
+        load: (ingestionId) => ledger.loadIngestionCursor<TranscriptCursor>(ingestionId)?.cursor,
+        commit: (ingestionId, cursor) => ledger.commitIngestionCursor(ingestionId, cursor),
+      },
+    );
     const ledgerSink: HookEventSink = {
       enqueue: async (event, signal) => {
         if (signal.aborted) throw signal.reason;
@@ -107,12 +125,35 @@ export class SidecarApplication {
     return this.#runtime.runWorkerOnce();
   }
 
+  async captureSession(request: CaptureSessionRequest): Promise<CaptureSessionReport> {
+    const startedAt = Date.now();
+    const operation = this.#captureTail.then(async () => await this.#capture.capture(request));
+    this.#captureTail = operation.then(() => undefined, () => undefined);
+    try {
+      const report = await operation;
+      await this.#log.write({
+        component: "capture",
+        code: report.status,
+        durationMs: Date.now() - startedAt,
+        count: report.appendedEvents,
+      }).catch(() => undefined);
+      return report;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "CAPTURE_FAILED";
+      await this.#log.write({ component: "capture", code, durationMs: Date.now() - startedAt }).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async health(): Promise<SidecarHealthReport> {
     return Object.freeze({ ...(await this.#runtime.health()), rolloutMode: "SHADOW", socketStatus: "READY" });
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
+    await this.#captureTail;
     await this.#workerTail;
     await this.#runtime.stop();
     this.#ledger.close();

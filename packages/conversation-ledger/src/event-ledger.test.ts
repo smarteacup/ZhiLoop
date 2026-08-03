@@ -271,3 +271,42 @@ describe("consumer cursors and replay", () => {
     expect(() => ledger.count()).toThrow("closed");
   });
 });
+
+describe("ingestion cursors", () => {
+  it("persists and replaces integrity-protected structured cursors without changing migration version", async () => {
+    const filename = await databasePath();
+    const ledger = new SqliteEventLedger(filename, { clock: CLOCK });
+    expect(ledger.loadIngestionCursor("codex-transcript:session-a")).toBeUndefined();
+    ledger.commitIngestionCursor("codex-transcript:session-a", { byteOffset: 10, lineNumber: 2 });
+    expect(ledger.loadIngestionCursor("codex-transcript:session-a")).toEqual({
+      ingestionId: "codex-transcript:session-a",
+      cursor: { byteOffset: 10, lineNumber: 2 },
+      updatedAt: "2026-08-01T12:00:00.000Z",
+    });
+    ledger.commitIngestionCursor("codex-transcript:session-a", { byteOffset: 20, lineNumber: 4 });
+    ledger.close();
+
+    const reopened = new SqliteEventLedger(filename, { clock: CLOCK });
+    expect(reopened.loadIngestionCursor<{ byteOffset: number }>("codex-transcript:session-a")?.cursor.byteOffset).toBe(20);
+    reopened.close();
+    const database = new DatabaseSync(filename, { readOnly: true });
+    expect((database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);
+    database.close();
+  });
+
+  it("rejects invalid and oversized cursor state and detects tampering", async () => {
+    const filename = await databasePath();
+    const ledger = new SqliteEventLedger(filename, { clock: CLOCK });
+    expect(() => ledger.commitIngestionCursor("", {})).toThrow("ingestionId");
+    expect(() => ledger.commitIngestionCursor("source", null)).toThrow("object");
+    expect(() => ledger.commitIngestionCursor("source", { value: "x".repeat(70_000) })).toThrow("64 KiB");
+    ledger.commitIngestionCursor("source", { byteOffset: 10 });
+    ledger.close();
+    const database = new DatabaseSync(filename);
+    database.prepare("UPDATE ingestion_cursors SET cursor_json = ? WHERE ingestion_id = ?").run("{}", "source");
+    database.close();
+    const reopened = new SqliteEventLedger(filename, { clock: CLOCK });
+    expect(() => reopened.loadIngestionCursor("source")).toThrow("integrity");
+    reopened.close();
+  });
+});

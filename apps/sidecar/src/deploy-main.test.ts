@@ -7,7 +7,9 @@ import { Writable } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { SidecarApplication } from "./application.js";
 import { runDeploymentCli } from "./deployment-cli.js";
+import { startSidecarServer, stopSidecarServer } from "./transport.js";
 
 const roots: string[] = [];
 
@@ -63,5 +65,55 @@ describe("deployment CLI", () => {
     const stderr = sink();
     expect(await runDeploymentCli(["unknown", "--home", value.home], sink().stream, stderr.stream)).toBe(64);
     expect(stderr.value()).toContain("usage: zhiloop");
+  });
+
+  it("returns stable capture usage and Sidecar-unavailable diagnostics", async () => {
+    const value = await fixture();
+    const missing = sink();
+    expect(await runDeploymentCli(["capture", "--home", value.home], sink().stream, missing.stream)).toBe(64);
+    expect(missing.value()).toContain("--session");
+
+    const unavailable = sink();
+    expect(await runDeploymentCli([
+      "capture", "--home", value.home, "--session", "session-a", "--json",
+    ], sink().stream, unavailable.stream)).toBe(69);
+    expect(JSON.parse(unavailable.value())).toMatchObject({ status: "FAILED", errorCode: "SIDECAR_UNAVAILABLE" });
+  });
+
+  it("requests a dry-run capture through the Sidecar without direct ledger writes", async () => {
+    const value = await fixture();
+    const sessionsRoot = join(value.home, ".codex", "sessions");
+    const transcriptDirectory = join(sessionsRoot, "2026", "08", "03");
+    await mkdir(transcriptDirectory, { recursive: true });
+    await writeFile(join(transcriptDirectory, "rollout-session-a.jsonl"), [
+      JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { session_id: "session-a", cli_version: "0.145.0" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:01.000Z", payload: { type: "user_message", message: "preview" } }),
+    ].join("\n") + "\n");
+    const config = {
+      schemaVersion: 1 as const,
+      rolloutMode: "SHADOW" as const,
+      socketPath: join(value.home, ".ckl", "run", "sidecar.sock"),
+      codexSessionsRoot: sessionsRoot,
+      ledgerPath: join(value.home, ".ckl", "knowledge", "events.sqlite"),
+      spoolPath: join(value.home, ".ckl", "spool"),
+      logPath: join(value.home, ".ckl", "logs", "sidecar.jsonl"),
+      hookMaxInputBytes: 5_242_880,
+      hookTimeoutMs: 750,
+      logMaxBytes: 5_242_880,
+      logRetainFiles: 3,
+    };
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      const stdout = sink();
+      expect(await runDeploymentCli([
+        "capture", "--home", value.home, "--session", "session-a", "--dry-run", "--json",
+      ], stdout.stream, sink().stream)).toBe(0);
+      expect(JSON.parse(stdout.value())).toMatchObject({ status: "PREVIEWED", projectedEvents: 2, appendedEvents: 0 });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
   });
 });

@@ -10,6 +10,7 @@ import type {
   AppendResult,
   CursorCommitResult,
   EventLedgerOptions,
+  IngestionCursorRecord,
   LedgerEventRecord,
   RetentionResult,
 } from "./types.js";
@@ -17,6 +18,7 @@ import type {
 const CURRENT_MIGRATION_VERSION = 1;
 const MAX_BATCH_SIZE = 10_000;
 const MAX_READ_LIMIT = 1_000;
+const MAX_INGESTION_CURSOR_BYTES = 65_536;
 
 interface PreparedEvent {
   readonly event: EventEnvelope;
@@ -61,6 +63,12 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
 
 function assertConsumerId(consumerId: string): void {
   if (consumerId.length < 1 || consumerId.length > 200) throw new Error("consumerId must contain 1 to 200 characters");
+}
+
+function assertIngestionId(ingestionId: string): void {
+  if (ingestionId.length < 1 || ingestionId.length > 300 || /[\0\r\n]/u.test(ingestionId)) {
+    throw new Error("ingestionId must contain 1 to 300 safe characters");
+  }
 }
 
 function assertSequence(sequence: number): void {
@@ -135,6 +143,7 @@ export class SqliteEventLedger {
       this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;");
       if (filename !== ":memory:") this.#database.exec("PRAGMA journal_mode = WAL;");
       this.#migrate();
+      this.#ensureIngestionCursorSchema();
     } catch (error) {
       this.#database.close();
       this.#closed = true;
@@ -191,6 +200,17 @@ export class SqliteEventLedger {
       this.#database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  #ensureIngestionCursorSchema(): void {
+    this.#database.exec(`
+      CREATE TABLE IF NOT EXISTS ingestion_cursors (
+        ingestion_id TEXT PRIMARY KEY,
+        cursor_json TEXT NOT NULL,
+        cursor_hash TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
   }
 
   #transaction<T>(action: () => T): T {
@@ -302,6 +322,36 @@ export class SqliteEventLedger {
     this.#assertOpen();
     const row = this.#database.prepare("SELECT COUNT(*) AS count FROM events").get() as { count: number };
     return row.count;
+  }
+
+  loadIngestionCursor<TCursor = unknown>(ingestionId: string): IngestionCursorRecord<TCursor> | undefined {
+    this.#assertOpen();
+    assertIngestionId(ingestionId);
+    const row = this.#database.prepare(`
+      SELECT cursor_json, cursor_hash, updated_at FROM ingestion_cursors WHERE ingestion_id = ?
+    `).get(ingestionId) as { cursor_json: string; cursor_hash: string; updated_at: string } | undefined;
+    if (row === undefined) return undefined;
+    if (sha256(row.cursor_json) !== row.cursor_hash) throw new Error(`ingestion cursor ${ingestionId} failed integrity verification`);
+    return Object.freeze({
+      ingestionId,
+      cursor: deepFreeze(JSON.parse(row.cursor_json) as TCursor),
+      updatedAt: row.updated_at,
+    });
+  }
+
+  commitIngestionCursor(ingestionId: string, cursor: unknown): void {
+    this.#assertOpen();
+    assertIngestionId(ingestionId);
+    if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) throw new Error("ingestion cursor must be an object");
+    const cursorJson = JSON.stringify(cursor);
+    if (Buffer.byteLength(cursorJson, "utf8") > MAX_INGESTION_CURSOR_BYTES) throw new Error("ingestion cursor exceeds 64 KiB");
+    this.#database.prepare(`
+      INSERT INTO ingestion_cursors (ingestion_id, cursor_json, cursor_hash, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(ingestion_id) DO UPDATE SET
+        cursor_json = excluded.cursor_json,
+        cursor_hash = excluded.cursor_hash,
+        updated_at = excluded.updated_at
+    `).run(ingestionId, cursorJson, sha256(cursorJson), this.#clock().toISOString());
   }
 
   cursor(consumerId: string): number {

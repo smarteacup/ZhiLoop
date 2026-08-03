@@ -16,7 +16,7 @@ import {
 import type { SidecarHealth } from "@zhiloop/plugin-runtime";
 
 import { SIDECAR_COMPATIBILITY } from "./metadata.js";
-import { requestSidecar } from "./transport.js";
+import { requestSidecar, SidecarRequestError } from "./transport.js";
 
 function option(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -48,12 +48,54 @@ function probe(home: string): HealthProbe {
   };
 }
 
+function captureErrorCode(error: unknown): string {
+  if (error instanceof SidecarRequestError) return error.code;
+  if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT")) {
+    return "SIDECAR_UNAVAILABLE";
+  }
+  return "CAPTURE_REQUEST_FAILED";
+}
+
+function captureExitCode(code: string): number {
+  if (code === "INVALID_SESSION_ID") return 64;
+  if (code === "SESSION_NOT_FOUND") return 66;
+  if (code === "SIDECAR_UNAVAILABLE") return 69;
+  return 70;
+}
+
 export async function runDeploymentCli(args: readonly string[], stdout: Writable, stderr: Writable): Promise<number> {
   const command = args[0];
   const json = args.includes("--json");
   const apply = args.includes("--apply");
   const home = selectedHome(args);
   const service = new MacOsLaunchctlController();
+  if (command === "capture") {
+    const sessionId = option(args, "--session");
+    if (sessionId === undefined) {
+      stderr.write("usage: zhiloop capture --session <id> [--dry-run] [--home PATH] [--json]\n");
+      return 64;
+    }
+    try {
+      const paths = resolveDeploymentPaths(home, "0.0.0");
+      const report = await requestSidecar(paths.socketPath, {
+        type: "capture-session",
+        sessionId,
+        dryRun: args.includes("--dry-run"),
+      }, 30_000);
+      output(report, stdout, json);
+      return 0;
+    } catch (error) {
+      const errorCode = captureErrorCode(error);
+      output({
+        schemaVersion: 1,
+        status: "FAILED",
+        errorCode,
+        ...(error instanceof SidecarRequestError && error.lineNumber !== undefined ? { lineNumber: error.lineNumber } : {}),
+        ...(error instanceof SidecarRequestError && error.byteOffset !== undefined ? { byteOffset: error.byteOffset } : {}),
+      }, stderr, true);
+      return captureExitCode(errorCode);
+    }
+  }
   if (command === "install" || command === "upgrade") {
     const artifact = option(args, "--artifact");
     if (artifact === undefined) throw new Error(`${command} requires --artifact <absolute-release-directory>`);
@@ -99,6 +141,6 @@ export async function runDeploymentCli(args: readonly string[], stdout: Writable
     output(result, stdout, json);
     return 0;
   }
-  stderr.write("usage: zhiloop <install|upgrade|doctor|uninstall> [--home PATH] [--artifact PATH] [--apply] [--json]\n");
+  stderr.write("usage: zhiloop <capture|install|upgrade|doctor|uninstall> [options]\n");
   return 64;
 }

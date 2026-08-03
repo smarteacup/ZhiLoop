@@ -9,6 +9,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../../packages/codex-session-capture" },
     { "path": "../../packages/conversation-ledger" },
     { "path": "../../packages/daemon-runtime" },
     { "path": "../../packages/hook-runtime" },

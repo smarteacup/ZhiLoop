@@ -29,3 +29,9 @@ export interface RetentionResult {
 export interface EventLedgerOptions {
   readonly clock?: () => Date;
 }
+
+export interface IngestionCursorRecord<TCursor = unknown> {
+  readonly ingestionId: string;
+  readonly cursor: TCursor;
+  readonly updatedAt: string;
+}

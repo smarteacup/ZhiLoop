@@ -12,6 +12,7 @@ export interface DeploymentPaths {
   readonly stateDirectory: string;
   readonly configPath: string;
   readonly socketPath: string;
+  readonly codexSessionsRoot: string;
   readonly ledgerPath: string;
   readonly spoolDirectory: string;
   readonly logDirectory: string;

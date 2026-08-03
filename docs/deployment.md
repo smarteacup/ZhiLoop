@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.1.2
+npm run release:local -- --output /absolute/path/to/zhiloop-0.1.3
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,14 +52,14 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.1.2
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.2 --json
+  install --artifact /absolute/path/to/zhiloop-0.1.3 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.2 --apply --json
+  install --artifact /absolute/path/to/zhiloop-0.1.3 --apply --json
 ```
 
 安装事务依次完成发行 staging、SHADOW 配置、LaunchAgent、`current`、启动器、Codex Hook merge、manifest 与服务健康检查。每步写入 journal；任一步失败都会逆序恢复已完成步骤。升级使用同一入口的 `upgrade` 命令，新版本只有达到兼容 READY 后才保留，否则恢复旧 `current`、manifest、Hook 和服务。
@@ -82,7 +82,39 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 
 预期 stdout 为空；ledger 事件数增加；诊断日志不出现合成 prompt 正文。
 
-## 7. 卸载、保留数据与 purge
+## 7. 主动采集指定 Codex 会话
+
+先进行严格只读预览：
+
+```bash
+~/.local/bin/zhiloop capture \
+  --session 019f837a-34d4-7e60-800c-6361f6fb6d49 \
+  --dry-run --json
+```
+
+预览会在 `~/.codex/sessions` 下读取有界的 rollout JSONL 首行，以 `session_meta` 中的精确 ID 定位文件，然后报告可投影事件、忽略记录和最终游标；不会写 ledger 或 ingestion cursor。文件名或正文中偶然出现相同 ID 不会被当成身份依据。
+
+正式采集：
+
+```bash
+~/.local/bin/zhiloop capture \
+  --session 019f837a-34d4-7e60-800c-6361f6fb6d49 \
+  --json
+```
+
+CLI 只通过当前用户 Unix socket 请求 Sidecar，Sidecar 是 SQLite 唯一写入者。支持的 transcript 投影是 `session.started`、`user.prompted`、`turn.stopped`；其中 `turn.stopped` 保留该轮最终 assistant message。工具细节、隐藏推理和其他 rollout 记录不进入本次规范化事件，计入 `ignoredRecords`。
+
+同一会话重复采集会从持久化锚点游标继续；关闭且未变化的会话返回 `projectedEvents: 0`、`appendedEvents: 0`。如果 append 已完成但游标提交前中断，重试由确定性 event ID 吸收重复。文件被替换、截断或锚点前内容改变时不会自动重置游标。
+
+当前部署仍为 `SHADOW`，所以成功报告明确包含：
+
+```json
+{ "knowledgeCompiled": false }
+```
+
+这表示规范化对话事件已经进入 ledger，但生产知识编译、分层入库和后续注入尚未由该命令触发。
+
+## 8. 卸载、保留数据与 purge
 
 先查看卸载计划：
 
@@ -107,7 +139,7 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 
 该操作不可恢复；普通 uninstall、upgrade 和失败回滚不会触发 purge。
 
-## 8. 故障定位
+## 9. 故障定位
 
 - `release ... integrity`：重新构建发行目录，不要原地修改已生成 artifact。
 - `changed after deployment planning`：Codex/CCM 正在写 Hook；等待写入结束后重新 plan/apply。
@@ -115,3 +147,6 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 - `sidecar did not reach compatible READY health`：查看 `~/.ckl/logs/service.stderr.log` 与 `doctor --json`；安装器已自动恢复旧版本。
 - `configuration path must be a regular file` 或 symlink 错误：目标所有权不安全，修正路径后重新计划。
 - Hook 无输出：SHADOW 与 fail-open 都会空输出；通过 health、ledger 计数和隐私安全诊断区分正常 SHADOW 与服务不可用。
+- `SESSION_NOT_FOUND`：确认使用的是本机 Codex 会话 ID，且 rollout 仍位于 `~/.codex/sessions`。
+- `SESSION_AMBIGUOUS`：同一 ID 存在多个 transcript，系统不会猜测来源；保留唯一可信文件后重试。
+- `TRANSCRIPT_REPLACED`、`TRANSCRIPT_TRUNCATED` 或 `TRANSCRIPT_ANCHOR_MISMATCH`：已提交游标与文件不再兼容；当前版本不会隐式全量重建。

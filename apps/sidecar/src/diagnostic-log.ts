@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface DiagnosticRecord {
-  readonly component: "hook" | "hook-client" | "service" | "worker";
+  readonly component: "capture" | "hook" | "hook-client" | "service" | "worker";
   readonly code: string;
   readonly durationMs?: number;
   readonly count?: number;

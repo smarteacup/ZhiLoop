@@ -5,6 +5,7 @@
     { "path": "./packages/schemas" },
     { "path": "./packages/config" },
     { "path": "./packages/ingestion-codex" },
+    { "path": "./packages/codex-session-capture" },
     { "path": "./packages/conversation-ledger" },
     { "path": "./packages/hook-runtime" },
     { "path": "./packages/conversation-normalizer" },

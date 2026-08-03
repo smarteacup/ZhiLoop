@@ -10,12 +10,30 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 type SidecarRequest =
   | { readonly type: "hook"; readonly input: unknown }
   | { readonly type: "health" }
-  | { readonly type: "worker" };
+  | { readonly type: "worker" }
+  | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean };
 
 interface SidecarResponse {
   readonly ok: boolean;
   readonly result?: unknown;
   readonly errorCode?: string;
+  readonly errorLineNumber?: number;
+  readonly errorByteOffset?: number;
+}
+
+export class SidecarRequestError extends Error {
+  readonly lineNumber?: number;
+  readonly byteOffset?: number;
+
+  constructor(code: string, options: { readonly lineNumber?: number; readonly byteOffset?: number } = {}) {
+    super(`sidecar request failed: ${code}`);
+    this.name = "SidecarRequestError";
+    this.code = code;
+    if (options.lineNumber !== undefined) this.lineNumber = options.lineNumber;
+    if (options.byteOffset !== undefined) this.byteOffset = options.byteOffset;
+  }
+
+  readonly code: string;
 }
 
 function errorCode(error: unknown): string {
@@ -29,6 +47,12 @@ function parseRequest(value: unknown): SidecarRequest {
   const type = (value as { type?: unknown }).type;
   if (type === "hook") return { type, input: (value as { input?: unknown }).input };
   if (type === "health" || type === "worker") return { type };
+  if (type === "capture-session") {
+    const sessionId = (value as { sessionId?: unknown }).sessionId;
+    const dryRun = (value as { dryRun?: unknown }).dryRun;
+    if (typeof sessionId !== "string" || typeof dryRun !== "boolean") throw new Error("invalid capture-session request");
+    return { type, sessionId, dryRun };
+  }
   throw new Error("unsupported request");
 }
 
@@ -78,10 +102,23 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
       ? await application.handleHook(request.input)
       : request.type === "health"
         ? await application.health()
-        : await application.runWorkerOnce();
+        : request.type === "worker"
+          ? await application.runWorkerOnce()
+          : await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun });
     response = { ok: true, result };
   } catch (error) {
-    response = { ok: false, errorCode: errorCode(error) };
+    const lineNumber = error instanceof Error && "lineNumber" in error && typeof error.lineNumber === "number" && Number.isSafeInteger(error.lineNumber)
+      ? error.lineNumber as number
+      : undefined;
+    const byteOffset = error instanceof Error && "byteOffset" in error && typeof error.byteOffset === "number" && Number.isSafeInteger(error.byteOffset)
+      ? error.byteOffset as number
+      : undefined;
+    response = {
+      ok: false,
+      errorCode: errorCode(error),
+      ...(lineNumber === undefined ? {} : { errorLineNumber: lineNumber }),
+      ...(byteOffset === undefined ? {} : { errorByteOffset: byteOffset }),
+    };
   }
   if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
 }
@@ -149,7 +186,7 @@ export async function stopSidecarServer(server: Server, path: string): Promise<v
 
 export async function requestSidecar(path: string, request: SidecarRequest, timeoutMs: number): Promise<unknown> {
   const socket = createConnection(path);
-  const timer = setTimeout(() => socket.destroy(new Error("sidecar request timed out")), timeoutMs);
+  const timer = setTimeout(() => socket.destroy(new SidecarRequestError("SIDECAR_UNAVAILABLE")), timeoutMs);
   timer.unref?.();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -159,7 +196,13 @@ export async function requestSidecar(path: string, request: SidecarRequest, time
     socket.write(`${JSON.stringify(request)}\n`);
     const response = await readOne(socket, MAX_RESPONSE_BYTES) as SidecarResponse;
     if (typeof response !== "object" || response === null || response.ok !== true) {
-      throw new Error(`sidecar request failed: ${typeof response?.errorCode === "string" ? response.errorCode : "INVALID_RESPONSE"}`);
+      throw new SidecarRequestError(
+        typeof response?.errorCode === "string" ? response.errorCode : "INVALID_RESPONSE",
+        {
+          ...(Number.isSafeInteger(response?.errorLineNumber) ? { lineNumber: response.errorLineNumber } : {}),
+          ...(Number.isSafeInteger(response?.errorByteOffset) ? { byteOffset: response.errorByteOffset } : {}),
+        },
+      );
     }
     return response.result;
   } finally {

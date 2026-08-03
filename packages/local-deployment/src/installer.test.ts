@@ -137,7 +137,10 @@ describe("local installer", () => {
     const result = await installLocalRelease(options);
     const paths = resolveDeploymentPaths(targetHome, "0.1.0");
     expect(result.journal.state).toBe("COMMITTED");
-    expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({ rolloutMode: "SHADOW" });
+    expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
+      rolloutMode: "SHADOW",
+      codexSessionsRoot: paths.codexSessionsRoot,
+    });
     expect(await readlink(paths.currentLink)).toBe("releases/0.1.0");
     expect((await lstat(paths.configPath)).mode & 0o777).toBe(0o600);
     expect((await lstat(paths.sidecarLauncher)).mode & 0o777).toBe(0o700);

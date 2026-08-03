@@ -46,6 +46,9 @@ P1 把 P0 的只读控制台扩展为可恢复的后台运行面：
 | 高 | Job 进度变化未推进 operator revision，旧页面仍可能提交取消/重试 | checkpoint/progress 同步推进 Job revision，Web 只使用 Job revision；缺失 revision 时失败关闭 |
 | 高 | acceptance 若在 Hook 路径同步写 SQLite 会增加 Hook 延迟 | Hook 只把 content-free 元数据加入有界内存队列，返回后批量持久；失败保持 `NOT_VERIFIED` |
 | 高 | Codex 对新写入的 unmanaged Hook 默认不信任，普通任务不会触发采集 | 安装器通过 Codex App Server 精确读取 Hook `currentHash` 并用用户配置 expected-version 原子登记信任；禁用、漂移或并发修改均失败关闭，升级/卸载可恢复原状态 |
+| 高 | 从旧版 CLI 发起升级时仍由旧部署代码编排，新 artifact 新增的安装步骤可能不执行 | 先由旧 runtime 完整校验 artifact，再复制到不可变快照并委派 artifact 自身 `deploy-main`；防递归、tamper、验证间漂移、超时和输出上限均有直接回归 |
+| 高 | 未验证的 `release.json.nodePath` 在完整性校验前执行或进入 launcher，可把 artifact provenance 变成代码执行入口 | metadata Node 字段只保留为 provenance；验证、委派和 launcher 固定使用当前受信 `process.execPath`，并校验当前 Node 支持范围 |
+| 高 | 同版本 release 仅按文件 digest 复用，复制到临时目录后未再次验证，存在 metadata 不一致和校验/切换间漂移 | 复用、委派快照和 staging 全部比较 digest 与完整 metadata；原子切换前再次执行 inventory/hash 验证 |
 | 中 | P1 workspace 未完整进入本地发行清单 | release builder 与 installer required inventory 同时纳入 Job、自动采集、配置、告警及其依赖 |
 | 中 | 通知禁用可能被误解为没有告警 | 告警健康评估始终运行，`notify=false` 只产生明确 suppression decision |
 
@@ -62,11 +65,12 @@ P1 把 P0 的只读控制台扩展为可恢复的后台运行面：
 | Live update | SSE replay/resync/连接与字节上限通过；后台状态到 UI 一秒预算回归通过 |
 | Hook isolation | 自动扫描 in-flight 时 200 次 Hook 的 P95 增量 `<5ms`，绝对 P95 `<100ms` |
 | Acceptance privacy | SQLite evidence 专项 statements 92.12%、branches 96.42%；无正文/路径/secret，旧 session 复验失败关闭 |
-| 真实发行安装 | 基线 journal 状态 `COMMITTED`；安装版本 `0.2.0`，模式 `SHADOW`；`zhiloop doctor` 六项检查全部 `PASS`；`0.2.1` 补丁升级待实机门禁 |
+| 真实发行安装 | journal 状态 `COMMITTED`；安装版本 `0.2.1`，模式 `SHADOW`；`zhiloop doctor` 六项检查全部 `PASS` |
 | CCM 不变性 | 部署前后 `~/.ccm/config.json` SHA-256 均为 `fdfcd36b64b35783ce2a8895d86dff5ac91a50798a3ebc836ac7a56ffb84178b` |
-| 新任务实机验收 | 新建只读 Codex CLI 任务 `019fc885-10c5-7143-a9d5-563306d22508`；Hook、Spool、Ledger、Catalog、Cursor 五段全部 `VERIFIED`；证据引用 `acceptance:1b8f88fdee088a662b2f4444d25d38895ae47729c76bd10d379615e58ad82402` |
+| 新任务实机验收 | 普通只读 Codex CLI 任务 `019fc8ad-f5a8-7353-a121-7a64ba5749a6`，未使用 Hook 信任绕过参数且未手动 capture；第二个自动扫描周期后 Hook、Spool、Ledger、Catalog、Cursor 五段全部 `VERIFIED`；证据引用 `acceptance:d45b54b281e9ab9e824353431ec8f550c5d34986421ac87e3ab84e7d9958545e` |
+| 升级自举安全回归 | local-deployment + Sidecar 最终 83/83；覆盖旧 runtime 委派、同版本防递归、tamper、Node provenance 不执行、timeout/output bound、metadata 一致性和切换前复验 |
 
-实机验收同时发现 Codex 对新写入的 unmanaged Hook 默认要求信任。使用 Codex 自带的 Hook 信任绕过参数验证后，五段链路完整通过，证明运行链路本身正确；P1 Release Review 仍需等待安装器完成精确 Hook 信任注册、升级/卸载恢复与普通 Codex 启动复验，不以验收参数代替生产配置。
+实机验收先以信任绕过参数隔离验证运行链路，再完成精确 Hook 信任注册。最终验收任务没有使用绕过参数，也没有人工触发采集：首周期产生 `FOLLOW_PENDING`，debounce 后的第二周期自动写入 Cursor 并完成五段验证。CCM 配置 SHA-256 在升级前后保持一致。
 
 ## 6. 保留边界
 

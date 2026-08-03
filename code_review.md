@@ -4,11 +4,11 @@
 
 | 指标 | 当前 P1 | 累计 |
 |---|---:|---:|
-| CR 标识 | `main@b194c2e+build-zhiloop-console-p1.1` | 53 次 |
-| 高风险 | 11 | 241 |
+| CR 标识 | `main@4d21a22+build-zhiloop-console-p1.2` | 54 次 |
+| 高风险 | 15 | 245 |
 | 中风险 | 9 | 327 |
 | 低风险 | 0 | 2 |
-| 修复程度 | 20/20（100%） | 100% |
+| 修复程度 | 24/24（100%） | 100% |
 
 ## 改动说明
 
@@ -31,6 +31,10 @@
 | Acceptance 新鲜度 | 高 | 旧 session 可被新的 `taskCreatedAt` 冒充为新任务 | 每阶段时间必须不早于创建时间；旧 session 重验保持 NOT_VERIFIED |
 | Acceptance 隐私 | 高 | 原始 evidence identity/路径若入库会扩大敏感面 | 只持久化 exact session、stage、timestamp、opaque SHA-256 和结果状态 |
 | Hook 信任 | 高 | 新安装的 unmanaged Codex Hook 默认处于 untrusted，普通任务不会触发采集，只有绕过信任参数的验收能通过 | 通过 Codex App Server `hooks/list` 获取精确 current hash，以 expected-version 原子写入用户 Hook trust state；安装、升级、卸载和回滚均保留 CCM 与其他 Hook 状态，禁用 Hook 失败关闭 |
+| 升级自举 | 高 | 旧版 `zhiloop upgrade` 会继续用旧发行包的部署代码执行新 artifact，新增部署步骤可能被静默跳过 | 旧 runtime 先完整验证新 artifact，再复制到不可变临时快照并以无 shell、有界输出/超时方式委派其 `deploy-main`；同版本防递归、两次验证间漂移和 tamper 均失败关闭 |
+| 委派类型边界 | 高 | 调用方可伪造仅有类型标记的 `VerifiedRelease`，绕过快照来源验证 | 快照 API 内部重新执行完整 inventory/hash/兼容性校验，不接受外部构造的 verified 对象 |
+| Node provenance | 高 | 未验证的 `release.json.nodePath` 若在完整性校验前执行或写入 launcher，可造成任意代码执行 | metadata Node 字段仅作 provenance；校验、委派和 launcher 全部固定当前受信 `process.execPath`，并验证当前 Node 版本边界 |
+| Release TOCTOU | 高 | 同版本目录只比较文件 digest 而不比较 metadata，且复制后未复验，可能复用或切换到漂移的 release | 复用和 staging 均比较 digest + 完整 metadata；临时目录在原子 rename 前再次执行完整验证 |
 | 发行依赖 | 中 | P1 workspace 未进入 release inventory，安装后可能缺包 | builder 与 installer required inventory 同时冻结新增运行时包 |
 | Alert 语义 | 中 | `notify=false` 若关闭评估会隐藏故障 | 健康评估始终运行，只抑制通知决定 |
 | 配置事务 | 中 | component partial apply 可能与数据库 effective revision 分裂 | prepare/apply 串行，失败逆序 rollback；提交失败同样回滚组件 |
@@ -66,4 +70,4 @@
 
 ## Review 结论
 
-当前源码阶段的 20 个发现均已闭环，没有遗留高风险 finding。`0.2.1` Hook 信任补丁已完成单元、构建和静态检查；Release Review 仍以真实 journal 升级、doctor、CCM hash 不变，以及不使用 Hook 信任绕过参数的新 Codex 会话五阶段 acceptance 为最终门禁。在这些真实证据完成前不勾选 6.11，也不启用 P2 自动编译。
+当前 P1 的 24 个发现均已闭环，没有遗留高风险 finding。`0.2.1` 已通过 journal 升级、doctor、CCM hash 不变、三个 Hook `trusted`，以及不使用信任绕过和手动 capture 的真实 Codex 五阶段 acceptance。升级自举与本地部署回归在最终安全修复后 83/83 通过；该修复随下一发行一并部署。P1 Release Review 完成，P2 自动编译仍需独立 P2 Gate 后才能启用。

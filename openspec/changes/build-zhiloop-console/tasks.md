@@ -53,7 +53,7 @@
 - [x] 5.4 [Ingestion Lane] Implement bounded session scan scheduler, incremental discovery, follow debounce and session completeness checks without a zero-delay loop
 - [x] 5.5 [Ingestion Lane] Compose existing backfill with durable checkpoints, source rotation/truncation diagnostics and idempotent recovery
 - [x] 5.6 [Ingestion Lane] Add parent/child session relation metadata where observable without blocking primary-session delivery on complete sub-Agent aggregation
-- [ ] 5.7 [Ingestion Lane] Validate a newly created real Codex task through Hook → spool → Ledger → catalog/cursor and record `NOT_VERIFIED` until this acceptance succeeds
+- [x] 5.7 [Ingestion Lane] Validate a newly created real Codex task through Hook → spool → Ledger → catalog/cursor and record `NOT_VERIFIED` until this acceptance succeeds
 - [x] 5.8 [Web Feature Lane] Add job progress, attempt, retry, safe cancellation, backlog, last-success and ingestion completeness views
 - [x] 5.9 [Integration Owner] Serially compose Job and Ingestion lanes into Sidecar and verify Hook deadlines during scan, follow, backfill and retry load
 
@@ -69,50 +69,50 @@
 - [x] 6.8 [Web Feature Lane] Implement effective/draft/history configuration, field source, validation diagnostics, impact diff, activation and rollback interactions
 - [x] 6.9 [Web Feature Lane] Implement in-console alerts, live job/session invalidation and safe degraded-state notifications
 - [x] 6.10 [Integration Owner] Serially compose configuration activation into Sidecar, then run P1 restart recovery, no-call-storm, SSE bound and last-known-good Gates
-- [ ] 6.11 [Integration Owner] Complete P1 Contract, Module, Integration and Release Reviews before enabling automatic ingestion by default
+- [x] 6.11 [Integration Owner] Complete P1 Contract, Module, Integration and Release Reviews before enabling automatic ingestion by default
 
 ## 7. P2 Session Snapshot and Production Knowledge Worker — Parallel Wave 5
 
-- [ ] 7.1 [Contract Owner] Freeze snapshot identity, completeness, source sequence, compiler version, policy hash, candidate preview and bidirectional provenance schemas
-- [ ] 7.2 [Knowledge Worker Lane] Create a composition package for Ledger → normalize → episode → compile → scope → evidence → candidate policy processing
-- [ ] 7.3 [Knowledge Worker Lane] Add durable stage checkpoints, retry classification and batch limits without importing Sidecar or UI modules
-- [ ] 7.4 [Knowledge Worker Lane] Compose Markdown publish, Registry projection and incremental index through a recoverable outbox/stage record
-- [ ] 7.5 [Knowledge Worker Lane] Test each failure boundary, replay, current-version consistency, index rebuild and no duplicate candidate/version behavior
-- [ ] 7.6 [Extraction Lane] Implement session snapshot creation after incremental capture, including immutable `PARTIAL_SNAPSHOT` for active sessions
-- [ ] 7.7 [Extraction Lane] Implement candidate preview and policy commit as separate idempotent jobs keyed by snapshot/compiler/policy versions
-- [ ] 7.8 [Extraction Lane] Persist session/turn/event ↔ snapshot ↔ episode ↔ knowledge version references and query ports in both directions
-- [ ] 7.9 [Integration Owner] Serially compose extraction and knowledge worker stages into Sidecar with capability-aware activation
+- [x] 7.1 [Contract Owner] Freeze snapshot identity, completeness, source sequence, compiler version, policy hash, candidate preview and bidirectional provenance schemas
+- [x] 7.2 [Knowledge Worker Lane] Create a composition package for Ledger → normalize → episode → compile → scope → evidence → candidate policy processing
+- [x] 7.3 [Knowledge Worker Lane] Add durable stage checkpoints, retry classification and batch limits without importing Sidecar or UI modules
+- [x] 7.4 [Knowledge Worker Lane] Compose Markdown publish, Registry projection and incremental index through a recoverable outbox/stage record
+- [x] 7.5 [Knowledge Worker Lane] Test each failure boundary, replay, current-version consistency, index rebuild and no duplicate candidate/version behavior
+- [x] 7.6 [Extraction Lane] Implement session snapshot creation after incremental capture, including immutable `PARTIAL_SNAPSHOT` for active sessions
+- [x] 7.7 [Extraction Lane] Implement candidate preview and policy commit as separate idempotent jobs keyed by snapshot/compiler/policy versions
+- [x] 7.8 [Extraction Lane] Persist session/turn/event ↔ snapshot ↔ episode ↔ knowledge version references and query ports in both directions
+- [x] 7.9 [Integration Owner] Serially compose extraction and knowledge worker stages into Sidecar with capability-aware activation
 
 ## 8. P2 Knowledge Browsing and Ordinary Governance — Parallel Wave 6
 
-- [ ] 8.1 [Governance Owner] Implement bounded knowledge list/detail/version/Evidence/relation/provenance/usage query service over current Registry projections
-- [ ] 8.2 [Governance Owner] Implement expected-version edit drafts, impact preview, Schema/Scope/Evidence revalidation and atomic current revision change
-- [ ] 8.3 [Governance Owner] Implement ordinary project knowledge suppress, restore and supersede revisions with immediate default-retrieval exclusion
-- [ ] 8.4 [Governance Owner] Add manual-Markdown conflict detection and refuse stale Console overwrite while preserving external content
-- [ ] 8.5 [Governance Owner] Test Evidence downgrade, stale edit, publish/index partial failure, suppress latency, restore revalidation and immutable history
-- [ ] 8.6 [Web Feature Lane] Implement session extraction snapshot, progress, Candidate preview, policy result and provenance interactions
-- [ ] 8.7 [Web Feature Lane] Implement knowledge list, filters, detail, Markdown/version diff, Scope/Evidence/relations, edit impact and suppress/restore interactions
-- [ ] 8.8 [Quality Owner] Add P2 single-session E2E from snapshot extraction through knowledge view, reverse trace, edit, suppress, restore and index recovery
-- [ ] 8.9 [Quality Owner] Run P2 Gate: snapshot idempotency, 100% reverse provenance, suppress P95 <1s, outbox recovery and no current-version corruption
-- [ ] 8.10 [Integration Owner] Complete P2 Reviews before enabling automatic compile triggers; retain explicit completeness labels for unsupported event types
+- [x] 8.1 [Governance Owner] Implement bounded knowledge list/detail/version/Evidence/relation/provenance/usage query service over current Registry projections
+- [x] 8.2 [Governance Owner] Implement expected-version edit drafts, impact preview, Schema/Scope/Evidence revalidation and atomic current revision change
+- [x] 8.3 [Governance Owner] Implement ordinary project knowledge suppress, restore and supersede revisions with immediate default-retrieval exclusion
+- [x] 8.4 [Governance Owner] Add manual-Markdown conflict detection and refuse stale Console overwrite while preserving external content
+- [x] 8.5 [Governance Owner] Test Evidence downgrade, stale edit, publish/index partial failure, suppress latency, restore revalidation and immutable history
+- [x] 8.6 [Web Feature Lane] Implement session extraction snapshot, progress, Candidate preview, policy result and provenance interactions
+- [x] 8.7 [Web Feature Lane] Implement knowledge list, filters, detail, Markdown/version diff, Scope/Evidence/relations, edit impact and suppress/restore interactions
+- [x] 8.8 [Quality Owner] Add P2 single-session E2E from snapshot extraction through knowledge view, reverse trace, edit, suppress, restore and index recovery
+- [x] 8.9 [Quality Owner] Run P2 Gate: snapshot idempotency, 100% reverse provenance, suppress P95 <1s, outbox recovery and no current-version corruption
+- [x] 8.10 [Integration Owner] Complete P2 Reviews before enabling automatic compile triggers; retain explicit completeness labels for unsupported event types
 
 ## 9. P3 Deterministic Retrieval and Trace — Parallel Wave 7
 
-- [ ] 9.1 [Contract Owner] Freeze natural-language search, QueryContext, retrieval result, Trace, Context Envelope simulation and answer citation schemas
-- [ ] 9.2 [Retrieval Lane] Compose Exact, FTS, Vector, Relation, Scope/Status filtering, RRF and rerank behind a bounded Console query port
-- [ ] 9.3 [Retrieval Lane] Persist channel contribution, retrieval/final rank, filter, Evidence, budget, omission and SHADOW injection reasons in Retrieval Trace
-- [ ] 9.4 [Retrieval Lane] Implement current-policy search, draft-policy simulation and fixed-input replay without writing active feedback
-- [ ] 9.5 [Retrieval Lane] Test exact symbols/errors/config, Scope isolation, stale version exclusion, timeout fallback, token budget and trace completeness
+- [x] 9.1 [Contract Owner] Freeze natural-language search, QueryContext, retrieval result, Trace, Context Envelope simulation and answer citation schemas
+- [x] 9.2 [Retrieval Lane] Compose Exact, FTS, Vector, Relation, Scope/Status filtering, RRF and rerank behind a bounded Console query port
+- [x] 9.3 [Retrieval Lane] Persist channel contribution, retrieval/final rank, filter, Evidence, budget, omission and SHADOW injection reasons in Retrieval Trace
+- [x] 9.4 [Retrieval Lane] Implement current-policy search, draft-policy simulation and fixed-input replay without writing active feedback
+- [x] 9.5 [Retrieval Lane] Test exact symbols/errors/config, Scope isolation, stale version exclusion, timeout fallback, token budget and trace completeness
 - [ ] 9.6 [Web Feature Lane] Implement dedicated Search Knowledge page, result explanations, channel/rank table, Trace detail and policy comparison lab
 - [ ] 9.7 [Web Feature Lane] Add session Turn injection placeholders from persisted attempts and strictly distinguish `SHADOWED/INJECTED/NO_CONTEXT/TIMEOUT/ERROR`
 
 ## 10. P3 Codex-Assisted Ask ZhiLoop — Parallel Wave 8
 
-- [ ] 10.1 [Codex Query Owner] Add a dedicated `CodexKnowledgeQueryModel` port and structured answer/citations/unknowns/conflicts schema without reusing extraction prompts
-- [ ] 10.2 [Codex Query Owner] Implement safe cwd, minimal environment, user/MCP configuration policy, read-only ephemeral execution, output limits, timeout, cancellation and concurrency controls
-- [ ] 10.3 [Codex Query Owner] Validate that every factual answer span references an eligible retrieved knowledge ID/version and move unsupported content to unknowns or reject the answer
-- [ ] 10.4 [Codex Query Owner] Implement deterministic search fallback for unavailable, unauthenticated, rate-limited, timed-out or invalid Codex output
-- [ ] 10.5 [Codex Query Owner] Persist model run diagnostics, latency and token usage without automatically creating knowledge, Codex conversations or project files
+- [x] 10.1 [Codex Query Owner] Add a dedicated `CodexKnowledgeQueryModel` port and structured answer/citations/unknowns/conflicts schema without reusing extraction prompts
+- [x] 10.2 [Codex Query Owner] Implement safe cwd, minimal environment, user/MCP configuration policy, read-only ephemeral execution, output limits, timeout, cancellation and concurrency controls
+- [x] 10.3 [Codex Query Owner] Validate that every factual answer span references an eligible retrieved knowledge ID/version and move unsupported content to unknowns or reject the answer
+- [x] 10.4 [Codex Query Owner] Implement deterministic search fallback for unavailable, unauthenticated, rate-limited, timed-out or invalid Codex output
+- [x] 10.5 [Codex Query Owner] Persist model run diagnostics, latency and token usage without automatically creating knowledge, Codex conversations or project files
 - [ ] 10.6 [Web Feature Lane] Implement “搜索知识 / 问 ZhiLoop” modes, citations, unknowns, conflicts, progress, cancellation and fallback states
 - [ ] 10.7 [Configuration Owner] Activate retrieval and Codex query budgets only after their consumers report READY
 - [ ] 10.8 [Quality Owner] Run P3 Golden and security Gates: traceability 100%, Scope leak/forbidden hit 0, automatic L4 0, factual citation coverage 100%, malicious knowledge cannot widen process permission

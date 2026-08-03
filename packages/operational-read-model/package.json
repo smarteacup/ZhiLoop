@@ -1,0 +1,30 @@
+{
+  "name": "@zhiloop/operational-read-model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/control-api"
+    ],
+    "allowedExternalDependencies": [
+      "node:*",
+      "zod"
+    ],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/control-api": "0.0.0",
+    "zod": "^4.4.3"
+  }
+}

@@ -9,29 +9,29 @@
 
 ## 2. P0b Read-Only Data Foundations — Parallel Wave 1
 
-- [ ] 2.1 [Session Lane] Create `packages/session-catalog` with bounded primary-session metadata, source capability and stable list/query ports
-- [ ] 2.2 [Session Lane] Implement versioned transcript catalog fallback with path, symlink, size, depth, format and source-unavailable protections
-- [ ] 2.3 [Session Lane] Add App Server catalog adapter behind the same port when a compatible source is available, with deterministic fallback rather than merged duplicate sessions
-- [ ] 2.4 [Session Lane] Implement time grouping, `lastActivityAt DESC, sessionId ASC` ordering, title fallback and `DISCOVERED_NOT_CAPTURED/CAPTURED_PARTIAL/CAPTURED_CURRENT/SOURCE_UNAVAILABLE`
-- [ ] 2.5 [Session Lane] Test multi-version fixtures, malformed and unsupported sources, duplicate IDs, incremental rescan, unchanged rescan and no Codex file mutation
-- [ ] 2.6 [Operational Lane] Create `packages/operational-read-model` with capability, session, stage, job and diagnostic projections and bounded query ports
-- [ ] 2.7 [Operational Lane] Add forward-only migration and rebuild logic for capability snapshots, session catalog/projection, stage runs and operator-safe diagnostics
-- [ ] 2.8 [Operational Lane] Implement stable cursor pagination, redacted event metadata, Ledger/consumer lag, spool, worker and storage health queries
-- [ ] 2.9 [Operational Lane] Test migration rollback, projection rebuild equivalence, 100,000-event pagination and zero raw prompt/secret leakage
-- [ ] 2.10 [Integration Owner] Merge Session then Operational lanes, update shared workspace files once, and complete Module Review for P0 read-only foundations
+- [x] 2.1 [Session Lane] Create `packages/session-catalog` with bounded primary-session metadata, source capability and stable list/query ports
+- [x] 2.2 [Session Lane] Implement versioned transcript catalog fallback with path, symlink, size, depth, format and source-unavailable protections
+- [x] 2.3 [Session Lane] Add App Server catalog adapter behind the same port when a compatible source is available, with deterministic fallback rather than merged duplicate sessions
+- [x] 2.4 [Session Lane] Implement time grouping, `lastActivityAt DESC, sessionId ASC` ordering, title fallback and `DISCOVERED_NOT_CAPTURED/CAPTURED_PARTIAL/CAPTURED_CURRENT/SOURCE_UNAVAILABLE`
+- [x] 2.5 [Session Lane] Test multi-version fixtures, malformed and unsupported sources, duplicate IDs, incremental rescan, unchanged rescan and no Codex file mutation
+- [x] 2.6 [Operational Lane] Create `packages/operational-read-model` with capability, session, stage, job and diagnostic projections and bounded query ports
+- [x] 2.7 [Operational Lane] Add forward-only migration and rebuild logic for capability snapshots, session catalog/projection, stage runs and operator-safe diagnostics
+- [x] 2.8 [Operational Lane] Implement stable cursor pagination, redacted event metadata, Ledger/consumer lag, spool, worker and storage health queries
+- [x] 2.9 [Operational Lane] Test migration rollback, projection rebuild equivalence, 100,000-event pagination and zero raw prompt/secret leakage
+- [x] 2.10 [Integration Owner] Merge Session then Operational lanes, update shared workspace files once, and complete Module Review for P0 read-only foundations
 
 ## 3. P0b Gateway and Web Shell — Parallel Wave 2
 
-- [ ] 3.1 [Gateway Lane] Create `apps/console-gateway` with loopback-only bind, bounded HTTP server, static asset serving and Unix-socket Control API client
-- [ ] 3.2 [Gateway Lane] Implement one-time bootstrap exchange, short-lived HttpOnly SameSite session, Host/Origin/CSRF checks, no CORS, CSP and safe response headers
-- [ ] 3.3 [Gateway Lane] Expose read-only `/api/v1/overview`, `/capabilities`, `/sessions`, `/sessions/{id}`, `/events`, `/jobs` and `/diagnostics` routes from typed query ports
-- [ ] 3.4 [Gateway Lane] Add authentication, forgery, remote-bind, traversal, oversized-response, timeout, rate-limit and redaction tests
-- [ ] 3.5 [Web Platform Lane] Create `apps/console-web` with the approved minimal React/TypeScript/Vite toolchain, local static assets, router registration points and typed Control API client
-- [ ] 3.6 [Web Platform Lane] Implement application shell, navigation, project filter, capability badges and shared loading/empty/disabled/error/conflict components
-- [ ] 3.7 [Web Feature Lane] Implement Overview, Capability Matrix, Jobs/Diagnostics and Deployment read-only pages against frozen fixtures
-- [ ] 3.8 [Web Feature Lane] Implement Codex-like read-only session groups, filters, detail tabs, event metadata, cursor and production-chain disabled states
-- [ ] 3.9 [Web Feature Lane] Add keyboard, accessible name, focus, color contrast, responsive desktop and no-browser-persistence tests
-- [ ] 3.10 [Integration Owner] Install dependencies and update root lockfile once, merge Gateway and Web lanes, then complete Gateway security and UI Module Reviews
+- [x] 3.1 [Gateway Lane] Create `apps/console-gateway` with loopback-only bind, bounded HTTP server, static asset serving and Unix-socket Control API client
+- [x] 3.2 [Gateway Lane] Implement one-time bootstrap exchange, short-lived HttpOnly SameSite session, Host/Origin/CSRF checks, no CORS, CSP and safe response headers
+- [x] 3.3 [Gateway Lane] Expose read-only `/api/v1/overview`, `/capabilities`, `/sessions`, `/sessions/{id}`, `/events`, `/jobs` and `/diagnostics` routes from typed query ports
+- [x] 3.4 [Gateway Lane] Add authentication, forgery, remote-bind, traversal, oversized-response, timeout, rate-limit and redaction tests
+- [x] 3.5 [Web Platform Lane] Create `apps/console-web` with the approved minimal React/TypeScript/Vite toolchain, local static assets, router registration points and typed Control API client
+- [x] 3.6 [Web Platform Lane] Implement application shell, navigation, project filter, capability badges and shared loading/empty/disabled/error/conflict components
+- [x] 3.7 [Web Feature Lane] Implement Overview, Capability Matrix, Jobs/Diagnostics and Deployment read-only pages against frozen fixtures
+- [x] 3.8 [Web Feature Lane] Implement Codex-like read-only session groups, filters, detail tabs, event metadata, cursor and production-chain disabled states
+- [x] 3.9 [Web Feature Lane] Add keyboard, accessible name, focus, color contrast, responsive desktop and no-browser-persistence tests
+- [x] 3.10 [Integration Owner] Install dependencies and update root lockfile once, merge Gateway and Web lanes, then complete Gateway security and UI Module Reviews
 
 ## 4. P0c Sidecar Integration and First Usable Console — Serialized
 

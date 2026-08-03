@@ -6,8 +6,8 @@
 
 | 指标 | 数值 |
 |---|---:|
-| CR 标识 | `main@1743851+capture-codex-session` |
-| CR 耗时 | 480s |
+| CR 标识 | `main@36f7407+build-zhiloop-console-p0b` |
+| CR 耗时 | 210s |
 | 🔴 高风险 | 1 个 |
 | 🟡 中风险 | 3 个 |
 | 🟢 低风险 | 0 个 |
@@ -17,56 +17,52 @@
 
 | 指标 | 累计值 |
 |---|---:|
-| 总 CR 次数 | 49 次 |
-| 总耗时 | 23439s |
-| 🔴 高风险累计 | 223 个 |
-| 🟡 中风险累计 | 309 个 |
+| 总 CR 次数 | 50 次 |
+| 总耗时 | 23649s |
+| 🔴 高风险累计 | 224 个 |
+| 🟡 中风险累计 | 312 个 |
 | 🟢 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
 
 ## 改动说明
 
-本次变更新增按 Codex session ID 主动采集历史或正在运行会话的能力。CLI 通过 owner-only Unix socket 请求 Sidecar；Sidecar 在配置的 `~/.codex/sessions` 根目录内精确读取 `session_meta`，调用已有 transcript adapter 生成确定性事件，再按 append-before-cursor 顺序写入 ledger。
+本次变更交付 ZhiLoop Console 的 P0b 只读基础：会话目录只读发现 Codex transcript，SQLite 运行态读模型提供稳定分页投影，本地 Gateway 负责浏览器安全边界，React Web 展示能力、会话、事件、任务和诊断。核心链路保持 Sidecar 单写入者约束，Gateway 和浏览器都不能直接写 Ledger 或 Codex 会话。
 
-对外新增 `zhiloop capture --session <id> [--dry-run] [--json]`。正式采集支持持久化锚点游标、增量恢复和重复吸收；预览不写 event 或 ingestion cursor。报告明确返回 `knowledgeCompiled: false`，避免把事件沉淀误解为生产知识已经编译。
+对外新增版本化 Control API 查询、Unix Socket 客户端以及 loopback HTTP 页面。浏览器认证使用一次性 fragment bootstrap、短期 HttpOnly SameSite 会话和内存 CSRF token；生产知识、召回、闭环和配置写入仍以真实 `DISABLED/NOT_COMPOSED` 状态展示，没有硬编码 READY。
 
-SQLite 新增 `ingestion_cursors` 辅助表但保留 `user_version = 1`，旧 `0.1.2` 能在回滚时继续打开 ledger。部署配置新增 `codexSessionsRoot`，由当前用户 home 统一渲染；升级失败仍使用原 journal 逆序恢复配置、current、LaunchAgent 和 Hook receipt。
+新增 workspace、React/Vite/jsdom 依赖和显式覆盖率入口；没有放宽 SHADOW、Hook 时限或 CCM 凭证边界。Session Catalog、Operational Read Model、Gateway、Web 均有直接模块测试，并纳入根级 build、lint、测试类型检查和依赖边界门禁。
 
 ## 风险矩阵
 
 | 维度 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 删/升级所有权校验 | 🔴 高 | `packages/local-deployment/src/installer.ts` | 旧实现会在 manifest 中保留最近发行目录用于回滚，但下一次升级又要求 `managedPaths` 与“当前发行 + 固定路径”完全相等；真实多代 manifest 因多出合法旧发行而被拒绝，`0.1.3` 无法升级。 | 所有已经经历多次升级的真实安装，属于发布阻塞。 | 固定托管路径仍要求完整精确匹配，额外路径只允许位于同一 `releases/` 根下且能由合法 semver 反解；重复和任意外部路径继续拒绝。新增三代升级与恶意路径回归，已修复。 |
-| 增/会话身份选择 | 🟡 中 | `packages/codex-session-capture/src/locator.ts` | Codex 子任务 rollout 的 `payload.id` 是自身主键，但 `payload.session_id` 指向父会话。初版优先匹配 `session_id`，会把合法 guardian 子任务误判为父会话重复副本并返回 `SESSION_AMBIGUOUS`。 | 使用了 Codex 子任务/guardian 的真实会话无法主动采集。 | 改为优先精确匹配 `payload.id`，仅旧格式缺失 `id` 时回退 `session_id`；补充父会话 + 子任务身份回归，并明确本命令选择主 rollout，已修复。 |
-| 增/可观测接口 | 🟡 中 | `apps/sidecar/src/transport.ts`、`apps/sidecar/src/deployment-cli.ts` | transcript adapter 已产生安全的行号和字节偏移，但初版 transport 只返回错误码，CLI 无法定位坏行；虽无正文泄漏，但不满足可诊断契约。 | 历史会话存在损坏或未来格式漂移时的排查效率。 | Sidecar response 和 `SidecarRequestError` 增加仅数字的 `lineNumber`/`byteOffset`，CLI 透传安全位置元数据；新增坏行正文不进入响应或日志的回归测试，已修复。 |
-| 增/性能与并发 | 🟡 中 | `packages/codex-session-capture/src/service.ts` | 活跃 transcript 末尾没有完整换行时，adapter 会返回未前进游标与 `hasMore=true`；初版会重复读取直到总批次上限。大事件批次若一次同步 append，也可能延迟 Hook 事件循环。 | 活跃会话重复采集的空转开销，以及大 transcript 下 Hook 延迟。 | 增加无游标进展即停止并保留 `hasMore`；event append 固定最多 500 条/批并在批间 `setImmediate` 让出事件循环；增加不完整末行单批停止测试，已修复。 |
+| 增/认证契约 | 🔴 高 | `apps/console-web/src/main.tsx`、`apps/console-gateway/src/server.ts` | Web 初版向 bootstrap 端点发送 `{bootstrap}`，Gateway 严格要求 `{token}`；真实 launcher 首次打开会稳定返回 400，控制台无法进入。 | 所有真实 UI 启动，属于 P0 发布阻塞。 | 提取 `api/bootstrap.ts` 作为单一客户端契约，改为 `{token}`，fragment 立即从地址栏清除，并新增 URL 不携带 token 的直接回归，已修复。 |
+| 增/React 外部状态 | 🟡 中 | `apps/console-web/src/app/routes.ts` | `useSyncExternalStore` 的 snapshot 每次返回新对象，React 19 会认为状态持续变化并触发最大更新深度错误。 | Overview 和所有路由首次渲染。 | snapshot 改为稳定 hash 字符串，再纯解析为路由；增加畸形编码回退测试，已修复。 |
+| 增/本地协议严格性 | 🟡 中 | `apps/console-gateway/src/control-client.ts` | Unix Socket 客户端初版解析首个换行后忽略同一响应中的尾随 frame，协议污染不能被发现。 | 本地 Sidecar 异常、被替换或输出串帧时的响应完整性。 | 要求响应恰好只有一个换行终止 frame，尾随数据直接 `PROTOCOL`；新增双 frame 回归，已修复。 |
+| 增/测试门禁 | 🟡 中 | `vitest.config.ts`、`tsconfig.test.json` | 根测试 glob 只覆盖 `.test.ts`，遗漏 React `.test.tsx`；UI 无限渲染问题因此最初未进入门禁。 | Console Web 回归可靠性和发布 Gate。 | Vitest、测试类型检查和覆盖率排除规则同时纳入 TSX，并补齐 DOM/JSX 类型环境，已修复。 |
 
 ## 配置检查
 
-| 配置 | 变更前 | 变更后 | 结论 |
+| 配置/边界 | 变更前 | 变更后 | 结论 |
 |---|---|---|---|
-| `codexSessionsRoot` | 无 | `<home>/.codex/sessions` | 安装器、路径类型、Sidecar parser、临时安装验收和文档已同步 |
-| `rolloutMode` | `SHADOW` | `SHADOW` | 注入门禁未放宽 |
-| `hookTimeoutMs` | 750ms | 750ms | Hook fail-open 时限未改变 |
-| SQLite `user_version` | 1 | 1 | 新辅助表对旧 sidecar 回滚兼容 |
-| release version | `0.1.2` | `0.1.4` | Sidecar metadata、package、builder 和健康验收一致；`0.1.3` 作为不可变中间发行保留 |
+| Gateway bind | 无 | 显式 `127.0.0.1`/`::1`，拒绝非 loopback | 远程绑定直接失败 |
+| 浏览器会话 | 无 | 一次性 bootstrap + 15 分钟默认 TTL + CSRF | token 不进入 query、cookie 非脚本可读 |
+| Control 消息上限 | 既有 1 MiB 契约 | Gateway/Unix 客户端统一执行 | 请求与响应都有硬上限 |
+| rolloutMode | `SHADOW` | `SHADOW` | 未放宽注入门禁 |
+| Browser persistence | 无 | 明确禁止 local/session storage 与 IndexedDB | 会话/知识不在浏览器持久化 |
 
-仓库没有 pre/prod/inner 多环境配置。`codexSessionsRoot` 只有一个安装器生成来源，测试配置与临时发行验收均使用同一 `DeploymentPaths` 字段，没有环境遗漏。
+仓库没有 pre/prod/inner 多环境配置。本阶段新增值均为构造参数和有界默认值，部署期仍需在 P0c launcher/release 中提供唯一配置来源。
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| OpenSpec | `capture-codex-session` 4/4 规划产物完成 |
-| Workspace/import policy | 41 workspaces 通过 |
-| Lint / build / test typecheck | 全部通过 |
-| 主动采集专项 | 41/41 通过 |
-| 临时发行验收 | build → install → dry-run → capture → repeat → uninstall 通过 |
-| 架构/Gate | 52/52 通过 |
-| 模块测试 | 683/683 通过 |
-| 新模块覆盖率 | Statements 87.24%、Branches 80.55%、Functions 100%、Lines 92.74% |
-| 全仓覆盖率 | Statements 92.68%、Branches 87.98%、Functions 95.44%、Lines 95.66% |
+| Session Catalog | 10/10，通过路径、symlink、格式、缓存、增量与 250 会话复杂度回归 |
+| Operational Read Model | 6/6，通过迁移回滚、重建等价、10 万事件分页和泄漏审计 |
+| Gateway + Web | 31/31，通过认证、CSRF、路径、限流、Unix 协议、键盘和浏览器存储边界 |
+| Build / lint / test typecheck | 全部通过 |
+| Workspace/import policy | 46 workspaces，通过 |
 
 ## Review 结论
 
-会话身份、路径边界、参数上限、单写入者、append-before-cursor、崩溃重放、活跃文件、日志脱敏、旧版本回滚和 SHADOW 语义均有直接实现与测试证据。发现的一个高风险和三个中风险问题已闭环；无遗留 actionable finding。当前主要产品边界仍是主动采集只到 ledger，生产知识编译与注入没有被本变更隐式开启。
+P0b 的身份、路径、分页、事务、响应大小、认证、CSRF、敏感信息和浏览器存储边界已有直接实现与测试证据。本轮发现一个发布阻塞高风险和三个中风险，均已闭环；当前无遗留 actionable finding。Sidecar 查询组合、capture preview/commit 和本地发行仍属于下一阶段 P0c，不能把当前模块状态标记为完整可部署。

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Exact local session discovery
-The system SHALL locate a requested Codex transcript by comparing the exact requested session ID with the bounded first `session_meta` record of regular rollout JSONL files beneath the configured Codex sessions root. The system MUST NOT select a file solely because its path or conversation content contains the requested ID.
+The system SHALL locate a requested Codex transcript by comparing the exact requested session ID with `session_meta.payload.id` in the bounded first record of regular rollout JSONL files beneath the configured Codex sessions root, falling back to `session_id` only when `id` is absent. The system MUST NOT select a file solely because its path, conversation content, or child rollout `session_id` contains the requested ID.
 
 #### Scenario: One matching transcript exists
 - **WHEN** exactly one regular transcript below the configured root declares the requested session ID
@@ -14,6 +14,10 @@ The system SHALL locate a requested Codex transcript by comparing the exact requ
 #### Scenario: Multiple matching transcripts exist
 - **WHEN** more than one transcript declares the requested session ID
 - **THEN** the system fails with `SESSION_AMBIGUOUS` without choosing one implicitly
+
+#### Scenario: Child rollout references the parent session
+- **WHEN** a child or subagent rollout has its own `payload.id` and carries the requested parent ID in `payload.session_id`
+- **THEN** the system does not treat the child rollout as a duplicate primary transcript
 
 #### Scenario: Invalid session selector
 - **WHEN** a requested session selector is empty, oversized, contains a path separator, or contains a NUL byte

@@ -6,7 +6,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 const WORKSPACES = [
   ["packages/codex-session-capture", "codex-session-capture"],
   ["packages/daemon-runtime", "daemon"],

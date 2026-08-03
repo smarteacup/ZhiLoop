@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.1.3
+npm run release:local -- --output /absolute/path/to/zhiloop-0.1.4
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,14 +52,14 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.1.3
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.3 --json
+  install --artifact /absolute/path/to/zhiloop-0.1.4 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.1.3 --apply --json
+  install --artifact /absolute/path/to/zhiloop-0.1.4 --apply --json
 ```
 
 安装事务依次完成发行 staging、SHADOW 配置、LaunchAgent、`current`、启动器、Codex Hook merge、manifest 与服务健康检查。每步写入 journal；任一步失败都会逆序恢复已完成步骤。升级使用同一入口的 `upgrade` 命令，新版本只有达到兼容 READY 后才保留，否则恢复旧 `current`、manifest、Hook 和服务。
@@ -92,7 +92,7 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
   --dry-run --json
 ```
 
-预览会在 `~/.codex/sessions` 下读取有界的 rollout JSONL 首行，以 `session_meta` 中的精确 ID 定位文件，然后报告可投影事件、忽略记录和最终游标；不会写 ledger 或 ingestion cursor。文件名或正文中偶然出现相同 ID 不会被当成身份依据。
+预览会在 `~/.codex/sessions` 下读取有界的 rollout JSONL 首行，以 `session_meta.payload.id` 中的精确 ID 定位主文件（旧格式缺少 `id` 时才回退 `session_id`），然后报告可投影事件、忽略记录和最终游标；不会写 ledger 或 ingestion cursor。文件名、正文或子任务的父 `session_id` 中出现相同 ID 都不会被当成主 transcript 身份依据。
 
 正式采集：
 

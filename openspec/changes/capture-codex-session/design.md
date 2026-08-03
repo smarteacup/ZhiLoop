@@ -37,7 +37,7 @@ Alternative considered: stop the service and run a one-shot importer against SQL
 
 ### 3. Treat `session_meta` as the identity authority
 
-The locator will accept a bounded opaque session token with no path separators, recursively inspect only regular `.jsonl` files under the configured root, read a bounded first line, and select files whose first `session_meta` ID exactly equals the requested ID. No match is `SESSION_NOT_FOUND`; multiple matches are `SESSION_AMBIGUOUS`. Symlinks and paths escaping the configured real root are rejected.
+The locator will accept a bounded opaque session token with no path separators, recursively inspect only regular `.jsonl` files under the configured root, read a bounded first line, and select files whose first `session_meta.payload.id` exactly equals the requested ID. Older metadata without `id` falls back to `session_id`. Child/subagent rollouts have their own `id` while carrying the parent in `session_id`, so they are not mistaken for duplicate primary transcripts. No match is `SESSION_NOT_FOUND`; multiple primary matches are `SESSION_AMBIGUOUS`. Symlinks and paths escaping the configured real root are rejected.
 
 Filename matching may be used as a safe optimization, but never as proof of identity. Arbitrary occurrences of a session ID inside conversation content are ignored.
 

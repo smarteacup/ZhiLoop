@@ -31,7 +31,7 @@ async function transcript(sessionsRoot: string, sessionId: string, suffix = ""):
   await mkdir(directory, { recursive: true });
   const path = join(directory, `rollout-${sessionId}${suffix}.jsonl`);
   await writeFile(path, [
-    record("session_meta", "2026-08-03T00:00:00.000Z", { session_id: sessionId, cli_version: "0.145.0", source: "vscode" }),
+    record("session_meta", "2026-08-03T00:00:00.000Z", { id: sessionId, session_id: sessionId, cli_version: "0.145.0", source: "vscode" }),
     record("event_msg", "2026-08-03T00:00:01.000Z", { type: "task_started", turn_id: "turn-1" }),
     record("event_msg", "2026-08-03T00:00:02.000Z", { type: "user_message", message: "Design the importer." }),
     record("event_msg", "2026-08-03T00:00:03.000Z", { type: "task_complete", turn_id: "turn-1", last_agent_message: "Done." }),
@@ -82,6 +82,22 @@ describe("Codex transcript locator", () => {
     await expect(locateCodexTranscript(sessionsRoot, "missing")).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
     await transcript(sessionsRoot, "session-a", "-copy");
     await expect(locateCodexTranscript(sessionsRoot, "session-a")).rejects.toMatchObject({ code: "SESSION_AMBIGUOUS" });
+  });
+
+  it("selects the primary rollout id without treating child rollout parent session_id as a duplicate", async () => {
+    const sessionsRoot = await root();
+    const selected = await transcript(sessionsRoot, "session-parent");
+    const directory = join(sessionsRoot, "2026", "08", "04");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "rollout-session-child.jsonl"), record(
+      "session_meta",
+      "2026-08-04T00:00:00.000Z",
+      { id: "session-child", session_id: "session-parent", cli_version: "0.145.0", source: { subagent: { other: "guardian" } } },
+    ));
+    await expect(locateCodexTranscript(sessionsRoot, "session-parent")).resolves.toEqual({
+      path: await realpath(selected),
+      sessionId: "session-parent",
+    });
   });
 
   it("validates selectors, skips symlinks, and enforces discovery limits", async () => {

@@ -53,7 +53,7 @@ async function writeRollout(config: SidecarConfig, sessionId: string): Promise<v
   const directory = join(config.codexSessionsRoot, "2026", "08", "03");
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `rollout-${sessionId}.jsonl`), [
-    rolloutRecord("session_meta", "2026-08-03T00:00:00.000Z", { session_id: sessionId, cli_version: "0.145.0" }),
+    rolloutRecord("session_meta", "2026-08-03T00:00:00.000Z", { id: sessionId, session_id: sessionId, cli_version: "0.145.0" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:01.000Z", { type: "task_started", turn_id: "turn-1" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:02.000Z", { type: "user_message", message: "capture me" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:03.000Z", { type: "task_complete", turn_id: "turn-1", last_agent_message: "captured" }),
@@ -99,7 +99,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.1.3",
+      sidecarVersion: "0.1.4",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });

@@ -48,7 +48,7 @@ async function firstSessionId(path: string, maximum: number, likelyMatch: boolea
       return undefined;
     }
     const payload = record.payload as { readonly session_id?: unknown; readonly id?: unknown };
-    const id = typeof payload.session_id === "string" ? payload.session_id : payload.id;
+    const id = typeof payload.id === "string" ? payload.id : payload.session_id;
     return typeof id === "string" ? id : undefined;
   } finally {
     await handle.close();

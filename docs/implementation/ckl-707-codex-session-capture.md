@@ -8,7 +8,7 @@ CKL-707 允许用户按本地 Codex session ID 主动回填历史或正在运行
 
 | 模块 | 职责 |
 |---|---|
-| `codex-session-capture/locator` | 在配置根目录下有界扫描，以首条 `session_meta` 精确确认会话身份 |
+| `codex-session-capture/locator` | 在配置根目录下有界扫描，以首条 `session_meta.payload.id` 精确确认主 rollout 身份 |
 | `codex-session-capture/service` | 调用 transcript adapter、统计投影、批量 append、append 后提交游标 |
 | `conversation-ledger/ingestion_cursors` | 持久化带完整性校验的 adapter 锚点游标 |
 | `sidecar/application` | 串行化采集任务，并让 Hook spool 快路径独立运行 |
@@ -25,7 +25,7 @@ CKL-707 允许用户按本地 Codex session ID 主动回填历史或正在运行
 
 - session selector 禁止空值、NUL、换行、路径分隔符和超过 200 字符。
 - sessions root 必须是绝对目录，遍历不跟随 symlink；深度、文件数量、首行、单行、单批和总批次数均有上限。
-- 身份只由首条 `session_meta` 决定，正文命中和文件名命中都不是授权依据。
+- 身份只由首条 `session_meta.payload.id` 决定，旧格式无 `id` 才回退 `session_id`；正文、文件名和子任务父 `session_id` 命中都不是主 transcript 身份依据。
 - 日志只含组件、稳定 code、时延和数量，不含 prompt、assistant message 或坏行正文。
 - CLI 不直接写 SQLite；采集变更由 Sidecar 单写者完成。
 - 采集任务串行化，但 Hook 仍先落本地 spool，不等待历史 transcript 读取完成。

@@ -86,7 +86,7 @@ describe("deployment CLI", () => {
     const transcriptDirectory = join(sessionsRoot, "2026", "08", "03");
     await mkdir(transcriptDirectory, { recursive: true });
     await writeFile(join(transcriptDirectory, "rollout-session-a.jsonl"), [
-      JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { session_id: "session-a", cli_version: "0.145.0" } }),
+      JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { id: "session-a", session_id: "session-a", cli_version: "0.145.0" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:01.000Z", payload: { type: "user_message", message: "preview" } }),
     ].join("\n") + "\n");
     const config = {

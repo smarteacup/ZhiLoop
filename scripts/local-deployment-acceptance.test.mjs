@@ -31,7 +31,7 @@ function ready() {
     schemaVersion: 1,
     status: "READY",
     pluginVersion: "0.1.0",
-    sidecarVersion: "0.1.3",
+    sidecarVersion: "0.1.4",
     protocolVersion: 1,
     hookSchemaVersion: "codex-hooks-v1",
     appServerSchemaVersion: "codex-app-server-v2",
@@ -129,7 +129,7 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     const transcriptDirectory = path.join(paths.codexSessionsRoot, "2026", "08", "03");
     await mkdir(transcriptDirectory, { recursive: true });
     await writeFile(path.join(transcriptDirectory, "rollout-acceptance-history.jsonl"), [
-      JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { session_id: "acceptance-history", cli_version: "0.145.0" } }),
+      JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { id: "acceptance-history", session_id: "acceptance-history", cli_version: "0.145.0" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:01.000Z", payload: { type: "user_message", message: "historical prompt" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:02.000Z", payload: { type: "task_complete", turn_id: "turn-history", last_agent_message: "historical conclusion" } }),
     ].join("\n") + "\n");

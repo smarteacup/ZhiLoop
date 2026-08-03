@@ -103,7 +103,7 @@ injection:
     [
       "injection item ordering",
       loadInjectionPolicy,
-      { levels: { L1_POINTER: { maxItems: 6 }, L2_COMPACT: { maxItems: 5 } } },
+      { levels: { L1_POINTER: { maxItems: 8 }, L2_COMPACT: { maxItems: 7 } } },
     ],
     [
       "L1 evidence detail",

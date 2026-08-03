@@ -450,12 +450,15 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     assert.equal(same.retrieval.diagnostics.some((item) => item.code === "SCOPE_FILTERED"
       && item.assetId === "implementation.other.traceable-compiler"), true);
     assert.equal(same.envelope.complexity.level, "L2_COMPACT");
-    assert.equal(same.envelope.items.length, 3);
+    assert.equal(same.envelope.items.length, 4);
     assert.equal(same.envelope.budget.estimatedTokens <= DEFAULT_CONFIGURATION.injection.defaultMaxTokens, true);
     assert.equal(same.envelope.budget.truncated, true);
-    assert.equal(same.envelope.items.every((item) => item.detailLevel === "L2_COMPACT"), true);
+    assert.equal(same.envelope.items.filter((item) => item.authority === "BINDING_RULE")
+      .every((item) => item.detailLevel === "L2_COMPACT"), true);
+    assert.equal(same.envelope.items.filter((item) => item.authority !== "BINDING_RULE")
+      .every((item) => item.detailLevel === "L1_POINTER"), true);
     assert.deepEqual(new Set(same.envelope.items.map((item) => item.authority)), new Set([
-      "BINDING_RULE", "REFERENCE",
+      "BINDING_RULE", "ACCEPTED_DECISION", "REFERENCE",
     ]));
     assert.equal(same.envelope.taskContract?.contractId, "contract-mvp-final");
 
@@ -503,6 +506,7 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     const mcp = new KnowledgeMcpService(mcpBackend(registry));
     const mcpSearch = await mcp.search({ query: prompt, limit: 8 }, sameProject.queryContext, new AbortController().signal);
     assert.equal(mcpSearch.items.length, 5);
+    assert.equal(mcpSearch.items.every((item) => item.detailLevel === "L1_POINTER"), true);
     assert.deepEqual(new Set(mcpSearch.items.map((item) => item.authority)), new Set([
       "BINDING_RULE", "ACCEPTED_DECISION", "REFERENCE",
     ]));
@@ -511,7 +515,8 @@ test("MVP final Gate: one Codex task flows through capture, compile, verificatio
     const expanded = await mcp.get({
       id: expandable.id,
       version: expandable.version,
-      fromDetailLevel: "L2_COMPACT",
+      fromDetailLevel: expandable.detailLevel,
+      targetDetailLevel: "L3_EVIDENCED",
     }, sameProject.queryContext, new AbortController().signal);
     assert.equal(expanded.items[0]?.toDetailLevel, "L3_EVIDENCED");
     assert.match(expanded.items[0]?.content ?? "", /both code and related test evidence/u);

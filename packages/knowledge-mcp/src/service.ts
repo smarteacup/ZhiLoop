@@ -6,7 +6,7 @@ import type {
   KnowledgeMcpBackend,
   KnowledgeMcpCheckInput,
   KnowledgeMcpCheckResult,
-  KnowledgeMcpCompactItem,
+  KnowledgeMcpPointerItem,
   KnowledgeMcpGetInput,
   KnowledgeMcpGetResult,
   KnowledgeMcpItemsResult,
@@ -47,11 +47,21 @@ function eligible(asset: KnowledgeAsset, context: QueryContext): boolean {
   return ELIGIBLE.has(asset.status) && scopeEligible(asset.scope, context);
 }
 
-function compact(asset: KnowledgeAsset): KnowledgeMcpCompactItem {
+function pointer(asset: KnowledgeAsset): KnowledgeMcpPointerItem {
   return {
     id: asset.id, version: asset.version, subjectKey: asset.subjectKey, kind: asset.kind,
     status: asset.status, scope: structuredClone(asset.scope), authority: authority(asset),
-    detailLevel: "L2_COMPACT", title: asset.title, summary: asset.summary,
+    detailLevel: "L1_POINTER", title: asset.title, summary: asset.summary,
+  };
+}
+
+function compactFields(asset: KnowledgeAsset): {
+  readonly applicability: readonly string[];
+  readonly failurePaths: readonly string[];
+  readonly symbols: readonly string[];
+  readonly evidencePointers: readonly string[];
+} {
+  return {
     applicability: [...asset.applicability], failurePaths: [...asset.nonApplicability],
     symbols: [...asset.symbols], evidencePointers: [...new Set(asset.evidence.map((item) => item.evidenceId))],
   };
@@ -141,7 +151,7 @@ export class KnowledgeMcpService {
     const checked = await this.eligibleCurrent(result.assets, context, signal);
     const unseen = checked.assets.filter((asset) => !known.has(`${asset.id}@${asset.version}`));
     return freeze({
-      traceId: result.traceId, tool: "ckl.search", items: unseen.slice(0, maxItems).map(compact),
+      traceId: result.traceId, tool: "ckl.search", items: unseen.slice(0, maxItems).map(pointer),
       omittedKnown: checked.assets.length - unseen.length,
       diagnostics: checked.diagnostics,
     });
@@ -171,7 +181,7 @@ export class KnowledgeMcpService {
     const seedSet = new Set(input.seedAssetIds);
     const unseen = checked.assets.filter((asset) => !seedSet.has(asset.id) && !known.has(`${asset.id}@${asset.version}`));
     return freeze({
-      traceId: result.traceId, tool: "ckl.related", items: unseen.slice(0, maxItems).map(compact),
+      traceId: result.traceId, tool: "ckl.related", items: unseen.slice(0, maxItems).map(pointer),
       omittedKnown: checked.assets.length - unseen.length,
       diagnostics: checked.diagnostics,
     });
@@ -183,8 +193,11 @@ export class KnowledgeMcpService {
     signal: AbortSignal,
   ): Promise<KnowledgeMcpGetResult> {
     requireActive(signal);
+    const targetDetailLevel = input.targetDetailLevel ?? "L3_EVIDENCED";
     if (!SAFE_ID.test(input.id) || !Number.isSafeInteger(input.version) || input.version < 1
-      || !(["L1_POINTER", "L2_COMPACT"] as const).includes(input.fromDetailLevel)) {
+      || !(["L1_POINTER", "L2_COMPACT"] as const).includes(input.fromDetailLevel)
+      || !(["L2_COMPACT", "L3_EVIDENCED"] as const).includes(targetDetailLevel)
+      || (input.fromDetailLevel === "L2_COMPACT" && targetDetailLevel === "L2_COMPACT")) {
       throw new Error("get input is invalid");
     }
     const result = await this.backend.current({ context, assetIds: [input.id], signal });
@@ -193,12 +206,36 @@ export class KnowledgeMcpService {
     if (asset === undefined) return freeze({ traceId: result.traceId, tool: "ckl.get", items: [], diagnostics: ["NOT_FOUND"] });
     if (asset.version !== input.version) return freeze({ traceId: result.traceId, tool: "ckl.get", items: [], diagnostics: ["VERSION_MISMATCH"] });
     if (!eligible(asset, context)) return freeze({ traceId: result.traceId, tool: "ckl.get", items: [], diagnostics: ["INELIGIBLE"] });
+    if (targetDetailLevel === "L2_COMPACT") {
+      if (input.fromDetailLevel !== "L1_POINTER") throw new Error("get input is invalid");
+      return freeze({
+        traceId: result.traceId, tool: "ckl.get",
+        items: [{
+          id: asset.id, version: asset.version, fromDetailLevel: "L1_POINTER",
+          toDetailLevel: "L2_COMPACT", ...compactFields(asset),
+        }],
+        diagnostics: [],
+      });
+    }
+    const evidence = {
+      toDetailLevel: "L3_EVIDENCED" as const,
+      content: asset.body,
+      evidenceSummary: asset.evidence.map((item) => ({ ...item })),
+    };
+    if (input.fromDetailLevel === "L1_POINTER") {
+      return freeze({
+        traceId: result.traceId, tool: "ckl.get",
+        items: [{
+          id: asset.id, version: asset.version, fromDetailLevel: "L1_POINTER",
+          ...compactFields(asset), ...evidence,
+        }],
+        diagnostics: [],
+      });
+    }
     return freeze({
       traceId: result.traceId, tool: "ckl.get",
       items: [{
-        id: asset.id, version: asset.version, fromDetailLevel: input.fromDetailLevel,
-        toDetailLevel: "L3_EVIDENCED", content: asset.body,
-        evidenceSummary: asset.evidence.map((item) => ({ ...item })),
+        id: asset.id, version: asset.version, fromDetailLevel: "L2_COMPACT", ...evidence,
       }],
       diagnostics: [],
     });

@@ -141,7 +141,7 @@ test("P5 Gate: MCP expansion is incremental and preserves the same project Scope
   const signal = new AbortController().signal;
   const searched = await service.search({ query: firstCase.query.prompt }, first.queryContext, signal);
   assert.equal(searched.items.length, 1);
-  assert.equal(searched.items[0].detailLevel, "L2_COMPACT");
+  assert.equal(searched.items[0].detailLevel, "L1_POINTER");
   assert.equal(searched.items[0].scope.projectId, project.projectId);
   assert.equal(searched.items.some((item) => item.id === "knowledge.other.project"), false);
 
@@ -157,5 +157,5 @@ test("P5 Gate: MCP expansion is incremental and preserves the same project Scope
     assert.equal("scope" in expanded.items[0], false);
     assert.equal(expanded.items[0].version, searched.items[0].version);
   }
-  assert.equal(first.trace.complexity.level, "L2_COMPACT");
+  assert.equal(first.trace.complexity.level, "L1_POINTER");
 });

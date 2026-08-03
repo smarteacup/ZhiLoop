@@ -2,7 +2,7 @@
 
 **状态**：Implemented  
 **任务**：CKL-504  
-**最后更新**：2026-08-02
+**最后更新**：2026-08-03
 
 ## 1. 目标与不变量
 
@@ -15,8 +15,8 @@ Orchestrator 只能从输入候选中选择和降级内容，不能恢复被检�
 | 方案 | 优点 | 风险 | 决策 |
 |---|---|---|---|
 | 总是注入完整正文 | 实现简单 | 上下文膨胀、权威边界模糊 | 拒绝 |
-| 仅返回 ID，由模型自行查询 | Token 最小 | 常规任务缺少必要边界，工具往返增加 | 拒绝 |
-| L0～L4 分层、默认 L2、按信号升级 | 复杂度可控且可审计 | 需要维护层级契约 | 采用 |
+| 全部只返回 L1，由模型自行查询 | Token 最小 | 模型可能遗漏强制门禁 | 拒绝 |
+| Binding L2 + Reference L1，按需展开 | 兼顾门禁可靠性和目录广度 | 需要维护混合层级与 Pull 契约 | 采用 |
 | Task Contract 覆盖动态知识 | 门禁突出 | 会丢失项目事实和决策 | 拒绝 |
 
 ## 3. 数据流
@@ -24,8 +24,8 @@ Orchestrator 只能从输入候选中选择和降级内容，不能恢复被检�
 ```mermaid
 flowchart LR
     Candidates["Reranked candidates"] --> Eligibility["Status eligibility"]
-    Eligibility --> Priority["Scope > Status > Authority > Rank"]
-    Priority --> Level["L0-L4 complexity decision"]
+    Eligibility --> Priority["Binding reservation; Scope > Authority > Status > Rank"]
+    Priority --> Level["Mixed L1/L2 initial disclosure"]
     Level --> Budget["Conservative token budget"]
     Contract["Optional Task Contract"] --> Budget
     Budget --> Schema["ContextEnvelope schema validation"]
@@ -36,15 +36,15 @@ flowchart LR
 
 - `L0_NONE`：没有可注入知识，Envelope 仍保留运行与预算元数据。
 - `L1_POINTER`：ID、版本、类型、状态、Scope、Authority、标题和一句话摘要。
-- `L2_COMPACT`：默认层；增加适用边界、失败路径、符号和 Evidence 指针，不含正文。
-- `L3_EVIDENCED`：高风险、歧义或冲突时使用；增加正文与 Evidence 摘要。
+- `L2_COMPACT`：首次 Binding Rule 的最低层级，也可由 `ckl.get` 定向展开；增加适用边界、失败路径、符号和 Evidence 指针。
+- `L3_EVIDENCED`：仅由显式 Pull、明确 requested level 或有限闭环补充；增加正文与 Evidence 摘要。
 - `L4_EPISODE`：仅在非自动模式且显式请求时允许，增加源 Episode ID。
 
 Authority 独立编码为 `BINDING_RULE`、`ACCEPTED_DECISION`、`VERIFIED_FACT`、`REFERENCE`，混合 Envelope 使用 `MIXED` 汇总，避免模型根据文字语气猜测权威级别。
 
 ## 5. 排序、预算与降级
 
-候选只接受 `ACCEPTED/IMPLEMENTED/VERIFIED`。排序固定为 Scope 接近程度、状态强度、配置的 Authority 顺序、Rerank rank、Asset ID。每层最多注入配置数量，默认总预算 800 tokens，使用 UTF-8 JSON 字节数除以 3 的保守估算。
+候选只接受 `ACCEPTED/IMPLEMENTED/VERIFIED`。自动首次注入为最高优先级 Binding Rule 保留首个槽位，再按 Scope 接近程度、Authority、状态、Rerank rank、Asset ID 排序；Binding Rule 生成 L2，其他候选生成 L1。默认总预算 800 tokens，使用 UTF-8 JSON 字节数除以 3 的保守估算。
 
 超预算时先截断低优先级候选；非 L1 层连一个候选也放不下时降为 L1；仍放不下则 L0。Task Contract 只使用剩余预算，不能挤掉已经选择的动态知识。所有选择、升级、降级和截断均写入 reason codes。
 

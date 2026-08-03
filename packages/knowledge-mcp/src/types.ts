@@ -25,7 +25,7 @@ export interface KnowledgeMcpBackend {
   current(request: KnowledgeMcpBackendRequest & { readonly assetIds: readonly string[] }): Promise<KnowledgeMcpBackendResult>;
 }
 
-export interface KnowledgeMcpCompactItem {
+export interface KnowledgeMcpPointerItem {
   readonly id: string;
   readonly version: number;
   readonly subjectKey: string;
@@ -33,23 +33,46 @@ export interface KnowledgeMcpCompactItem {
   readonly status: KnowledgeAsset["status"];
   readonly scope: KnowledgeScope;
   readonly authority: ContextAuthority;
-  readonly detailLevel: "L2_COMPACT";
+  readonly detailLevel: "L1_POINTER";
   readonly title: string;
   readonly summary: string;
+}
+
+/** @deprecated Use KnowledgeMcpPointerItem. Runtime discovery now returns L1 pointers. */
+export type KnowledgeMcpCompactItem = KnowledgeMcpPointerItem;
+
+interface KnowledgeMcpExpansionBase {
+  readonly id: string;
+  readonly version: number;
+}
+
+interface KnowledgeMcpCompactFields {
   readonly applicability: readonly string[];
   readonly failurePaths: readonly string[];
   readonly symbols: readonly string[];
   readonly evidencePointers: readonly string[];
 }
 
-export interface KnowledgeMcpExpansionDelta {
-  readonly id: string;
-  readonly version: number;
-  readonly fromDetailLevel: "L1_POINTER" | "L2_COMPACT";
-  readonly toDetailLevel: "L3_EVIDENCED";
-  readonly content: string;
-  readonly evidenceSummary: readonly ContextEvidenceSummary[];
-}
+export type KnowledgeMcpCompactExpansionDelta = KnowledgeMcpExpansionBase & KnowledgeMcpCompactFields & {
+    readonly fromDetailLevel: "L1_POINTER";
+    readonly toDetailLevel: "L2_COMPACT";
+  };
+
+export type KnowledgeMcpEvidencedExpansionDelta =
+  | (KnowledgeMcpExpansionBase & KnowledgeMcpCompactFields & {
+    readonly fromDetailLevel: "L1_POINTER";
+    readonly toDetailLevel: "L3_EVIDENCED";
+    readonly content: string;
+    readonly evidenceSummary: readonly ContextEvidenceSummary[];
+  })
+  | (KnowledgeMcpExpansionBase & {
+    readonly fromDetailLevel: "L2_COMPACT";
+    readonly toDetailLevel: "L3_EVIDENCED";
+    readonly content: string;
+    readonly evidenceSummary: readonly ContextEvidenceSummary[];
+  });
+
+export type KnowledgeMcpExpansionDelta = KnowledgeMcpCompactExpansionDelta | KnowledgeMcpEvidencedExpansionDelta;
 
 export interface KnowledgeMcpCheck {
   readonly id: string;
@@ -69,6 +92,7 @@ export interface KnowledgeMcpGetInput {
   readonly id: string;
   readonly version: number;
   readonly fromDetailLevel: "L1_POINTER" | "L2_COMPACT";
+  readonly targetDetailLevel?: "L2_COMPACT" | "L3_EVIDENCED";
 }
 
 export interface KnowledgeMcpRelatedInput {
@@ -84,7 +108,7 @@ export interface KnowledgeMcpCheckInput {
 export interface KnowledgeMcpItemsResult {
   readonly traceId: string;
   readonly tool: "ckl.search" | "ckl.related";
-  readonly items: readonly KnowledgeMcpCompactItem[];
+  readonly items: readonly KnowledgeMcpPointerItem[];
   readonly omittedKnown: number;
   readonly diagnostics: readonly string[];
 }

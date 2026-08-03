@@ -292,13 +292,13 @@ export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
     eligibility: { default: ["VERIFIED", "IMPLEMENTED", "ACCEPTED"] },
   },
   injection: {
-    defaultLevel: "L2_COMPACT",
+    defaultLevel: "L1_POINTER",
     defaultMaxTokens: 800,
     userPromptDeadlineMs: 500,
     failOpenOnTimeout: true,
     levels: {
-      L1_POINTER: { maxItems: 3, evidence: "NONE" },
-      L2_COMPACT: { maxItems: 5, evidence: "POINTER" },
+      L1_POINTER: { maxItems: 8, evidence: "NONE" },
+      L2_COMPACT: { maxItems: 8, evidence: "POINTER" },
       L3_EVIDENCED: { maxItems: 8, evidence: "SUMMARY" },
       L4_EPISODE: { automatic: false },
     },

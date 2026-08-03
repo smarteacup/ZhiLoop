@@ -1,7 +1,7 @@
 import type { ClosureVerificationInput } from "@zhiloop/closure-verifier";
 import type { ClosurePolicy } from "@zhiloop/config";
 import type { ClosureVerificationResult } from "@zhiloop/domain";
-import type { KnowledgeMcpExpansionDelta } from "@zhiloop/knowledge-mcp";
+import type { KnowledgeMcpEvidencedExpansionDelta } from "@zhiloop/knowledge-mcp";
 
 export interface StopHookInput {
   readonly hook_event_name: "Stop";
@@ -19,7 +19,7 @@ export interface StopClosurePort {
 export interface StopContextDeltaPort {
   load(knowledgeIds: readonly string[], signal: AbortSignal): Promise<{
     readonly traceId: string;
-    readonly items: readonly KnowledgeMcpExpansionDelta[];
+    readonly items: readonly KnowledgeMcpEvidencedExpansionDelta[];
   }>;
 }
 

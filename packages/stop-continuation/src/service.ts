@@ -172,7 +172,8 @@ export class StopContinuationService {
         if (verification.missingKnowledgeIds.length === 0
           || returned.size !== returnedIds.length
           || verification.missingKnowledgeIds.some((id) => !returned.has(id))
-          || delta.items.some((item) => !verification.missingKnowledgeIds.includes(item.id))) {
+          || delta.items.some((item) => !verification.missingKnowledgeIds.includes(item.id)
+            || item.toDetailLevel !== "L3_EVIDENCED")) {
           throw new Error("context delta does not exactly cover requested knowledge IDs");
         }
         reason = contextReason(verification, delta);

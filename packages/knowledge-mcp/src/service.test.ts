@@ -47,7 +47,7 @@ function backend(
 const signal = new AbortController().signal;
 
 describe("KnowledgeMcpService", () => {
-  it("ckl.search returns current in-scope L2 increments with trace, version, and Authority", async () => {
+  it("ckl.search returns current in-scope L1 pointers with trace, version, and Authority", async () => {
     const rule = asset("knowledge.rule", { kind: "RULE" });
     const decision = asset("knowledge.decision", { kind: "DECISION", status: "ACCEPTED" });
     const known = asset("knowledge.known");
@@ -64,18 +64,34 @@ describe("KnowledgeMcpService", () => {
     expect(result).toMatchObject({
       traceId: "trace-search", tool: "ckl.search", omittedKnown: 1,
       items: [
-        { id: rule.id, version: 1, detailLevel: "L2_COMPACT", authority: "BINDING_RULE", evidencePointers: [`evidence-${rule.id}`] },
+        { id: rule.id, version: 1, detailLevel: "L1_POINTER", authority: "BINDING_RULE" },
         { id: decision.id, authority: "ACCEPTED_DECISION" },
       ],
       diagnostics: [`STALE_OR_NON_CURRENT:${staleHit.id}`, `INELIGIBLE:${outside.id}`],
     });
     expect(result.items[0]).not.toHaveProperty("content");
+    expect(result.items[0]).not.toHaveProperty("evidencePointers");
+    expect(result.items[0]).not.toHaveProperty("applicability");
     expect(Object.isFrozen(result.items[0]?.scope)).toBe(true);
   });
 
-  it("ckl.get returns only the L1/L2 to L3 delta and never repeats compact fields", async () => {
+  it("ckl.get expands L1 to L2 boundaries or L1/L2 to L3 evidence without repeating pointer fields", async () => {
     const value = asset("knowledge.expand");
     const service = new KnowledgeMcpService(backend([value]));
+    const compact = await service.get({
+      id: value.id, version: 1, fromDetailLevel: "L1_POINTER", targetDetailLevel: "L2_COMPACT",
+    }, context, signal);
+    expect(compact).toMatchObject({
+      traceId: "trace-current", tool: "ckl.get", diagnostics: [],
+      items: [{
+        id: value.id, version: 1, fromDetailLevel: "L1_POINTER", toDetailLevel: "L2_COMPACT",
+        applicability: ["project-a"], failurePaths: ["outside project-a"], symbols: ["ContextEnvelope"],
+        evidencePointers: [`evidence-${value.id}`],
+      }],
+    });
+    expect(compact.items[0]).not.toHaveProperty("content");
+    expect(compact.items[0]).not.toHaveProperty("evidenceSummary");
+
     const result = await service.get({ id: value.id, version: 1, fromDetailLevel: "L2_COMPACT" }, context, signal);
     expect(result).toMatchObject({
       traceId: "trace-current", tool: "ckl.get", diagnostics: [],
@@ -87,6 +103,13 @@ describe("KnowledgeMcpService", () => {
     for (const repeated of ["title", "summary", "scope", "status", "authority", "applicability"]) {
       expect(result.items[0]).not.toHaveProperty(repeated);
     }
+    const fromPointer = await service.get({
+      id: value.id, version: 1, fromDetailLevel: "L1_POINTER", targetDetailLevel: "L3_EVIDENCED",
+    }, context, signal);
+    expect(fromPointer.items[0]).toMatchObject({
+      fromDetailLevel: "L1_POINTER", toDetailLevel: "L3_EVIDENCED",
+      applicability: ["project-a"], content: `${value.id} body.`,
+    });
     expect((await service.get({ id: value.id, version: 2, fromDetailLevel: "L1_POINTER" }, context, signal)).diagnostics).toEqual(["VERSION_MISMATCH"]);
     expect((await service.get({ id: "missing", version: 1, fromDetailLevel: "L1_POINTER" }, context, signal)).diagnostics).toEqual(["NOT_FOUND"]);
   });
@@ -109,7 +132,8 @@ describe("KnowledgeMcpService", () => {
       seedAssetIds: [seed.id], knownItems: [{ id: known.id, version: 1, detailLevel: "L1_POINTER" }],
     }, context, signal);
     expect(result).toMatchObject({
-      traceId: "trace-related", tool: "ckl.related", items: [{ id: related.id }], omittedKnown: 2,
+      traceId: "trace-related", tool: "ckl.related",
+      items: [{ id: related.id, detailLevel: "L1_POINTER" }], omittedKnown: 2,
     });
     await expect(service.related({ seedAssetIds: ["missing"] }, context, signal)).rejects.toThrow("outside QueryContext");
   });
@@ -138,6 +162,9 @@ describe("KnowledgeMcpService", () => {
     await expect(service.search({ query: "x", knownItems: [{ id: "bad id", version: 1, detailLevel: "L1_POINTER" }] }, context, signal)).rejects.toThrow("knownItems");
     await expect(service.related({ seedAssetIds: [] }, context, signal)).rejects.toThrow("seedAssetIds");
     await expect(service.get({ id: value.id, version: 0, fromDetailLevel: "L1_POINTER" }, context, signal)).rejects.toThrow("get input");
+    await expect(service.get({
+      id: value.id, version: 1, fromDetailLevel: "L2_COMPACT", targetDetailLevel: "L2_COMPACT",
+    }, context, signal)).rejects.toThrow("get input");
     await expect(service.check({ items: [] }, context, signal)).rejects.toThrow("check items");
 
     const badTrace: KnowledgeMcpBackend = {

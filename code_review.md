@@ -6,8 +6,8 @@
 
 | 指标 | 数值 |
 |---|---:|
-| CR 标识 | `main@024e920+structured-output-v2` |
-| CR 耗时 | 420s |
+| CR 标识 | `main@85aeb89+progressive-knowledge-disclosure` |
+| CR 耗时 | 97s |
 | 🔴 高风险 | 1 个 |
 | 🟡 中风险 | 0 个 |
 | 🟢 低风险 | 0 个 |
@@ -17,44 +17,51 @@
 
 | 指标 | 累计值 |
 |---|---:|
-| 总 CR 次数 | 46 次 |
-| 总耗时 | 22650s |
-| 🔴 高风险累计 | 221 个 |
+| 总 CR 次数 | 47 次 |
+| 总耗时 | 22747s |
+| 🔴 高风险累计 | 222 个 |
 | 🟡 中风险累计 | 304 个 |
 | 🟢 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
 
 ## 改动说明
 
-本次变更修复真实 Codex Structured Outputs 调用被服务端拒绝的问题。知识编译器现在会从领域 Schema 生成 Codex 严格 Schema：对象属性全部 required、可选字段使用 nullable `anyOf`、对象关闭额外字段、断言联合改为受支持的 `anyOf`，并在领域二次校验前移除 `null` 占位。
+本次变更把知识注入从统一 L2/L3 调整为渐进式披露。自动 UserPrompt 首次上下文会为 Binding Rule 保留 L2 门禁摘要，其他候选只提供 L1 简介；Codex 再用 `ckl.get` 定向展开所选知识到 L2 边界或 L3 正文与证据。
 
-候选业务契约没有放宽：模型输出仍需通过原有 `knowledge-extraction-output` Schema，候选仍只会物化为 `PROPOSED`。同时强化 `subjectKey` 格式契约，并将 compiler、prompt 与响应 Schema 标识统一升级为 v2，避免旧幂等记录错误复用。
+运行中接口同步调整：`ckl.search/related` 返回 L1 Pointer，`ckl.get.targetDetailLevel` 为可选新增字段，不传时仍保持旧 L3 行为。Push 与 Pull 继续复用 current version、状态和 QueryContext Scope 校验；自动高风险信号不再批量注入 L3，而由显式 Pull 或有限闭环补充。
 
-对外接口和配置文件没有变化；兼容性边界是 v1 与 v2 使用不同抽取身份，已有 v1 结果保留，新请求按 v2 重新编译。
+默认策略从 L2 改为 L1，Pointer 上限从 3 提高到 8，硬预算仍为 800 tokens。OpenSpec、ADR/TDD、插件 Skill、MVP/P5 Gate 和真实会话模拟已同步。
 
 ## 风险矩阵
 
 | 维度 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
-| 增/重构 | 🔴 高 | `packages/knowledge-compiler/src/mvp-compiler.ts:21` | Schema 与提示已变化但版本仍为 v1，且 `$id` 仍指向 v1，可能命中旧幂等结果并破坏审计可复现性。 | 候选仓库 claim、重放、Schema 缓存与知识来源审计。 | compilerVersion、promptVersion、Schema `$id` 全部升级为 v2，文档同步；已修复。 |
+| 增/接口重构 | 🔴 高 | `packages/stop-continuation/src/types.ts:4`、`packages/stop-continuation/src/service.ts:174` | MCP Expansion 类型加入 L2 后，Stop context continuation 原端口会同时接受 L2，可能把仅有边界的结果当成满足 L3 required knowledge。 | 高风险任务闭环、缺失证据补充和完成门禁。 | 新增 `KnowledgeMcpEvidencedExpansionDelta` 收窄端口，并在运行时强制 `toDetailLevel=L3_EVIDENCED`；新增伪造 L2 delta 回归测试，已修复。 |
 
 ## 配置检查
 
-本次 diff 不包含 `.properties`、`.yml`、`.yaml` 或运行时配置变更，无 pre/prod/inner 配置迁移项。
+| 配置 | 代码默认值 | 部署 YAML | 结论 |
+|---|---|---|---|
+| `injection.defaultLevel` | `L1_POINTER` | `L1_POINTER` | 一致 |
+| `levels.L1_POINTER.maxItems` | 8 | 8 | 一致 |
+| `levels.L2_COMPACT.maxItems` | 8 | 8 | 一致 |
+| `defaultMaxTokens` | 800 | 800 | 未扩大硬预算 |
+
+仓库没有 pre/prod/inner 多环境注入配置；受检 YAML 通过配置加载器与默认值契约测试。该默认行为变化仍受既有 OFF/SHADOW/ACTIVE rollout 和快速回滚保护。
 
 ## Gate 证据
 
 | 检查项 | 结果 |
 |---|---|
-| 真实 Transcript | 2355 行、5.76 MB、0 malformed；投影 90 个公开事件 |
-| Ledger 幂等 | 首次 90 appended；复读 90 duplicate |
-| 真实 Codex 编译 | Structured Outputs Schema 被服务端接受；单次成功生成 6–8 个候选 |
-| 候选仓库 | `ACQUIRED → IN_PROGRESS → SUCCEEDED → ALREADY_SUCCEEDED` |
-| 生命周期门禁 | 全部候选为 `PROPOSED`；默认正式召回 0，审计视图可见 |
-| 模块测试 | knowledge-compiler 9/9 |
-| 全仓 Gate | 51/51 架构/Gate；624/624 模块测试 |
-| 覆盖率 | Lines 96.86%、Branches 89.77%、Functions 97.97% |
+| OpenSpec strict validate | 1/1 通过 |
+| ZhiLoop Skill validate | 通过 |
+| 渐进披露专项 | 72/72 通过 |
+| Stop/MCP/Orchestrator 回归 | 31/31 通过 |
+| 真实会话模拟 | 7/7 场景通过；L1→L2/L3 定向展开通过 |
+| 架构/Gate | 51/51 通过 |
+| 模块测试 | 626/626 通过 |
+| 覆盖率 | Lines 96.86%、Branches 89.73%、Functions 97.91% |
 
 ## Review 结论
 
-本次发现的 1 个高风险版本治理问题已闭环，无遗留 actionable finding。严格 Schema 经过真实 Codex 服务端接受、业务 Schema 二次校验、候选仓库幂等与全仓测试验证，可以合入。
+新增接口保持旧 `ckl.get` 缺省 L3 兼容，Scope/状态/版本门禁没有放宽。发现的 1 个高风险闭环类型退化已通过类型收窄、运行时校验和回归测试闭环，无遗留 actionable finding。

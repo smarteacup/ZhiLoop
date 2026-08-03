@@ -78,13 +78,17 @@ function prioritize(
   policy: InjectionPolicy,
 ): RerankedKnowledge[] {
   const authorityScore = new Map(policy.authorityOrder.map((value, index) => [value, policy.authorityOrder.length - index]));
-  return [...candidates].sort((left, right) => (
+  const sorted = [...candidates].sort((left, right) => (
     scopeScore(right, context) - scopeScore(left, context)
-    || statusScore(right.asset.status) - statusScore(left.asset.status)
     || (authorityScore.get(authority(right)) ?? 0) - (authorityScore.get(authority(left)) ?? 0)
+    || statusScore(right.asset.status) - statusScore(left.asset.status)
     || left.rank - right.rank
     || left.asset.id.localeCompare(right.asset.id)
   ));
+  const bindingIndex = sorted.findIndex((item) => authority(item) === "BINDING_RULE");
+  if (bindingIndex <= 0) return sorted;
+  const binding = sorted[bindingIndex] as RerankedKnowledge;
+  return [binding, ...sorted.slice(0, bindingIndex), ...sorted.slice(bindingIndex + 1)];
 }
 
 function itemFor(value: RerankedKnowledge, level: Exclude<ContextComplexityLevel, "L0_NONE">): ContextEnvelopeItem {
@@ -141,6 +145,16 @@ function levelProperties(level: ContextComplexityLevel): {
   }
 }
 
+function highestDetailLevel(
+  items: readonly ContextEnvelopeItem[],
+  fallback: ContextComplexityLevel,
+): ContextComplexityLevel {
+  if (items.length === 0) return fallback;
+  return items.reduce<ContextComplexityLevel>((highest, item) => (
+    LEVEL_ORDER.indexOf(item.detailLevel) > LEVEL_ORDER.indexOf(highest) ? item.detailLevel : highest
+  ), "L0_NONE");
+}
+
 function chooseLevel(
   request: ContextOrchestrationRequest,
   reasons: Set<string>,
@@ -162,10 +176,13 @@ function chooseLevel(
     level = "L3_EVIDENCED";
     reasons.add("L4_AUTOMATIC_FORBIDDEN");
   }
-  if ((request.signals?.risk === "HIGH" || request.signals?.ambiguous === true || request.signals?.conflicting === true)
-    && LEVEL_ORDER.indexOf(level) < LEVEL_ORDER.indexOf("L3_EVIDENCED")) {
-    level = "L3_EVIDENCED";
-    reasons.add("RISK_REQUIRES_EVIDENCED_CONTEXT");
+  if (automatic && request.requestedLevel === undefined
+    && LEVEL_ORDER.indexOf(level) > LEVEL_ORDER.indexOf("L1_POINTER")) {
+    level = "L1_POINTER";
+    reasons.add("AUTOMATIC_PROGRESSIVE_DISCLOSURE");
+  }
+  if (request.signals?.risk === "HIGH" || request.signals?.ambiguous === true || request.signals?.conflicting === true) {
+    reasons.add("RISK_REQUIRES_PROGRESSIVE_EXPANSION");
   }
   return level;
 }
@@ -260,8 +277,13 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
     const select = (selectedLevel: Exclude<ContextComplexityLevel, "L0_NONE">): ContextEnvelopeItem[] => {
       const output: ContextEnvelopeItem[] = [];
       for (const candidate of candidates.slice(0, maxItems(selectedLevel, request.policy))) {
-        const next = [...output, itemFor(candidate, selectedLevel)];
-        const trial = draftEnvelope(request, selectedLevel, reasons, maxTokens, next, undefined, false);
+        const progressiveInitial = selectedLevel === "L1_POINTER" && (request.automatic ?? true);
+        const itemLevel = progressiveInitial && authority(candidate) === "BINDING_RULE"
+          ? "L2_COMPACT"
+          : selectedLevel;
+        const next = [...output, itemFor(candidate, itemLevel)];
+        const trialLevel = highestDetailLevel(next, selectedLevel);
+        const trial = draftEnvelope(request, trialLevel, reasons, maxTokens, next, undefined, false);
         if (trial.budget.estimatedTokens > maxTokens) {
           truncated = true;
           break;
@@ -282,6 +304,7 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
       level = "L0_NONE";
       reasons.add("TOKEN_BUDGET_EXHAUSTED");
     }
+    level = highestDetailLevel(selected, level);
 
     let taskContract = contract(request.taskContract);
     if (taskContract !== undefined) {

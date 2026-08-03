@@ -545,9 +545,9 @@ interface ContextEnvelope {
 | 等级 | 内容 | 默认用途 |
 |---|---|---|
 | `L0_NONE` | 不注入知识 | 通用简单问题 |
-| `L1_POINTER` | ID、一句话摘要、能力索引 | 模型可自主探索的低风险任务 |
-| `L2_COMPACT` | 结论、适用边界、状态和关键门禁 | 默认模式 |
-| `L3_EVIDENCED` | 方案、失败路径、代码位置和证据摘要 | 高风险、冲突或明确项目约束 |
+| `L1_POINTER` | ID、一句话摘要、动态能力索引 | 默认参考知识目录 |
+| `L2_COMPACT` | 结论、适用边界、状态和关键门禁 | 首次 Binding Rule 或按需边界展开 |
+| `L3_EVIDENCED` | 方案、失败路径、代码位置和证据摘要 | 显式按需展开或有限闭环补充 |
 | `L4_EPISODE` | 原始对话片段和完整演进过程 | 追溯、审计和复杂歧义，禁止自动默认使用 |
 
 Task Contract 是 `task + boundaries + completionGates` 的组合视图；它是 Context Envelope 的可选区块，不能替代动态知识注入。
@@ -721,8 +721,8 @@ sequenceDiagram
 5. 对前 30 条执行可替换的 Rerank。
 6. 使用多样性规则去除同一 subject 的重复版本。
 7. Context Orchestrator 根据任务风险、歧义、知识冲突、项目特异性、上下文压力和模型可用能力选择 `L0-L4`。
-8. 默认使用 `L2_COMPACT`，只注入少量边界、门禁、已有能力摘要和知识指针；不默认注入完整正文。
-9. 运行中通过 `ckl.search`、`ckl.get`、`ckl.related` 和 `ckl.check` 定向展开。
+8. 默认生成混合 Envelope：Binding Rule 以 `L2_COMPACT` 主动注入，其他候选以 `L1_POINTER` 简介注入；不自动批量注入正文。
+9. 运行中通过 `ckl.search/related` 发现更多 L1 指针，通过 `ckl.get` 定向展开到 L2 或 L3，并用 `ckl.check` 复核当前版本。
 10. 输出 `ContextEnvelope` 和完整 Retrieval Trace。
 
 向量服务不可用时，系统必须使用精确匹配、FTS5、Scope 和关系索引降级。
@@ -989,16 +989,16 @@ retrieval:
 ```yaml
 version: 1
 injection:
-  defaultLevel: L2_COMPACT
+  defaultLevel: L1_POINTER
   defaultMaxTokens: 800
   userPromptDeadlineMs: 500
   failOpenOnTimeout: true
   levels:
     L1_POINTER:
-      maxItems: 3
+      maxItems: 8
       evidence: NONE
     L2_COMPACT:
-      maxItems: 5
+      maxItems: 8
       evidence: POINTER
     L3_EVIDENCED:
       maxItems: 8
@@ -1125,7 +1125,7 @@ retention:
 | 索引与 Markdown 不一致 | 中 | 中 | contentHash、indexVersion、可重建投影和 doctor 检查 |
 | Hook 影响 Codex 响应 | 高 | 低 | 捕获路径只入队；注入/闭环设置独立 deadline；全部失败开放 |
 | 知识持续增长导致噪声 | 中 | 高 | subject 合并、状态过滤、版本去重、召回评估 |
-| 过量知识注入导致上下文膨胀 | 高 | 中 | 默认 L2、Token Budget、指针优先、运行中定向展开 |
+| 过量知识注入导致上下文膨胀 | 高 | 中 | 默认 L1 目录、Binding L2 保留、Token Budget、运行中定向 L2/L3 展开 |
 | 过少注入导致模型误解项目事实 | 高 | 中 | 闭环返回 `RETRY_WITH_CONTEXT`，按知识 ID 提升深度 |
 | 知识内容被误当成强制指令 | 高 | 中 | Authority 分层，REFERENCE 与 BINDING_RULE 分区编码 |
 | 闭环验证自我强化原有误判 | 高 | 中 | 确定性门禁优先、隔离验证上下文、独立 reason codes |
@@ -1280,7 +1280,7 @@ MVP 只有同时满足以下条件才算完成：
 - 代码指纹变化能将相关知识标记为 `STALE`。
 - Markdown 修改能在 5 秒内更新 SQLite/FTS 投影。
 - `retrieval explain` 能展示每条候选的完整排名原因。
-- 默认生成 L2 Context Envelope，且可以按知识 ID 从 L1/L2 定向展开到 L3。
+- 默认生成 Binding L2 与 Reference L1 混合 Context Envelope，且可以按知识 ID 从 L1 定向展开到 L2/L3。
 - `ContextEnvelope` 明确区分参考知识、已接受决策和强制规则。
 - Codex 可以通过 CKL MCP 在运行中查询知识，而无需预先注入完整正文。
 - Stop 阶段可以在门禁缺失时续跑一次，并且不会形成无限循环。

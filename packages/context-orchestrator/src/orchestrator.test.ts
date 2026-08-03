@@ -57,7 +57,7 @@ describe("ContextOrchestrator", () => {
     expect(result).toEqual({ ok: true, value: DEFAULT_CONFIGURATION.injection });
   });
 
-  it("uses L2 by default and keeps Task Contract separate from dynamic knowledge", () => {
+  it("uses mixed binding L2 and reference L1 items by default while keeping Task Contract separate", () => {
     const values = [
       candidate("knowledge.context.rule", 1, { kind: "RULE" }),
       candidate("knowledge.context.decision", 2, { kind: "DECISION", status: "ACCEPTED" }),
@@ -77,10 +77,14 @@ describe("ContextOrchestrator", () => {
       level: "L2_COMPACT", depth: "COMPACT", evidence: "POINTER", authority: "MIXED", breadth: 4,
     });
     expect(envelope.items.map((item) => item.authority)).toEqual([
-      "VERIFIED_FACT", "BINDING_RULE", "REFERENCE", "ACCEPTED_DECISION",
+      "BINDING_RULE", "ACCEPTED_DECISION", "VERIFIED_FACT", "REFERENCE",
     ]);
     expect(envelope.items[0]).toHaveProperty("evidencePointers");
     expect(envelope.items[0]).not.toHaveProperty("content");
+    expect(envelope.items.map((item) => item.detailLevel)).toEqual([
+      "L2_COMPACT", "L1_POINTER", "L1_POINTER", "L1_POINTER",
+    ]);
+    expect(envelope.items[1]).not.toHaveProperty("evidencePointers");
     expect(envelope.taskContract).toEqual(expect.objectContaining({ contractId: "contract-1" }));
     expect(envelope.budget.estimatedTokens).toBeLessThanOrEqual(envelope.budget.maxTokens);
     expect(parseContextEnvelope(envelope).ok).toBe(true);
@@ -99,20 +103,17 @@ describe("ContextOrchestrator", () => {
     }
   });
 
-  it("escalates high-risk context to L3 with boundaries, failures, and Evidence", () => {
+  it("keeps high-risk reference context as a pointer for explicit progressive expansion", () => {
     const envelope = new ContextOrchestrator().orchestrate(request([
       candidate("knowledge.context.evidenced", 1),
     ], { requestedLevel: "L1_POINTER", signals: { risk: "HIGH" } }));
-    expect(envelope.complexity).toMatchObject({ level: "L3_EVIDENCED", depth: "EVIDENCED", evidence: "SUMMARY" });
-    expect(envelope.complexity.reasonCodes).toContain("RISK_REQUIRES_EVIDENCED_CONTEXT");
-    expect(envelope.items[0]).toMatchObject({
-      applicability: ["project-a"], failurePaths: ["other projects"],
-      content: expect.stringContaining("evidence-backed body"),
-      evidenceSummary: [{ verdict: "SUPPORTS" }],
-    });
+    expect(envelope.complexity).toMatchObject({ level: "L1_POINTER", depth: "POINTER", evidence: "NONE" });
+    expect(envelope.complexity.reasonCodes).toContain("RISK_REQUIRES_PROGRESSIVE_EXPANSION");
+    expect(envelope.items[0]).not.toHaveProperty("content");
+    expect(envelope.items[0]).not.toHaveProperty("evidenceSummary");
   });
 
-  it("uses exact-Scope feedback for L1-L3 depth without overriding explicit or high-risk gates", () => {
+  it("uses exact-Scope feedback for L1-L3 depth without overriding explicit requests", () => {
     const value = candidate("knowledge.context.feedback", 1);
     const feedback = {
       scopeKey: JSON.stringify({ level: "TASK", projectId: "project-a", taskId: "task-context" }),
@@ -125,13 +126,31 @@ describe("ContextOrchestrator", () => {
       level: "L1_POINTER", reasonCodes: ["FEEDBACK_COMPLEXITY_LEVEL", "IRRELEVANT_FEEDBACK_REDUCED_DEPTH"],
     });
     expect(new ContextOrchestrator().orchestrate(request([value], { feedback, requestedLevel: "L2_COMPACT" })).complexity.level).toBe("L2_COMPACT");
-    expect(new ContextOrchestrator().orchestrate(request([value], { feedback, signals: { risk: "HIGH" } })).complexity.level).toBe("L3_EVIDENCED");
+    const risky = new ContextOrchestrator().orchestrate(request([value], { feedback, signals: { risk: "HIGH" } }));
+    expect(risky.complexity.level).toBe("L1_POINTER");
+    expect(risky.complexity.reasonCodes).toContain("RISK_REQUIRES_PROGRESSIVE_EXPANSION");
     expect(() => new ContextOrchestrator().orchestrate(request([value], {
       feedback: { ...feedback, scopeKey: JSON.stringify({ level: "PROJECT", projectId: "project-b" }) },
     }))).toThrow("feedback hint");
     expect(() => new ContextOrchestrator().orchestrate(request([value], {
       feedback: { ...feedback, preferredLevel: "L3_EVIDENCED", sampleCount: 0 },
     }))).toThrow("feedback hint");
+  });
+
+  it("caps learned L3 feedback to progressive disclosure during automatic UserPrompt injection", () => {
+    const feedback = {
+      scopeKey: JSON.stringify({ level: "TASK", projectId: "project-a", taskId: "task-context" }),
+      preferredLevel: "L3_EVIDENCED" as const,
+      sampleCount: 3,
+      reasonCodes: ["RELEVANT_AND_USED_FEEDBACK_INCREASED_DEPTH"],
+    };
+    const envelope = new ContextOrchestrator().orchestrate(request([
+      candidate("knowledge.context.feedback-rule", 2, { kind: "RULE", status: "ACCEPTED" }),
+      candidate("knowledge.context.feedback-reference", 1),
+    ], { feedback }));
+    expect(envelope.items.map((item) => item.detailLevel)).toEqual(["L2_COMPACT", "L1_POINTER"]);
+    expect(envelope.complexity.reasonCodes).toContain("AUTOMATIC_PROGRESSIVE_DISCLOSURE");
+    expect(envelope.items.every((item) => !("content" in item))).toBe(true);
   });
 
   it("forbids automatic L4 and allows only explicit non-automatic Episode expansion", () => {
@@ -157,9 +176,9 @@ describe("ContextOrchestrator", () => {
     });
   });
 
-  it("prioritizes closer Scope before status and Authority under a token budget", () => {
+  it("prioritizes closer Scope before status for non-binding knowledge under a token budget", () => {
     const values = [
-      candidate("knowledge.context.global-rule", 1, { kind: "RULE", status: "VERIFIED", scope: { level: "GLOBAL" } }),
+      candidate("knowledge.context.global-reference", 1, { status: "VERIFIED", scope: { level: "GLOBAL" } }),
       candidate("knowledge.context.project-fact", 2, { kind: "FACT", status: "VERIFIED" }),
       candidate("knowledge.context.symbol", 3, {
         status: "ACCEPTED", scope: { level: "SYMBOL", projectId: project.projectId, symbols: ["ContextOrchestrator"] },
@@ -170,13 +189,38 @@ describe("ContextOrchestrator", () => {
     ];
     const full = new ContextOrchestrator().orchestrate(request(values, { requestedLevel: "L1_POINTER" }));
     expect(full.items.map((item) => item.id)).toEqual([
-      "knowledge.context.task", "knowledge.context.symbol", "knowledge.context.project-fact",
+      "knowledge.context.task", "knowledge.context.symbol", "knowledge.context.project-fact", "knowledge.context.global-reference",
     ]);
     const budgeted = new ContextOrchestrator().orchestrate(request(values, {
       requestedLevel: "L1_POINTER", maxTokens: Math.max(180, full.budget.estimatedTokens - 80),
     }));
     expect(budgeted.items[0]?.id).toBe("knowledge.context.task");
     expect(budgeted.budget.truncated).toBe(true);
+  });
+
+  it("reserves the first automatic slot for a binding rule and discloses other candidates as pointers", () => {
+    const policy = {
+      ...DEFAULT_CONFIGURATION.injection,
+      defaultMaxTokens: 1_600,
+      levels: {
+        ...DEFAULT_CONFIGURATION.injection.levels,
+        L1_POINTER: { maxItems: 2, evidence: "NONE" as const },
+        L2_COMPACT: { maxItems: 2, evidence: "POINTER" as const },
+        L3_EVIDENCED: { maxItems: 2, evidence: "SUMMARY" as const },
+      },
+    };
+    const envelope = new ContextOrchestrator().orchestrate(request([
+      candidate("knowledge.context.symbol-reference", 1, {
+        scope: { level: "SYMBOL", projectId: project.projectId, symbols: ["ContextOrchestrator"] },
+      }),
+      candidate("knowledge.context.project-rule", 8, { kind: "REQUIREMENT", status: "ACCEPTED" }),
+      candidate("knowledge.context.other-reference", 2),
+    ], { policy }));
+    expect(envelope.items.map((item) => [item.id, item.detailLevel])).toEqual([
+      ["knowledge.context.project-rule", "L2_COMPACT"],
+      ["knowledge.context.symbol-reference", "L1_POINTER"],
+    ]);
+    expect(envelope.complexity).toMatchObject({ level: "L2_COMPACT", breadth: 2, evidence: "POINTER" });
   });
 
   it("orders module, user, team, and global scopes without widening the query", () => {
@@ -190,7 +234,7 @@ describe("ContextOrchestrator", () => {
     ];
     const envelope = new ContextOrchestrator().orchestrate(request(values, { requestedLevel: "L1_POINTER" }));
     expect(envelope.items.map((item) => item.id)).toEqual([
-      "knowledge.context.module", "knowledge.context.user", "knowledge.context.team",
+      "knowledge.context.module", "knowledge.context.user", "knowledge.context.team", "knowledge.context.global",
     ]);
   });
 

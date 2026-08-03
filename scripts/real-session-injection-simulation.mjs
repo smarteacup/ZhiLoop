@@ -10,6 +10,7 @@ import {
 import { DEFAULT_CONFIGURATION } from "../packages/config/dist/index.js";
 import { ContextOrchestrator } from "../packages/context-orchestrator/dist/index.js";
 import { SqliteKnowledgeRegistryProjection } from "../packages/knowledge-registry/dist/index.js";
+import { KnowledgeMcpService } from "../packages/knowledge-mcp/dist/index.js";
 import { KnowledgeReranker } from "../packages/knowledge-reranker/dist/index.js";
 import {
   calculateKnowledgeContentHash,
@@ -192,37 +193,57 @@ const scenarios = [
     project: hermes,
     prompt: "请分析 `RuleFatigueStrategy` 中 3200 的生产逻辑",
     expectedStatus: "INJECTED",
+    expectedLevel: "L1_POINTER",
     expectedIds: ["fatigue.strategy.hermes-3200"],
+    expectedDetails: { "fatigue.strategy.hermes-3200": "L1_POINTER" },
+    expansions: [{ id: "fatigue.strategy.hermes-3200", targetDetailLevel: "L3_EVIDENCED" }],
   },
   {
     name: "3213 需求与实现组合",
     project: algorithmStrategy,
     prompt: "在 `DmsFatigue3213Handler` 实现 3005/13 到 3213，需要遵守哪些约束？",
     expectedStatus: "INJECTED",
+    expectedLevel: "L2_COMPACT",
     expectedIds: [requirementId],
+    expectedDetails: { [requirementId]: "L2_COMPACT" },
+    expansions: [
+      { id: "dms.output.message-contract", targetDetailLevel: "L2_COMPACT" },
+      { id: "dms.idempotency.codis-key", targetDetailLevel: "L3_EVIDENCED" },
+    ],
   },
   {
     name: "设备异常与重试",
     project: algorithmStrategy,
     prompt: "`DeviceService` 查询异常后，如何保证 DDMQ 可以重试？",
     expectedStatus: "INJECTED",
+    expectedLevel: "L2_COMPACT",
     expectedIds: ["dms.device.lookup-retry"],
+    expansions: [{ id: "dms.device.lookup-retry", targetDetailLevel: "L3_EVIDENCED" }],
   },
   {
     name: "PublicLog 字段契约",
     project: algorithmStrategy,
     prompt: "`sec_ai_tachograph_reminder` 的 character_type、hit_rule 和 exp_flag 应该怎么输出？",
     expectedStatus: "INJECTED",
+    expectedLevel: "L2_COMPACT",
     expectedIds: ["dms.output.message-contract", "dms.logging.publiclog-output"],
+    expansions: [
+      { id: "dms.output.message-contract", targetDetailLevel: "L2_COMPACT" },
+      { id: "dms.logging.publiclog-output", targetDetailLevel: "L3_EVIDENCED" },
+    ],
   },
   {
-    name: "高风险修改升级证据深度",
+    name: "高风险修改保持简介并按需展开证据",
     project: algorithmStrategy,
     prompt: "准备修改 `DeviceService` 异常处理和 3213 幂等回滚，请给出已有约束与证据",
     signals: { risk: "HIGH", ambiguous: false, conflicting: false },
     expectedStatus: "INJECTED",
-    expectedLevel: "L3_EVIDENCED",
+    expectedLevel: "L2_COMPACT",
     expectedIds: ["dms.device.lookup-retry"],
+    expansions: [
+      { id: "dms.device.lookup-retry", targetDetailLevel: "L3_EVIDENCED" },
+      { id: "dms.idempotency.codis-key", targetDetailLevel: "L3_EVIDENCED" },
+    ],
   },
   {
     name: "跨项目隔离",
@@ -239,6 +260,25 @@ const scenarios = [
     expectedIds: [],
   },
 ];
+
+function mcpBackend(registry) {
+  const source = new SqliteKnowledgeRetrievalSource(registry);
+  const assets = (projected) => projected.map((item) => item.asset.asset);
+  return {
+    search: async ({ query, limit }) => ({
+      traceId: "trace-simulation-mcp-search",
+      assets: assets(source.searchFts(query, limit)),
+    }),
+    related: async ({ seedAssetIds, limit }) => ({
+      traceId: "trace-simulation-mcp-related",
+      assets: assets(source.related(seedAssetIds, limit)),
+    }),
+    current: async ({ assetIds }) => ({
+      traceId: "trace-simulation-mcp-current",
+      assets: assetIds.flatMap((id) => source.getCurrent(id)?.asset ?? []),
+    }),
+  };
+}
 
 async function activeContext(registry, scenario, runId) {
   const queryContext = resolveQueryContext({
@@ -295,7 +335,39 @@ async function simulate(registry, rollout, scenario, index) {
   assert.equal(injection.status, scenario.expectedStatus, scenario.name);
   if (scenario.expectedLevel !== undefined) assert.equal(context.envelope.complexity.level, scenario.expectedLevel, scenario.name);
   for (const expectedId of scenario.expectedIds) assert.ok(ids.includes(expectedId), `${scenario.name}: missing ${expectedId}`);
+  for (const [id, detailLevel] of Object.entries(scenario.expectedDetails ?? {})) {
+    assert.equal(context.envelope.items.find((item) => item.id === id)?.detailLevel, detailLevel, `${scenario.name}: ${id} detail`);
+  }
   if (scenario.expectedStatus === "NO_CONTEXT") assert.deepEqual(ids, [], scenario.name);
+  const modelSelectedExpansions = [];
+  const mcp = new KnowledgeMcpService(mcpBackend(registry));
+  for (const selection of scenario.expansions ?? []) {
+    const visible = context.envelope.items.find((item) => item.id === selection.id);
+    assert.ok(visible, `${scenario.name}: model cannot select invisible pointer ${selection.id}`);
+    assert.ok(visible.detailLevel === "L1_POINTER" || visible.detailLevel === "L2_COMPACT");
+    const result = await mcp.get({
+      id: visible.id,
+      version: visible.version,
+      fromDetailLevel: visible.detailLevel,
+      targetDetailLevel: selection.targetDetailLevel,
+    }, context.queryContext, new AbortController().signal);
+    assert.equal(result.items.length, 1, `${scenario.name}: expansion ${selection.id}`);
+    const expanded = result.items[0];
+    assert.equal(expanded.toDetailLevel, selection.targetDetailLevel, `${scenario.name}: target detail ${selection.id}`);
+    if (selection.targetDetailLevel === "L2_COMPACT") {
+      assert.ok(!("content" in expanded), `${scenario.name}: L2 must not include content`);
+    } else {
+      assert.ok("content" in expanded && expanded.content.length > 0, `${scenario.name}: L3 content missing`);
+    }
+    modelSelectedExpansions.push({
+      id: expanded.id,
+      fromDetailLevel: expanded.fromDetailLevel,
+      toDetailLevel: expanded.toDetailLevel,
+      contentIncluded: "content" in expanded,
+      evidenceSummaryCount: "evidenceSummary" in expanded ? expanded.evidenceSummary.length : 0,
+      compactBoundariesIncluded: "applicability" in expanded,
+    });
+  }
   return {
     name: scenario.name,
     trigger: { event: "UserPromptSubmit", prompt: scenario.prompt, projectId: scenario.project.projectId },
@@ -331,6 +403,7 @@ async function simulate(registry, rollout, scenario, index) {
         evidenceSummaryCount: "evidenceSummary" in item ? item.evidenceSummary.length : 0,
       })),
     },
+    modelSelectedExpansions,
   };
 }
 

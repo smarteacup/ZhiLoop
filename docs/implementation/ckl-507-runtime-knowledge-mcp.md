@@ -2,7 +2,7 @@
 
 **状态**：Implemented  
 **任务**：CKL-507  
-**最后更新**：2026-08-02
+**最后更新**：2026-08-03
 
 ## 1. 目标与不变量
 
@@ -40,15 +40,15 @@ Backend 是组合端口：生产装配可复用 CKL-502 Retrieval Engine 和 Reg
 
 ### `ckl.search`
 
-接收 query、1～8 limit 和最多 100 个已知 `id/version/detailLevel`。返回 L2 Compact：Scope、Status、Authority、摘要、边界、symbols、Evidence pointers；不含正文。命中必须用批量 `current` 结果替换后再输出。
+接收 query、1～8 limit 和最多 100 个已知 `id/version/detailLevel`。返回 L1 Pointer：ID、版本、Scope、Status、Authority、标题和简介；不含边界、正文或 Evidence。命中必须用批量 `current` 结果替换后再输出。
 
 ### `ckl.get`
 
-仅接受目标 `id/version` 和 `fromDetailLevel=L1|L2`。返回一个 L3 增量：`content + evidenceSummary`，不重复 title、summary、Scope、Status、Authority 或适用边界。目标不存在、版本变化或不合格时返回空 items 和诊断。
+接受目标 `id/version`、`fromDetailLevel=L1|L2` 和可选 `targetDetailLevel=L2|L3`。L1→L2 返回边界、symbols 与 Evidence pointers；L1→L3 同时补齐这些边界和正文证据；L2→L3 只返回正文与 Evidence Summary。缺省 target 保持兼容并返回 L3。目标不存在、版本变化或不合格时返回空 items 和诊断。
 
 ### `ckl.related`
 
-先确认所有 seed 当前且在 Scope 内，再调用 Relation Backend。结果排除 seed 与已知 `id@version`，返回 L2 Compact 增量。
+先确认所有 seed 当前且在 Scope 内，再调用 Relation Backend。结果排除 seed 与已知 `id@version`，返回可继续选择的 L1 Pointer。
 
 ### `ckl.check`
 
@@ -77,7 +77,7 @@ Search/Related 输出最多 8 项；current 验证使用单次批量调用，复
 | 风险 | 缓解 |
 |---|---|
 | Search 命中伪造 Scope/Status | 以 current Backend 对象为唯一输出来源 |
-| 已知 Envelope 被整段重复 | search/related 按 id@version 排除；get 只返回 L3 新增字段 |
+| 已知 Envelope 被整段重复 | search/related 按 id@version 排除；get 只返回目标 L2/L3 差量 |
 | Relation seed 越界扩大 Scope | 所有 seed 先 current + eligibility 校验 |
 | 旧版本展开 | get 强制请求版本等于 current 版本 |
 | MCP 故障影响主动注入 | 包和运行链路完全解耦，架构测试固化 |

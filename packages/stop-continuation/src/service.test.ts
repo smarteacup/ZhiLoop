@@ -186,6 +186,17 @@ describe("StopContinuationService", () => {
       }),
     };
     expect((await service(closurePort(contextResult), { delta: duplicateDelta }).handle(request)).status).toBe("UNKNOWN");
+    const compactOnlyDelta = {
+      load: async () => ({
+        traceId: "trace-delta",
+        items: [{
+          id: "knowledge.required", version: 1,
+          fromDetailLevel: "L1_POINTER", toDetailLevel: "L2_COMPACT",
+          applicability: [], failurePaths: [], symbols: [], evidencePointers: [],
+        }],
+      }),
+    } as unknown as StopContextDeltaPort;
+    expect((await service(closurePort(contextResult), { delta: compactOnlyDelta }).handle(request)).status).toBe("UNKNOWN");
 
     const expanded = verification("RETRY_WITH_CORRECTION", { unmetGateIds: ["new-gate"] });
     expect((await service(closurePort(expanded)).handle(request)).status).toBe("UNKNOWN");

@@ -122,6 +122,10 @@ describe("ContextEnvelope renderer", () => {
     expect(rendered).toContain('"status":"IMPLEMENTED"');
     expect(rendered).toContain('"authority":"REFERENCE"');
     expect(rendered).toContain('"projectId":"project-a"');
+    expect(rendered).toContain('"mode":"DYNAMIC_POINTERS"');
+    expect(rendered).toContain('"ckl.get":"Expand one selected id/version to targetDetailLevel L2_COMPACT or L3_EVIDENCED."');
+    expect(rendered).toContain("do not infer omitted details");
+    expect(rendered).not.toContain('"content"');
     expect(serializeUserPromptHookResult({ status: "DISABLED", elapsedMs: 0 })).toBe("");
   });
 

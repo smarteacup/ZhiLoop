@@ -1,13 +1,13 @@
-defaultLevel: L2_COMPACT
+defaultLevel: L1_POINTER
 defaultMaxTokens: 800
 userPromptDeadlineMs: 500
 failOpenOnTimeout: true
 levels:
   L1_POINTER:
-    maxItems: 3
+    maxItems: 8
     evidence: NONE
   L2_COMPACT:
-    maxItems: 5
+    maxItems: 8
     evidence: POINTER
   L3_EVIDENCED:
     maxItems: 8

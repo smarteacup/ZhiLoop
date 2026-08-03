@@ -1,6 +1,6 @@
 # ADR-0004：可控复杂度知识注入与有限闭环验证
 
-**状态**：Proposed  
+**状态**：Implemented  
 **日期**：2026-08-01
 
 ## 背景
@@ -11,7 +11,7 @@ CKL 既要复用历史对话形成的知识，又不能让知识注入持续膨�
 
 ## 决策
 
-引入 `Context Orchestrator`，将当前任务、作用域、风险、模型能力、上下文预算和检索结果编排为版本化 `ContextEnvelope`。默认使用 L2 紧凑注入，允许 Codex 在运行中通过 CKL MCP 定向拉取更深知识；任务结束时由 `Closure Verifier` 对原始目标、门禁和证据做有限闭环验证。
+引入 `Context Orchestrator`，将当前任务、作用域、风险、模型能力、上下文预算和检索结果编排为版本化 `ContextEnvelope`。默认使用混合渐进披露：Binding Rule 主动注入 L2 摘要，其他候选只注入 L1 简介；Codex 在运行中通过 CKL MCP 定向拉取更深知识。任务结束时由 `Closure Verifier` 对原始目标、门禁和证据做有限闭环验证。
 
 CKL 的产品边界仍然包括知识采集、治理、召回、编排和注入。`TaskContract` 是 `ContextEnvelope` 中的可选区块，`ClosureVerifier` 是消费知识与任务证据的应用模块，两者都不替代知识层本身。
 
@@ -42,17 +42,17 @@ flowchart LR
 | 等级 | 内容 | 典型用途 | 自动使用规则 |
 |---|---|---|---|
 | L0 `NONE` | 不注入知识 | 无命中或普通闲聊 | 允许 |
-| L1 `POINTER` | 能力目录、知识 ID、展开方式 | 低风险、模型已具备充分能力 | 允许 |
-| L2 `COMPACT` | 边界、门禁、已有能力、相关结论摘要和指针 | 普通工程任务 | 默认 |
-| L3 `EVIDENCED` | L2 加关键证据、适用条件和冲突说明 | 高风险、强约束或知识冲突 | 按策略允许 |
+| L1 `POINTER` | 动态知识目录、知识 ID、简介和展开方式 | 默认参考知识 | 默认 |
+| L2 `COMPACT` | 边界、门禁、已有能力和 Evidence 指针 | 首次 Binding Rule；按需边界展开 | 自动门禁或显式 Pull |
+| L3 `EVIDENCED` | L2 加正文、失败路径和证据摘要 | 需要实现细节或证据的知识 | 显式 Pull 或有限闭环 |
 | L4 `EPISODE` | 原始对话片段或完整知识正文 | 诊断知识来源、处理严重歧义 | 禁止自动整包注入，只能定向拉取 |
 
 等级决定上限，不要求填满预算。一次 `ContextEnvelope` 可以同时包含 L1 指针和少量 L3 门禁，但必须记录每一项的权威等级、来源和注入原因。
 
 ### Push 与 Pull
 
-- **Push**：`UserPromptSubmit` 只注入开始任务所需的最小充分上下文，默认 L2，目标预算不超过 800 tokens；CKL 内部 deadline 为 500 ms，超时不注入并开放失败。
-- **Pull**：Codex 运行中通过 `ckl.search`、`ckl.get`、`ckl.related`、`ckl.check` 按知识 ID、符号或问题展开。
+- **Push**：`UserPromptSubmit` 注入动态筛选后的 L1 目录，并为 Binding Rule 保留 L2 门禁摘要；预算不超过 800 tokens，内部 deadline 为 500 ms，超时不注入并开放失败。
+- **Pull**：`ckl.search/related` 返回更多 L1 指针；`ckl.get` 按知识 ID 定向展开到 L2 边界或 L3 正文与证据；`ckl.check` 复核当前版本。
 - Pull 结果必须继续遵守当前项目、用户和全局 Scope，不能绕过状态与权限过滤。
 - 重复拉取同一知识时返回引用或差量，避免正文反复进入上下文。
 
@@ -106,7 +106,7 @@ Hook 实现较少，但任务开始时无法预测全部信息需求，容易导
 
 | 风险 | 缓解措施 |
 |---|---|
-| 注入过多导致上下文膨胀 | L2 默认、token 预算、去重、差量 continuation、禁止自动 L4 |
+| 注入过多导致上下文膨胀 | 默认 L1 目录、Binding L2 保留、按需 L2/L3、token 预算、去重、禁止自动 L4 |
 | 注入过少导致遗漏 | 提供知识指针和 MCP Pull；闭环发现缺口后只补充相关项 |
 | 把建议误当硬门禁 | 每项显式标记 authority，渲染时分区展示 |
 | 验证器复制执行模型的误解 | 优先确定性证据，语义验证使用独立提示和最小上下文 |

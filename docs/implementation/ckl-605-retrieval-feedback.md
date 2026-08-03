@@ -32,13 +32,13 @@ Retrieval Engine 先完成 current/Status/Scope/tombstone 过滤和 RRF，再应
 
 ## 4. 复杂度学习
 
-默认仍为 `L2_COMPACT`：
+Feedback Profile 仍可建议 L1-L3，但自动首次注入以渐进披露为上限：
 
 - 同 Scope 至少 2 次 irrelevant 且多于 relevant，建议 `L1_POINTER`；
 - 至少 3 次 relevant、至少 2 次 MCP expansion，且实际使用率至少 50%，建议 `L3_EVIDENCED`；
-- 其他情况保持 L2；永不建议 L4。
+- 其他情况保持 L2 建议；永不建议 L4。自动 UserPrompt 阶段会把 L2/L3 建议收敛为 Binding L2 + Reference L1，显式 requested level 和运行中 Pull 不受此上限影响。
 
-Context Orchestrator 复核 scope、样本数和固定 reason code。显式 requestedLevel 优先于反馈；HIGH risk、冲突或歧义仍可强制提升 L3，因此反馈不能削弱安全门禁。Token budget 仍可把内容降级或截断。
+Context Orchestrator 复核 scope、样本数和固定 reason code。显式 requestedLevel 优先于反馈；HIGH risk、冲突或歧义要求模型定向展开相关 Pointer，但不再把全部候选自动提升到 L3。Token budget 仍可把内容降级或截断。
 
 ## 5. MCP 使用闭环
 
@@ -53,7 +53,7 @@ Expansion 只说明用户/模型拉取过 L3，不等于实际用于结论。调
 | 伪造 score | relevant/irrelevant/score 交叉验证 |
 | 反馈同时 pin+suppress | Profile 拒绝矛盾输入；Store 最后控制信号唯一 |
 | 单次误点改变深度 | L1 至少 2 个负样本，L3 至少 3 个正样本 + MCP usage |
-| feedback 降低高风险证据 | risk gate 在 feedback 选择后强制 L3 |
+| feedback 降低高风险证据 | 首次 Binding Rule 至少 L2；注入协议要求高风险修改前定向 Pull，闭环可补充缺失 L3 |
 | feedback 自动开启 L4 | 类型和运行时都只允许 L1-L3 |
 | Expansion 被误当实际使用 | Usage 独立事件且必须关联真实 trace |
 | 重复事件放大权重 | ID 幂等，内容冲突拒绝 |

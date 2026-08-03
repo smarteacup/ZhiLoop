@@ -399,7 +399,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 **交付物**：`ContextEnvelope` 类型与 JSON Schema、L0-L4、Breadth/Depth/Authority/Evidence、Token Budget 和 `injection-policy.yaml`。  
 **验收条件**：
 
-- 默认使用 `L2_COMPACT`，不默认注入完整正文。
+- 默认自动注入 Binding Rule 的 `L2_COMPACT` 门禁与其他候选的 `L1_POINTER` 简介，不自动注入完整正文。
 - `L1_POINTER` 只包含 ID、一句话摘要和最小元数据。
 - `L3_EVIDENCED` 包含适用边界、失败路径和证据摘要。
 - `L4_EPISODE` 禁止自动触发。
@@ -442,7 +442,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 **验收条件**：
 
 - 所有工具只返回当前 QueryContext Scope 内有资格的知识。
-- `ckl.get` 支持从 POINTER/COMPACT 定向展开到 EVIDENCED。
+- `ckl.get` 支持从 POINTER 定向展开到 COMPACT/EVIDENCED，并支持从 COMPACT 展开到 EVIDENCED。
 - 运行中展开只返回目标知识增量，不重复已有 Context Envelope。
 - 每次工具结果包含 Retrieval Trace ID 和知识版本。
 - MCP 不可用时不影响回合前主动注入。

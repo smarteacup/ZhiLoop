@@ -236,7 +236,6 @@ export class SqliteRuntimeAuditStore implements Disposable {
     }
     if (record.schemaVersion !== 1 || !Number.isSafeInteger(record.continuationCount) || record.continuationCount < 0
       || record.continuationCount > 100 || !canonicalTimestamp(record.createdAt)
-      || (record.recursiveStopRejected && record.continuationCount === 0)
       || record.gates.length > 100 || new Set(record.gates.map((gate) => gate.gateId)).size !== record.gates.length
       || (record.interaction?.required === true && record.interaction.question?.trim().length === 0)) {
       throw new Error("closure run is invalid");

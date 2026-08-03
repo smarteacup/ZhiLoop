@@ -79,7 +79,7 @@ describe("SqliteRuntimeAuditStore", () => {
     expect(value.listClosures("session-1")).toEqual({ items: [closure], truncated: false });
   });
 
-  it("rejects invalid transitions, identities, detail expansion and closure recursion", () => {
+  it("rejects invalid transitions, identities and detail expansion while recording first recursive stop rejection", () => {
     using value = store();
     expect(() => value.beginInjection(attempt({ status: "INJECTED", completedAt: now }))).toThrow("pending");
     expect(() => value.completeInjection("missing", 0, "INJECTED", "ROLLOUT_ACTIVE", now)).toThrow("not found");
@@ -91,10 +91,10 @@ describe("SqliteRuntimeAuditStore", () => {
       tool: "ckl.get", knowledgeId: "knowledge-1", knowledgeVersion: 1,
       fromDetailLevel: "L2_COMPACT", toDetailLevel: "L2_COMPACT", latencyMs: 1, used: false, occurredAt: now,
     })).toThrow("invalid");
-    expect(() => value.recordClosure({
+    expect(value.recordClosure({
       schemaVersion: 1, closureRunId: "closure-1", sessionId: "session-1", turnId: "turn-1",
       taskContract: { contractId: "contract-1", objective: "x", gates: [], boundaries: [] }, gates: [],
       decision: "PASS", continuationCount: 0, recursiveStopRejected: true, createdAt: now,
-    })).toThrow("invalid");
+    }).recursiveStopRejected).toBe(true);
   });
 });

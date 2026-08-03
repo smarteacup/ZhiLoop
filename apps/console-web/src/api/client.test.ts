@@ -21,6 +21,25 @@ function errorEnvelope(code: "STALE_REVISION" | "SIDECAR_UNAVAILABLE", retryable
   }), { status: code === "STALE_REVISION" ? 409 : 503, headers: { "content-type": "application/json" } });
 }
 
+const retrievalTrace = {
+  schemaVersion: 1 as const,
+  traceId: "trace-web-p3", runId: "run-web-p3",
+  queryContext: {
+    prompt: "ConfigService", promptFingerprint: "a".repeat(64), projectId: "project-a",
+    paths: [], symbols: ["ConfigService"], errorCodes: [], configKeys: [],
+    allowProjectKnowledge: true, allowGlobalKnowledge: true, reasonCodes: ["PROJECT_RESOLVED"],
+  },
+  policy: { policyId: "policy-current", revision: 1, fingerprint: "b".repeat(64), source: "CURRENT" as const },
+  outcome: "NO_CONTEXT" as const,
+  filters: [], results: [],
+  envelope: {
+    detailLevel: "L0_NONE" as const, maxTokens: 800, estimatedTokens: 0, truncated: false,
+    selected: [], omitted: [], reasonCodes: ["RISK_LOW", "AMBIGUITY_ABSENT", "CONFLICT_ABSENT", "BUDGET_WITHIN_LIMIT"],
+  },
+  injectionResult: "NO_CONTEXT" as const,
+  durationMs: 1, createdAt: timestamp,
+};
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("typed Console API client", () => {
@@ -158,6 +177,31 @@ describe("typed Console API client", () => {
     })));
     await expect(browserConsoleApi.pollInvalidations?.(0)).resolves.toMatchObject({ nextRevision: 2 });
     await expect(browserConsoleApi.pollInvalidations?.(-1)).rejects.toThrow(/afterRevision/u);
+  });
+
+  it("uses strict P3 search transport and maps the trace without exposing injection authority", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => envelope({ schemaVersion: 1, kind: "SEARCH", trace: retrievalTrace }));
+    vi.stubGlobal("fetch", fetcher);
+    const result = await browserConsoleApi.searchKnowledge?.({
+      requestId: "request-web-p3",
+      query: "ConfigService",
+      projectId: "project-a",
+      maxResults: 10,
+      maxContextTokens: 800,
+    });
+    expect(result).toMatchObject({ traceId: "trace-web-p3", injectionResult: "NO_CONTEXT", results: [] });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/retrieval/search", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        requestId: "request-web-p3", query: "ConfigService", projectId: "project-a",
+        maxResults: 10, maxContextTokens: 800, timeoutMs: 10_000,
+      }),
+    }));
+
+    vi.stubGlobal("fetch", vi.fn(async () => envelope({ schemaVersion: 1, kind: "SEARCH", trace: retrievalTrace, unexpected: true })));
+    await expect(browserConsoleApi.searchKnowledge?.({
+      requestId: "request-web-p3-invalid", query: "ConfigService", maxResults: 10, maxContextTokens: 800,
+    })).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
   });
 
   it("parses named SSE invalidations and closes the native source on abort", () => {

@@ -5,7 +5,8 @@
   "type": "module",
   "zhiloop": {
     "allowedWorkspaceDependencies": [
-      "@zhiloop/control-api"
+      "@zhiloop/control-api",
+      "@zhiloop/p3-console-runtime"
     ],
     "allowedExternalDependencies": [
       "node:*"
@@ -23,6 +24,7 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@zhiloop/control-api": "0.0.0"
+    "@zhiloop/control-api": "0.0.0",
+    "@zhiloop/p3-console-runtime": "0.0.0"
   }
 }

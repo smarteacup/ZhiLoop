@@ -46,6 +46,17 @@ import type {
   SessionExtractionView,
   StartSessionExtractionCommand,
 } from "./p2.js";
+import {
+  p3ConsoleAskResponseSchema,
+  p3ConsoleSearchResponseSchema,
+  p3ConsoleSimulationResponseSchema,
+  toRetrievalTraceView,
+  type KnowledgeAskView,
+  type KnowledgeSearchCommand,
+  type RetrievalSimulationView,
+  type RetrievalTraceView,
+} from "./p3.js";
+import { retrievalTraceSchema } from "@zhiloop/control-api";
 
 export interface ConsoleApi {
   overview(signal?: AbortSignal): Promise<Overview>;
@@ -74,6 +85,10 @@ export interface ConsoleApi {
   commitKnowledgeEdit?(command: KnowledgeEditCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
   suppressKnowledge?(command: KnowledgeLifecycleCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
   restoreKnowledge?(command: KnowledgeLifecycleCommand, signal?: AbortSignal): Promise<KnowledgeDetailView>;
+  searchKnowledge?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<RetrievalTraceView>;
+  askZhiLoop?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<KnowledgeAskView>;
+  simulateRetrieval?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<RetrievalSimulationView>;
+  retrievalTrace?(traceId: string, scope?: { readonly projectId?: string; readonly taskId?: string }, signal?: AbortSignal): Promise<RetrievalTraceView>;
 }
 
 export interface CaptureCommitCommand {
@@ -344,6 +359,74 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
     `/knowledge/${encodeURIComponent(command.knowledgeId)}/restore`, knowledgeDetailViewSchema,
     { signal, body: { expectedVersion: command.expectedVersion, idempotencyKey: command.idempotencyKey, reason: command.reason } },
   ),
+  searchKnowledge: async (command: KnowledgeSearchCommand, signal?: AbortSignal) => {
+    const response = await request("/retrieval/search", p3ConsoleSearchResponseSchema, {
+      signal,
+      body: retrievalQueryBody(command),
+    });
+    return toRetrievalTraceView(response.trace);
+  },
+  askZhiLoop: async (command: KnowledgeSearchCommand, signal?: AbortSignal) => {
+    const response = await request("/retrieval/ask", p3ConsoleAskResponseSchema, {
+      signal,
+      body: retrievalQueryBody(command),
+    });
+    return Object.freeze({
+      outcome: response.answer.outcome,
+      answer: response.answer.answer,
+      citations: Object.freeze(response.answer.citations.map((item) => Object.freeze({
+        knowledgeId: item.knowledgeId,
+        version: item.version,
+        answerSpans: Object.freeze(item.answerSpans.map((span) => Object.freeze({ ...span }))),
+      }))),
+      unknowns: Object.freeze([...response.answer.unknowns]),
+      conflicts: Object.freeze(response.answer.conflicts.map((item) => Object.freeze({
+        summary: item.summary,
+        knowledgeVersions: Object.freeze(item.knowledgeVersions.map((version) => Object.freeze({ ...version }))),
+      }))),
+      retrieval: toRetrievalTraceView(response.trace),
+      latencyMs: response.answer.latencyMs,
+    });
+  },
+  simulateRetrieval: async (command: KnowledgeSearchCommand, signal?: AbortSignal) => {
+    const response = await request("/retrieval/simulate", p3ConsoleSimulationResponseSchema, {
+      signal,
+      body: retrievalQueryBody(command),
+    });
+    return Object.freeze({
+      current: toRetrievalTraceView(response.current),
+      ...(response.draft === undefined ? {} : { draft: toRetrievalTraceView(response.draft) }),
+      ...(response.comparison === undefined ? {} : {
+        comparison: Object.freeze({
+          selectedOnlyByCurrent: Object.freeze([...response.comparison.selectedOnlyByCurrent]),
+          selectedOnlyByDraft: Object.freeze([...response.comparison.selectedOnlyByDraft]),
+          tokenDelta: response.comparison.tokenDelta,
+        }),
+      }),
+    });
+  },
+  retrievalTrace: async (traceId: string, scope: { readonly projectId?: string; readonly taskId?: string } = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    if (scope.projectId !== undefined) query.set("projectId", scope.projectId);
+    if (scope.taskId !== undefined) query.set("taskId", scope.taskId);
+    const result = await request(`/retrieval/traces/${encodeURIComponent(traceId)}${query.size === 0 ? "" : `?${query.toString()}`}`, retrievalTraceSchema, { signal });
+    return toRetrievalTraceView(result);
+  },
 });
+
+function retrievalQueryBody(command: KnowledgeSearchCommand): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    requestId: command.requestId,
+    query: command.query,
+    ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
+    ...(command.taskId === undefined ? {} : { taskId: command.taskId }),
+    ...(command.repositoryRoot === undefined ? {} : { repositoryRoot: command.repositoryRoot }),
+    ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+    ...(command.hints === undefined ? {} : { hints: command.hints }),
+    maxResults: command.maxResults,
+    maxContextTokens: command.maxContextTokens,
+    timeoutMs: 10_000,
+  });
+}
 
 export type { CaptureCommitResult, CapturePreview, SessionSummary };

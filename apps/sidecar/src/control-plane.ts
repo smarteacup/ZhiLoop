@@ -377,6 +377,7 @@ export class SidecarControlPlane {
       capability("knowledge.governance", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.automatic-compile", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Manual extraction is the only enabled SHADOW trigger"),
       capability("knowledge.retrieval", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Compose the retrieval runtime"),
+      capability("codex.query", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the read-only Codex query model"),
       capability("context.injection", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Complete SHADOW quality gates before injection"),
       capability("knowledge.mcp", "DISABLED", "MCP_TRANSPORT_NOT_ENABLED", observedAt, false, "Enable the local knowledge MCP transport"),
       capability("closure.verification", "DISABLED", "STOP_VERIFIER_NOT_COMPOSED", observedAt, false, "Compose the Stop closure verifier"),
@@ -494,6 +495,28 @@ export class SidecarControlPlane {
       false,
       "Manual extraction is the only enabled SHADOW trigger",
     ));
+  }
+
+  public setP3RuntimeState(state: {
+    readonly retrieval: { readonly state: "READY"; readonly reasonCode: CapabilitySnapshot["reasonCode"]; readonly evidenceRefs: readonly string[] };
+    readonly codexQuery: { readonly state: "READY" | "NOT_CONFIGURED"; readonly reasonCode: CapabilitySnapshot["reasonCode"]; readonly evidenceRefs: readonly string[] };
+  }): void {
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability({
+      ...capability("knowledge.retrieval", state.retrieval.state, state.retrieval.reasonCode, observedAt),
+      evidenceRefs: [...state.retrieval.evidenceRefs],
+    });
+    this.#readModel.projectCapability({
+      ...capability(
+        "codex.query",
+        state.codexQuery.state,
+        state.codexQuery.reasonCode,
+        observedAt,
+        false,
+        state.codexQuery.state === "READY" ? undefined : "Enable codexQuery in the Sidecar configuration",
+      ),
+      evidenceRefs: [...state.codexQuery.evidenceRefs],
+    });
   }
 
   async #refreshSession(sessionId: string): Promise<SessionSummary | undefined> {

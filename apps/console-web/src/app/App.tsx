@@ -6,6 +6,7 @@ import { OverviewPage } from "../features/overview/OverviewPage.js";
 import { ConfigurationPage } from "../features/p1/configuration/ConfigurationPage.js";
 import { P1OperationsPage } from "../features/p1/jobs/P1OperationsPage.js";
 import { KnowledgePage } from "../features/p2/knowledge/KnowledgePage.js";
+import { RetrievalPage } from "../features/p3/RetrievalPage.js";
 import { SessionDetailPage } from "../features/sessions/SessionDetailPage.js";
 import { SessionsPage } from "../features/sessions/SessionsPage.js";
 import { useRoute, type RouteName } from "./routes.js";
@@ -32,7 +33,7 @@ function CurrentPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
   if (route.name === "configuration") return <ConfigurationPage api={api} />;
   if (route.name === "deployment") return <DeploymentPage api={api} />;
   if (route.name === "knowledge") return route.knowledgeId === undefined ? <KnowledgePage api={api} /> : <KnowledgePage api={api} knowledgeId={route.knowledgeId} />;
-  if (route.name === "retrieval") return <DisabledState title="召回与注入尚未接通" reason="CAPABILITY_DISABLED · P3 实现后启用" />;
+  if (route.name === "retrieval") return <RetrievalPage api={api} />;
   if (route.name === "closure") return <DisabledState title="闭环验证尚未接通" reason="STOP_VERIFIER_NOT_COMPOSED · P4 实现后启用" />;
   return <DisabledState title="未知页面" reason="INVALID_ROUTE" />;
 }

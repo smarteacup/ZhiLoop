@@ -6,7 +6,7 @@ import { Readable, Writable } from "node:stream";
 
 import { SqliteRealCodexAcceptanceEvidenceStore } from "@zhiloop/automatic-ingestion";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
-import { CONTROL_API_SCHEMA_VERSION, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
+import { CONTROL_API_SCHEMA_VERSION, type CapabilitySnapshot, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
 import { resolveDeploymentPaths } from "@zhiloop/local-deployment";
 import { snapshotIdempotencyKey } from "@zhiloop/session-extraction";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -131,9 +131,63 @@ describe("sidecar configuration", () => {
     await symlink(target, link);
     await expect(loadSidecarConfig(link)).rejects.toThrow("regular file");
   });
+
+  it("strictly validates optional Codex query composition", async () => {
+    const { config } = await temporaryConfig();
+    expect(parseSidecarConfig({ ...config, codexQuery: { enabled: true, executable: "codex", model: "gpt-test", userConfiguration: "IGNORE" } }))
+      .toMatchObject({ codexQuery: { enabled: true, executable: "codex", model: "gpt-test", userConfiguration: "IGNORE" } });
+    expect(() => parseSidecarConfig({ ...config, codexQuery: { enabled: false, executable: "codex", userConfiguration: "ALLOW" } }))
+      .toThrow("disabled codexQuery");
+    expect(() => parseSidecarConfig({ ...config, codexQuery: { enabled: true, userConfiguration: "FORGED" } }))
+      .toThrow("userConfiguration");
+    expect(() => parseSidecarConfig({ ...config, unknownPermission: "cross-project" })).toThrow("unknown fields");
+  });
 });
 
 describe("sidecar service", () => {
+  it("serves strict P3 SHADOW retrieval and reports derived capabilities", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    cleanups.push(async () => { await stopSidecarServer(server, config.socketPath); await application.close(); });
+
+    const response = await requestSidecar(config.socketPath, {
+      schemaVersion: 1,
+      requestId: "request-sidecar-p3",
+      type: "p3.knowledge.search",
+      query: "ConfigService",
+      projectId: "project-a",
+      maxResults: 10,
+      maxContextTokens: 800,
+      timeoutMs: 100,
+    }, 1_000) as ControlResponse;
+    expect(response).toMatchObject({
+      requestId: "request-sidecar-p3",
+      ok: true,
+      result: { schemaVersion: 1, kind: "SEARCH", trace: { results: [], injectionResult: "NO_CONTEXT" } },
+    });
+    const capabilities = controlResult(await requestSidecar(config.socketPath, {
+      schemaVersion: 1,
+      requestId: "request-sidecar-p3-capabilities",
+      type: "capabilities.list",
+      page: { limit: 100 },
+    }, 1_000)) as { items: CapabilitySnapshot[] };
+    expect(capabilities.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ capabilityId: "knowledge.retrieval", status: "READY", reasonCode: "COMPONENT_READY" }),
+      expect.objectContaining({ capabilityId: "codex.query", status: "NOT_CONFIGURED", reasonCode: "CAPABILITY_NOT_CONFIGURED" }),
+    ]));
+    expect(await sendRawFrames(config.socketPath, `${JSON.stringify({
+      schemaVersion: 1,
+      requestId: "request-sidecar-p3-forged",
+      type: "p3.knowledge.search",
+      query: "ConfigService",
+      maxResults: 10,
+      maxContextTokens: 800,
+      unexpectedPermission: "cross-project",
+    })}\n`)).toEqual({ ok: false, errorCode: "INVALID_REQUEST" });
+  });
+
   it("captures a hook into the ledger while returning no SHADOW context", async () => {
     const { config } = await temporaryConfig();
     const application = await SidecarApplication.create(config);

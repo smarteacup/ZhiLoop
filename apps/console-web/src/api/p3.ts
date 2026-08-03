@@ -44,6 +44,15 @@ export interface KnowledgeSearchCommand {
   readonly requestId: string;
   readonly query: string;
   readonly projectId?: string;
+  readonly taskId?: string;
+  readonly repositoryRoot?: string;
+  readonly cwd?: string;
+  readonly hints?: {
+    readonly paths?: readonly string[];
+    readonly symbols?: readonly string[];
+    readonly errorCodes?: readonly string[];
+    readonly configKeys?: readonly string[];
+  };
   readonly maxResults: number;
   readonly maxContextTokens: number;
 }
@@ -67,3 +76,89 @@ export interface RetrievalSimulationView {
     readonly tokenDelta: number;
   };
 }
+
+export function toRetrievalTraceView(value: RetrievalTraceContract): RetrievalTraceView {
+  if (value.injectionResult === "INJECTED") throw new Error("P3 retrieval trace cannot contain an actual injection");
+  return Object.freeze({
+    traceId: value.traceId,
+    outcome: value.outcome,
+    injectionResult: value.injectionResult,
+    reasonCodes: Object.freeze([...new Set([...value.queryContext.reasonCodes, ...value.envelope.reasonCodes])]),
+    results: Object.freeze(value.results.map((item) => Object.freeze({
+      knowledgeId: item.knowledgeId,
+      version: item.version,
+      title: item.title,
+      summary: item.summary,
+      scope: item.scope,
+      status: item.status,
+      retrievalRank: item.retrievalRank,
+      finalRank: item.finalRank,
+      rrfScore: item.rrfScore,
+      contributions: Object.freeze(item.contributions.map((entry) => Object.freeze({
+        channel: entry.channel,
+        rank: entry.rank,
+        reason: entry.reason,
+      }))),
+      evidenceIds: Object.freeze([...item.evidenceIds]),
+      injected: false as const,
+    }))),
+    filters: Object.freeze(value.filters.map((item) => Object.freeze({
+      decision: item.decision,
+      reasonCode: item.reasonCode,
+      safeMessage: item.safeMessage,
+    }))),
+    envelope: Object.freeze({
+      detailLevel: value.envelope.detailLevel,
+      maxTokens: value.envelope.maxTokens,
+      estimatedTokens: value.envelope.estimatedTokens,
+      truncated: value.envelope.truncated,
+      omitted: Object.freeze(value.envelope.omitted.map((item) => Object.freeze({ ...item }))),
+    }),
+  });
+}
+import {
+  codexKnowledgeAnswerSchema,
+  retrievalTraceSchema,
+  type RetrievalTraceContract,
+} from "@zhiloop/control-api";
+import { z } from "zod";
+
+const safeId = z.string().min(3).max(500).regex(/^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/u);
+const boundedText = z.string().min(1).max(1_000).refine((value) => !value.includes("\0"));
+
+export const p3ConsoleSearchResponseSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal("SEARCH"),
+  trace: retrievalTraceSchema,
+});
+
+const policyComparisonSchema = z.strictObject({
+  currentTraceId: safeId,
+  draftTraceId: safeId,
+  selectedOnlyByCurrent: z.array(boundedText).max(100),
+  selectedOnlyByDraft: z.array(boundedText).max(100),
+  currentEstimatedTokens: z.number().int().nonnegative(),
+  draftEstimatedTokens: z.number().int().nonnegative(),
+  tokenDelta: z.number().int(),
+  currentTruncated: z.boolean(),
+  draftTruncated: z.boolean(),
+});
+
+export const p3ConsoleSimulationResponseSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal("SIMULATION"),
+  current: retrievalTraceSchema,
+  draft: retrievalTraceSchema.optional(),
+  comparison: policyComparisonSchema.optional(),
+}).superRefine((value, context) => {
+  if ((value.draft === undefined) !== (value.comparison === undefined)) {
+    context.addIssue({ code: "custom", path: ["comparison"], message: "draft and comparison must be present together" });
+  }
+});
+
+export const p3ConsoleAskResponseSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  kind: z.literal("ASK"),
+  trace: retrievalTraceSchema,
+  answer: codexKnowledgeAnswerSchema,
+});

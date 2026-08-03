@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 
 const FUTURE_CAPABILITIES = Object.freeze({
-  "future.injectionMaxTokens": "context.injection",
+  "future.injectionMaxTokens": "knowledge.retrieval",
   "future.compilerBatchSize": "knowledge.compile",
   "future.codexQueryTimeoutMs": "codex.query",
   "future.codexQueryConcurrency": "codex.query",

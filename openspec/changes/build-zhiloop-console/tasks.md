@@ -103,7 +103,7 @@
 - [x] 9.3 [Retrieval Lane] Persist channel contribution, retrieval/final rank, filter, Evidence, budget, omission and SHADOW injection reasons in Retrieval Trace
 - [x] 9.4 [Retrieval Lane] Implement current-policy search, draft-policy simulation and fixed-input replay without writing active feedback
 - [x] 9.5 [Retrieval Lane] Test exact symbols/errors/config, Scope isolation, stale version exclusion, timeout fallback, token budget and trace completeness
-- [ ] 9.6 [Web Feature Lane] Implement dedicated Search Knowledge page, result explanations, channel/rank table, Trace detail and policy comparison lab
+- [x] 9.6 [Web Feature Lane] Implement dedicated Search Knowledge page, result explanations, channel/rank table, Trace detail and policy comparison lab
 - [ ] 9.7 [Web Feature Lane] Add session Turn injection placeholders from persisted attempts and strictly distinguish `SHADOWED/INJECTED/NO_CONTEXT/TIMEOUT/ERROR`
 
 ## 10. P3 Codex-Assisted Ask ZhiLoop — Parallel Wave 8
@@ -113,10 +113,10 @@
 - [x] 10.3 [Codex Query Owner] Validate that every factual answer span references an eligible retrieved knowledge ID/version and move unsupported content to unknowns or reject the answer
 - [x] 10.4 [Codex Query Owner] Implement deterministic search fallback for unavailable, unauthenticated, rate-limited, timed-out or invalid Codex output
 - [x] 10.5 [Codex Query Owner] Persist model run diagnostics, latency and token usage without automatically creating knowledge, Codex conversations or project files
-- [ ] 10.6 [Web Feature Lane] Implement “搜索知识 / 问 ZhiLoop” modes, citations, unknowns, conflicts, progress, cancellation and fallback states
-- [ ] 10.7 [Configuration Owner] Activate retrieval and Codex query budgets only after their consumers report READY
-- [ ] 10.8 [Quality Owner] Run P3 Golden and security Gates: traceability 100%, Scope leak/forbidden hit 0, automatic L4 0, factual citation coverage 100%, malicious knowledge cannot widen process permission
-- [ ] 10.9 [Integration Owner] Complete P3 Reviews and keep all results SHADOW/read-only before starting P4
+- [x] 10.6 [Web Feature Lane] Implement “搜索知识 / 问 ZhiLoop” modes, citations, unknowns, conflicts, progress, cancellation and fallback states
+- [x] 10.7 [Configuration Owner] Activate retrieval and Codex query budgets only after their consumers report READY
+- [x] 10.8 [Quality Owner] Run P3 Golden and security Gates: traceability 100%, Scope leak/forbidden hit 0, automatic L4 0, factual citation coverage 100%, malicious knowledge cannot widen process permission
+- [x] 10.9 [Integration Owner] Complete P3 Reviews and keep all results SHADOW/read-only before starting P4
 
 ## 11. P4 MCP, Actual Injection and Session Attribution — Parallel Wave 9
 

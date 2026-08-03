@@ -23,7 +23,9 @@ import {
   type P2KnowledgeListView,
   type SessionDetail,
   type SessionSummary,
+  type RetrievalTraceContract,
 } from "@zhiloop/control-api";
+import type { P3AskResponse, P3ConsoleQueryBody, P3SearchResponse, P3SimulationResponse } from "@zhiloop/p3-console-runtime";
 
 import type {
   CaptureCommitCommand,
@@ -123,6 +125,33 @@ const diagnostics: Diagnostics = {
   storage: { healthy: true, databaseBytes: 4096 },
 };
 
+const retrievalTrace: RetrievalTraceContract = {
+  schemaVersion: 1,
+  traceId: "trace-gateway-p3",
+  runId: "run-gateway-p3",
+  queryContext: {
+    prompt: "How does ConfigService work?",
+    promptFingerprint: "a".repeat(64),
+    projectId: "project-a",
+    taskId: "task-p3",
+    repositoryRoot: "/workspace/project-a",
+    paths: [], symbols: ["ConfigService"], errorCodes: [], configKeys: [],
+    allowProjectKnowledge: true, allowGlobalKnowledge: true,
+    reasonCodes: ["PROJECT_RESOLVED"],
+  },
+  policy: { policyId: "policy-current", revision: 1, fingerprint: "b".repeat(64), source: "CURRENT" },
+  outcome: "NO_CONTEXT",
+  filters: [], results: [],
+  envelope: {
+    detailLevel: "L0_NONE", maxTokens: 800, estimatedTokens: 0, truncated: false,
+    selected: [], omitted: [],
+    reasonCodes: ["RISK_LOW", "AMBIGUITY_ABSENT", "CONFLICT_ABSENT", "BUDGET_WITHIN_LIMIT"],
+  },
+  injectionResult: "NO_CONTEXT",
+  durationMs: 1,
+  createdAt: NOW,
+};
+
 const consoleConfiguration = {
   schemaVersion: 1 as const,
   runtime: {
@@ -201,6 +230,31 @@ class FakeQueryPort implements ControlQueryPort {
 
   public listKnowledge(_filter: P2KnowledgeFilter, options: QueryOptions): Promise<P2KnowledgeListView> {
     return this.result("knowledge", { revision: 0, items: [], indexStatus: "READY", indexReasonCode: "INDEX_CURRENT", retryable: false }, options);
+  }
+
+  public searchKnowledge(_command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3SearchResponse> {
+    return this.result("p3:search", { schemaVersion: 1, kind: "SEARCH", trace: retrievalTrace }, options);
+  }
+
+  public askKnowledge(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3AskResponse> {
+    return this.result("p3:ask", {
+      schemaVersion: 1,
+      kind: "ASK",
+      trace: retrievalTrace,
+      answer: {
+        schemaVersion: 1, queryId: command.requestId, retrievalTraceId: retrievalTrace.traceId,
+        outcome: "FALLBACK_SEARCH", answer: "", factualSpans: [], citations: [],
+        unknowns: ["Codex query unavailable"], conflicts: [], latencyMs: 0, usage: {},
+      },
+    }, options);
+  }
+
+  public simulateRetrieval(_command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3SimulationResponse> {
+    return this.result("p3:simulate", { schemaVersion: 1, kind: "SIMULATION", current: retrievalTrace }, options);
+  }
+
+  public getRetrievalTrace(_command: { readonly requestId: string; readonly traceId: string }, options: QueryOptions): Promise<RetrievalTraceContract> {
+    return this.result("p3:trace", retrievalTrace, options);
   }
 
   private result<T>(call: string, value: T, options: QueryOptions): Promise<T> {
@@ -774,6 +828,43 @@ describe("Console Gateway security boundary", () => {
     expect((await fetch(`${address?.origin}/api/v1/knowledge?version=0`, { headers })).status).toBe(400);
     expect((await fetch(`${address?.origin}/api/v1/knowledge/%E0%A4%A`, { headers })).status).toBe(400);
     expect((await fetch(`${address?.origin}/api/v1/sessions/%E0%A4%A/extraction`, { headers })).status).toBe(400);
+  });
+
+  it("exposes strict authenticated P3 search, ask, simulate, and trace views", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" };
+    const body = {
+      requestId: "request-gateway-p3",
+      query: "How does ConfigService work?",
+      projectId: "project-a",
+      taskId: "task-p3",
+      maxResults: 10,
+      maxContextTokens: 800,
+      timeoutMs: 1_000,
+    };
+    for (const operation of ["search", "ask", "simulate"] as const) {
+      const response = await fetch(`${address?.origin}/api/v1/retrieval/${operation}`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      expect(response.status, operation).toBe(200);
+      expect((await response.json() as { ok: boolean }).ok).toBe(true);
+    }
+    const trace = await fetch(`${address?.origin}/api/v1/retrieval/traces/trace-gateway-p3?projectId=project-a&taskId=task-p3`, {
+      headers: authorizedHeaders(browser),
+    });
+    expect(trace.status).toBe(200);
+    expect((await trace.json() as { result: RetrievalTraceContract }).result.injectionResult).toBe("NO_CONTEXT");
+    expect(queryPort.calls).toEqual(["p3:search", "p3:ask", "p3:simulate", "p3:trace"]);
+
+    const forged = await fetch(`${address?.origin}/api/v1/retrieval/search`, {
+      method: "POST", headers, body: JSON.stringify({ ...body, unexpectedPermission: "cross-project" }),
+    });
+    expect(forged.status).toBe(400);
+    expect(queryPort.calls).toHaveLength(4);
+    expect((await fetch(`${address?.origin}/api/v1/retrieval/traces/trace-gateway-p3?projectId=a&projectId=b`, {
+      headers: authorizedHeaders(browser),
+    })).status).toBe(400);
   });
 
   it("preserves stale-preview conflicts without reflecting Sidecar details", async () => {

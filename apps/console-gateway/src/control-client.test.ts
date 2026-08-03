@@ -326,6 +326,34 @@ describe("UnixSocketControlClient", () => {
       .rejects.toMatchObject({ code: "PROTOCOL" });
   });
 
+  it("rejects P3 Sidecar response drift and preserves the caller request identity", async () => {
+    let received: unknown;
+    const socketPath = await serve((request) => {
+      received = request;
+      return {
+        schemaVersion: CONTROL_API_SCHEMA_VERSION,
+        requestId: request.requestId,
+        observedAt: NOW,
+        ok: true,
+        result: { schemaVersion: 1, kind: "SEARCH", trace: {}, unexpected: true },
+      };
+    });
+    const client = new UnixSocketControlClient({ socketPath });
+    await expect(client.searchKnowledge({
+      requestId: "request-p3-client",
+      query: "ConfigService",
+      projectId: "project-a",
+      maxResults: 10,
+      maxContextTokens: 800,
+      timeoutMs: 1_000,
+    }, { signal: new AbortController().signal })).rejects.toMatchObject({ code: "PROTOCOL" });
+    expect(received).toMatchObject({
+      schemaVersion: 1,
+      requestId: "request-p3-client",
+      type: "p3.knowledge.search",
+    });
+  });
+
   it("rejects typed result violations and safe remote errors", async () => {
     const invalidResultSocket = await serve((request) => ({
       schemaVersion: CONTROL_API_SCHEMA_VERSION,

@@ -43,7 +43,7 @@ describe("SqliteConfigurationService", () => {
 
   it("preserves future drafts but rejects activation until the consumer is ready", async () => {
     let capability: ConsumerCapability = "DISABLED";
-    const target = service({ capabilities: () => ({ "context.injection": capability }) });
+    const target = service({ capabilities: () => ({ "knowledge.retrieval": capability }) });
     const validation = target.validateDraft({ baseRevision: 0, scope: "GLOBAL", draft: { future: { injectionMaxTokens: 1_200 } } });
     expect(validation.ok).toBe(true);
     if (!validation.ok) return;

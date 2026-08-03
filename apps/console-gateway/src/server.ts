@@ -30,12 +30,20 @@ import {
   p2SessionExtractionViewSchema,
   p2SessionPreviewCommandSchema,
   pageRequestSchema,
+  retrievalTraceSchema,
   sessionDetailSchema,
   sessionIdSchema,
   sessionPageSchema,
   type ControlResponse,
   type ConfigurationMutationResult,
 } from "@zhiloop/control-api";
+import {
+  p3ConsoleAskResponseSchema,
+  p3ConsoleQueryBodySchema,
+  p3ConsoleSearchResponseSchema,
+  p3ConsoleSimulationResponseSchema,
+  p3ConsoleTraceRequestSchema,
+} from "@zhiloop/p3-console-runtime";
 
 import { BrowserSessionManager, createBootstrapToken } from "./auth.js";
 import { ControlClientError } from "./control-client.js";
@@ -58,6 +66,7 @@ import { StaticAssetStore } from "./static-assets.js";
 
 const MAX_BOOTSTRAP_BODY_BYTES = 8_192;
 const MAX_COMMAND_BODY_BYTES = 16_384;
+const MAX_RETRIEVAL_BODY_BYTES = 512 * 1_024;
 const MAX_JSON_RESPONSE_BYTES = 1_048_576;
 const MAX_SSE_CONNECTIONS = 64;
 const MAX_SSE_PENDING_BYTES = 2 * 1_048_576;
@@ -219,8 +228,17 @@ async function executeView<T>(
       ok: true,
       result: parsed.data,
     }, maximumBytes);
-  } catch {
-    safeError(response, 503, "SIDECAR_UNAVAILABLE", "Control API query is unavailable");
+  } catch (error) {
+    const remoteCode = error instanceof ControlClientError ? error.remoteCode : undefined;
+    if (remoteCode === "NOT_FOUND") {
+      safeError(response, 404, remoteCode, "Control query target was not found");
+    } else if (remoteCode === "INVALID_REQUEST") {
+      safeError(response, 400, remoteCode, "Control query was rejected");
+    } else if (remoteCode === "CAPABILITY_UNAVAILABLE") {
+      safeError(response, 503, remoteCode, "Control query capability is unavailable");
+    } else {
+      safeError(response, 503, "SIDECAR_UNAVAILABLE", "Control API query is unavailable");
+    }
   }
 }
 
@@ -546,6 +564,85 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
             ? "config.rollback"
             : undefined;
       const extractionMatch = /^\/api\/v1\/sessions\/([^/]+)\/extraction(?:\/(preview|commit))?$/u.exec(url.pathname);
+      const retrievalOperation = url.pathname === "/api/v1/retrieval/search"
+        ? "search"
+        : url.pathname === "/api/v1/retrieval/ask"
+          ? "ask"
+          : url.pathname === "/api/v1/retrieval/simulate"
+            ? "simulate"
+            : undefined;
+      if (retrievalOperation !== undefined) {
+        if (request.method !== "POST" || url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "INVALID_REQUEST", "Retrieval query requires application/json POST");
+          return;
+        }
+        const method = retrievalOperation === "search"
+          ? options.queryPort.searchKnowledge?.bind(options.queryPort)
+          : retrievalOperation === "ask"
+            ? options.queryPort.askKnowledge?.bind(options.queryPort)
+            : options.queryPort.simulateRetrieval?.bind(options.queryPort);
+        if (method === undefined) {
+          safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Retrieval query capability is unavailable");
+          return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_RETRIEVAL_BODY_BYTES)).toString("utf8")) as unknown;
+          const parsed = p3ConsoleQueryBodySchema.safeParse(body);
+          if (!parsed.success) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid retrieval query");
+            return;
+          }
+          if (retrievalOperation === "search") {
+            await executeView(response, p3ConsoleSearchResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.queryPort.searchKnowledge!(parsed.data, queryOptions));
+          } else if (retrievalOperation === "ask") {
+            await executeView(response, p3ConsoleAskResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.queryPort.askKnowledge!(parsed.data, queryOptions));
+          } else {
+            await executeView(response, p3ConsoleSimulationResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.queryPort.simulateRetrieval!(parsed.data, queryOptions));
+          }
+        } catch (error) {
+          if (!response.headersSent) {
+            safeError(response, error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 400,
+              "INVALID_REQUEST", "Retrieval query is invalid or too large");
+          }
+        }
+        return;
+      }
+      const retrievalTraceMatch = /^\/api\/v1\/retrieval\/traces\/([^/]+)$/u.exec(url.pathname);
+      if (retrievalTraceMatch !== null) {
+        if (request.method !== "GET" || options.queryPort.getRetrievalTrace === undefined) {
+          safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Retrieval trace query is unavailable");
+          return;
+        }
+        if ([...url.searchParams.keys()].some((key) => key !== "projectId" && key !== "taskId")
+          || url.searchParams.getAll("projectId").length > 1 || url.searchParams.getAll("taskId").length > 1) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid retrieval trace scope");
+          return;
+        }
+        const parsed = p3ConsoleTraceRequestSchema.safeParse({
+          schemaVersion: 1,
+          requestId: randomUUID(),
+          type: "p3.retrieval.trace",
+          traceId: decodePathSegment(retrievalTraceMatch[1]),
+          ...(url.searchParams.has("projectId") ? { projectId: url.searchParams.get("projectId") } : {}),
+          ...(url.searchParams.has("taskId") ? { taskId: url.searchParams.get("taskId") } : {}),
+        });
+        if (!parsed.success) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid retrieval trace request");
+          return;
+        }
+        await executeView(response, retrievalTraceSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.getRetrievalTrace!({
+            requestId: parsed.data.requestId,
+            traceId: parsed.data.traceId,
+            ...(parsed.data.projectId === undefined ? {} : { projectId: parsed.data.projectId }),
+            ...(parsed.data.taskId === undefined ? {} : { taskId: parsed.data.taskId }),
+          }, queryOptions));
+        return;
+      }
       if (extractionMatch !== null) {
         const parsedSession = sessionIdSchema.safeParse(decodePathSegment(extractionMatch[1]));
         const actionName = extractionMatch[2];

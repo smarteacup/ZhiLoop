@@ -39,7 +39,9 @@
     "@zhiloop/local-deployment": "0.1.0",
     "@zhiloop/operational-read-model": "0.0.0",
     "@zhiloop/observability": "0.0.0",
+    "@zhiloop/p3-console-runtime": "0.0.0",
     "@zhiloop/plugin-runtime": "0.0.0",
+    "@zhiloop/retrieval-query-service": "0.0.0",
     "@zhiloop/session-catalog": "0.0.0",
     "@zhiloop/session-extraction": "0.0.0"
   }

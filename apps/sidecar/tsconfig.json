@@ -30,7 +30,9 @@
     { "path": "../../packages/local-deployment" },
     { "path": "../../packages/operational-read-model" },
     { "path": "../../packages/observability" },
+    { "path": "../../packages/p3-console-runtime" },
     { "path": "../../packages/plugin-runtime" },
+    { "path": "../../packages/retrieval-query-service" },
     { "path": "../../packages/session-catalog" },
     { "path": "../../packages/session-extraction" }
   ]

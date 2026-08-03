@@ -9,6 +9,10 @@ import {
   type ControlRequest,
   type P2ControlRequest,
 } from "@zhiloop/control-api";
+import {
+  p3ConsoleTransportRequestSchema,
+  type P3ConsoleTransportRequest,
+} from "@zhiloop/p3-console-runtime";
 
 import type { SidecarApplication } from "./application.js";
 import { parseP2ConsoleRequest, type P2ConsoleRequest } from "./p2-console.js";
@@ -24,7 +28,8 @@ export type SidecarRequest =
   | { readonly type: "acceptance.verify"; readonly sessionId: string; readonly taskCreatedAt: string }
   | ControlRequest
   | P2ControlRequest
-  | P2ConsoleRequest;
+  | P2ConsoleRequest
+  | P3ConsoleTransportRequest;
 
 interface SidecarResponse {
   readonly ok: boolean;
@@ -84,6 +89,15 @@ function parseRequest(value: unknown): SidecarRequest {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new Error("invalid request");
   if (typeof type === "string" && type.startsWith("p2.")) return parseP2ConsoleRequest(value);
+  if (typeof type === "string" && type.startsWith("p3.")) {
+    const parsed = p3ConsoleTransportRequestSchema.safeParse(value);
+    if (!parsed.success) {
+      const error = new Error("invalid P3 control request") as Error & { code: string };
+      error.code = "INVALID_REQUEST";
+      throw error;
+    }
+    return parsed.data;
+  }
   if (typeof type === "string" && type.startsWith("extraction.")) {
     const parsed = parseP2ContractText(serialized, p2ControlRequestSchema);
     if (!parsed.ok) {
@@ -146,6 +160,9 @@ async function readOne(socket: Socket, maximum: number): Promise<unknown> {
 
 async function handle(socket: Socket, application: SidecarApplication): Promise<void> {
   let response: SidecarResponse;
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort("TRANSPORT_CLOSED");
+  socket.once("close", cancel);
   try {
     const request = parseRequest(await readOne(socket, MAX_TRANSPORT_BYTES));
     const result = request.type === "hook"
@@ -158,6 +175,8 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
             ? await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun })
             : request.type === "acceptance.verify"
               ? await application.verifyRealCodexIngestion({ sessionId: request.sessionId, taskCreatedAt: request.taskCreatedAt })
+            : request.type.startsWith("p3.")
+              ? await application.handleP3Console(request as P3ConsoleTransportRequest, controller.signal)
             : request.type.startsWith("p2.")
               ? await application.handleP2Console(request as P2ConsoleRequest)
             : await application.handleControl(request as ControlRequest | P2ControlRequest);
@@ -183,6 +202,7 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
     }
     socket.end(serialized);
   }
+  socket.off("close", cancel);
 }
 
 async function removeStaleSocket(path: string): Promise<void> {

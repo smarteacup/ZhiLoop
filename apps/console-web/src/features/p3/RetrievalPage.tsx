@@ -63,6 +63,9 @@ export function RetrievalPage({ api }: { readonly api: RetrievalConsoleApi }): R
     const controller = new AbortController();
     activeRequest.current = controller;
     try {
+      const capabilities = await api.capabilities();
+      const capability = capabilities.items.find((item) => item.capabilityId === "knowledge.retrieval");
+      if (capability?.status !== "READY") throw new Error(capability?.reasonCode ?? "RETRIEVAL_CAPABILITY_NOT_REPORTED");
       setSimulation(await api.simulateRetrieval({ requestId: requestId(), query: query.trim(), ...(projectId ? { projectId } : {}), maxResults: 20, maxContextTokens: 2_000 }, controller.signal));
     } catch (value) { setError(controller.signal.aborted ? "QUERY_CANCELLED" : value instanceof Error ? value.message : "SIMULATION_FAILED"); }
     finally {

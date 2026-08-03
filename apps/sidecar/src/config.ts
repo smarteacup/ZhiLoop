@@ -15,6 +15,12 @@ export interface SidecarConfig {
   readonly hookTimeoutMs: number;
   readonly logMaxBytes: number;
   readonly logRetainFiles: number;
+  readonly codexQuery?: {
+    readonly enabled: boolean;
+    readonly executable?: string;
+    readonly model?: string;
+    readonly userConfiguration: "ALLOW" | "IGNORE";
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -35,13 +41,46 @@ function boundedInteger(value: unknown, name: string, minimum: number, maximum: 
   return value as number;
 }
 
+function optionalText(value: unknown, name: string, maximum: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maximum || value.includes("\0") || /[\r\n]/u.test(value)) {
+    throw new Error(`${name} is invalid`);
+  }
+  return value;
+}
+
+function codexQuery(value: unknown): SidecarConfig["codexQuery"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Object.keys(value).some((key) => !["enabled", "executable", "model", "userConfiguration"].includes(key))
+    || typeof value["enabled"] !== "boolean") throw new Error("codexQuery configuration is invalid");
+  const executable = optionalText(value["executable"], "codexQuery.executable", 4_096);
+  const model = optionalText(value["model"], "codexQuery.model", 200);
+  const userConfiguration = value["userConfiguration"] ?? "ALLOW";
+  if (userConfiguration !== "ALLOW" && userConfiguration !== "IGNORE") throw new Error("codexQuery.userConfiguration is invalid");
+  if (!value["enabled"] && (executable !== undefined || model !== undefined)) {
+    throw new Error("disabled codexQuery must not configure an executable or model");
+  }
+  return Object.freeze({
+    enabled: value["enabled"],
+    ...(executable === undefined ? {} : { executable }),
+    ...(model === undefined ? {} : { model }),
+    userConfiguration,
+  });
+}
+
 export function parseSidecarConfig(value: unknown): SidecarConfig {
   if (!isRecord(value) || value["schemaVersion"] !== 1) {
     throw new Error("sidecar configuration schemaVersion must be 1");
   }
+  const allowed = new Set([
+    "schemaVersion", "rolloutMode", "socketPath", "codexSessionsRoot", "ledgerPath", "spoolPath", "logPath",
+    "hookMaxInputBytes", "hookTimeoutMs", "logMaxBytes", "logRetainFiles", "codexQuery",
+  ]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("sidecar configuration contains unknown fields");
   if (value["rolloutMode"] !== "SHADOW") {
     throw new Error("this release permits SHADOW rollout only");
   }
+  const query = codexQuery(value["codexQuery"]);
   return Object.freeze({
     schemaVersion: 1,
     rolloutMode: "SHADOW",
@@ -54,6 +93,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
     hookTimeoutMs: boundedInteger(value["hookTimeoutMs"] ?? 750, "hookTimeoutMs", 1, 3_000),
     logMaxBytes: boundedInteger(value["logMaxBytes"] ?? 5_242_880, "logMaxBytes", 1_024, 104_857_600),
     logRetainFiles: boundedInteger(value["logRetainFiles"] ?? 3, "logRetainFiles", 1, 20),
+    ...(query === undefined ? {} : { codexQuery: query }),
   });
 }
 

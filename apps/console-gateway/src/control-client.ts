@@ -26,6 +26,13 @@ import {
   type ControlRequest,
   type ControlResponse,
 } from "@zhiloop/control-api";
+import {
+  p3ConsoleAskResponseSchema,
+  p3ConsoleSearchResponseSchema,
+  p3ConsoleSimulationResponseSchema,
+  type P3ConsoleQueryBody,
+} from "@zhiloop/p3-console-runtime";
+import { retrievalTraceSchema } from "@zhiloop/control-api";
 
 import type {
   CaptureCommitCommand,
@@ -186,6 +193,26 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
 
   public recoverKnowledgeIndex(knowledgeId: string, options: QueryOptions) {
     return this.execute(this.p2Request("p2.knowledge.index.recover", { knowledgeId }), p2IndexRecoveryResultSchema, options);
+  }
+
+  public searchKnowledge(command: P3ConsoleQueryBody, options: QueryOptions) {
+    return this.execute(this.p3Request("p3.knowledge.search", command), p3ConsoleSearchResponseSchema, options);
+  }
+
+  public askKnowledge(command: P3ConsoleQueryBody, options: QueryOptions) {
+    return this.execute(this.p3Request("p3.knowledge.ask", command), p3ConsoleAskResponseSchema, options);
+  }
+
+  public simulateRetrieval(command: P3ConsoleQueryBody, options: QueryOptions) {
+    return this.execute(this.p3Request("p3.retrieval.simulate", command), p3ConsoleSimulationResponseSchema, options);
+  }
+
+  public getRetrievalTrace(command: { readonly requestId: string; readonly traceId: string; readonly projectId?: string; readonly taskId?: string }, options: QueryOptions) {
+    return this.execute(this.p3Request("p3.retrieval.trace", command), retrievalTraceSchema, options);
+  }
+
+  private p3Request(type: string, fields: { readonly requestId: string }) {
+    return { schemaVersion: CONTROL_API_SCHEMA_VERSION, type, ...fields };
   }
 
   private p2Request(type: string, fields: Readonly<Record<string, unknown>>) {

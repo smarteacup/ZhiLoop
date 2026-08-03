@@ -18,7 +18,14 @@ import type {
   P2KnowledgeListView,
   P2SessionExtractionView,
   P2IndexRecoveryResult,
+  RetrievalTraceContract,
 } from "@zhiloop/control-api";
+import type {
+  P3AskResponse,
+  P3ConsoleQueryBody,
+  P3SearchResponse,
+  P3SimulationResponse,
+} from "@zhiloop/p3-console-runtime";
 
 export interface Page<T> {
   readonly items: T[];
@@ -46,6 +53,15 @@ export interface ControlQueryPort {
   getSessionExtraction?(sessionId: string, options: QueryOptions): Promise<P2SessionExtractionView>;
   listKnowledge?(filter: P2KnowledgeFilter, options: QueryOptions): Promise<P2KnowledgeListView>;
   getKnowledge?(knowledgeId: string, options: QueryOptions): Promise<P2KnowledgeDetailView>;
+  searchKnowledge?(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3SearchResponse>;
+  askKnowledge?(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3AskResponse>;
+  simulateRetrieval?(command: P3ConsoleQueryBody, options: QueryOptions): Promise<P3SimulationResponse>;
+  getRetrievalTrace?(command: {
+    readonly requestId: string;
+    readonly traceId: string;
+    readonly projectId?: string;
+    readonly taskId?: string;
+  }, options: QueryOptions): Promise<RetrievalTraceContract>;
 }
 
 export interface CaptureCommitCommand {

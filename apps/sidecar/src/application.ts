@@ -20,6 +20,11 @@ import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { ZhiLoopDaemonRuntime, type DaemonHealthSnapshot, type DaemonWorkerCycle } from "@zhiloop/daemon";
 import { CodexHookHandler, LocalEventSpool, type HookCaptureResult, type HookEventSink } from "@zhiloop/hook-runtime";
 import { ExtractionConflictError, ExtractionStaleRevisionError } from "@zhiloop/session-extraction";
+import {
+  CodexExecKnowledgeQueryModel,
+  InMemoryCodexKnowledgeQueryDiagnosticStore,
+} from "@zhiloop/model-codex-exec";
+import type { P3ConsoleTransportRequest } from "@zhiloop/p3-console-runtime";
 
 import type { SidecarConfig } from "./config.js";
 import { SidecarControlPlane, type CaptureExecutionPort } from "./control-plane.js";
@@ -29,6 +34,7 @@ import { P1SidecarRuntime, type P1RuntimeConfiguration } from "./p1-runtime.js";
 import { P2SidecarRuntime } from "./p2-runtime.js";
 import { P2ProductionComposition } from "./p2-production.js";
 import { P2ConsoleRuntime, type P2ConsoleRequest } from "./p2-console.js";
+import { P3SidecarConsole } from "./p3-console.js";
 
 export interface SidecarHealthReport extends DaemonHealthSnapshot {
   readonly rolloutMode: "SHADOW";
@@ -75,6 +81,7 @@ export class SidecarApplication {
   #p2Runtime: P2SidecarRuntime | undefined;
   #p2Production: P2ProductionComposition | undefined;
   #p2Console: P2ConsoleRuntime | undefined;
+  #p3Console: P3SidecarConsole | undefined;
   #closed = false;
   #captureTail: Promise<void> = Promise.resolve();
   #workerTail: Promise<void> = Promise.resolve();
@@ -214,13 +221,16 @@ export class SidecarApplication {
     let p1Runtime: P1SidecarRuntime | undefined;
     let p2Runtime: P2SidecarRuntime | undefined;
     let p2Production: P2ProductionComposition | undefined;
+    let p3Console: P3SidecarConsole | undefined;
+    let p3CodexModelComposed = false;
     try {
       acceptanceEvidence = new SqliteRealCodexAcceptanceEvidenceStore(join(dirname(config.ledgerPath), "real-codex-acceptance.sqlite"));
       configuration = new SqliteConfigurationService(join(dirname(config.ledgerPath), "configuration.sqlite"), {
         capabilities: () => ({
           "context.injection": "DISABLED",
+          "knowledge.retrieval": p3Console === undefined ? "DISABLED" : "READY",
           "knowledge.compile": p2Production === undefined ? "DISABLED" : "READY",
-          "codex.query": "DISABLED",
+          "codex.query": p3CodexModelComposed ? "READY" : "NOT_CONFIGURED",
         }),
         components: [{
           componentId: "p1-background-runtime",
@@ -419,8 +429,33 @@ export class SidecarApplication {
         },
         configurationHash: () => configuration?.get().hash ?? "",
       });
+      const stateDirectory = dirname(config.ledgerPath);
+      const queryModel = config.codexQuery?.enabled === true
+        ? await CodexExecKnowledgeQueryModel.create({
+          cwd: stateDirectory,
+          diagnostics: new InMemoryCodexKnowledgeQueryDiagnosticStore(100),
+          timeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
+          concurrency: configuration.get().effective.future.codexQueryConcurrency,
+          maxQueue: configuration.get().effective.future.codexQueryConcurrency * 4,
+          userConfiguration: config.codexQuery.userConfiguration,
+          mcpConfiguration: "DISABLED",
+          ...(config.codexQuery.executable === undefined ? {} : { executable: config.codexQuery.executable }),
+          ...(config.codexQuery.model === undefined ? {} : { model: config.codexQuery.model }),
+        })
+        : undefined;
+      p3CodexModelComposed = queryModel !== undefined;
+      p3Console = new P3SidecarConsole({
+        stateDirectory,
+        registry: p2Production.registry,
+        configuration: (projectId) => configuration!.get(projectId),
+        drafts: () => configuration!.drafts(100),
+        ...(queryModel === undefined ? {} : { model: queryModel }),
+      });
+      composedApplication.#p3Console = p3Console;
+      composedApplication.#controlPlane.setP3RuntimeState(p3Console.capability);
       return composedApplication;
     } catch (error) {
+      p3Console?.close();
       await p2Runtime?.close().catch(() => undefined);
       p2Production?.close();
       await p1Runtime?.close().catch(() => undefined);
@@ -528,6 +563,36 @@ export class SidecarApplication {
     }
   }
 
+  async handleP3Console(request: P3ConsoleTransportRequest, signal?: AbortSignal): Promise<ControlResponse> {
+    const observedAt = new Date().toISOString();
+    try {
+      if (this.#p3Console === undefined) throw Object.assign(new Error("P3 Console is unavailable"), { code: "CAPABILITY_UNAVAILABLE" });
+      return {
+        schemaVersion: CONTROL_API_SCHEMA_VERSION,
+        requestId: request.requestId,
+        observedAt,
+        ok: true,
+        result: await this.#p3Console.handle(request, signal),
+      };
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      const code = name === "P3SemanticConflictError" ? "CONFLICT"
+        : name === "P3TraceUnavailableError" ? "NOT_FOUND"
+          : name === "P3RequestCancelledError" ? "SIDECAR_UNAVAILABLE"
+            : name === "P3PolicyConsumerUnavailableError" ? "CAPABILITY_UNAVAILABLE"
+              : error instanceof Error && "code" in error && error.code === "CAPABILITY_UNAVAILABLE"
+                ? "CAPABILITY_UNAVAILABLE"
+                : "INTERNAL_ERROR";
+      return {
+        schemaVersion: CONTROL_API_SCHEMA_VERSION,
+        requestId: request.requestId,
+        observedAt,
+        ok: false,
+        error: { code, message: "P3 Console request failed", retryable: code === "SIDECAR_UNAVAILABLE" },
+      };
+    }
+  }
+
   async verifyRealCodexIngestion(request: RealCodexAcceptanceRequest): Promise<PersistedRealCodexAcceptance> {
     this.#flushAcceptanceEvidence();
     await this.#acceptanceTail;
@@ -547,6 +612,7 @@ export class SidecarApplication {
     await this.#workerTail;
     await this.#p1Runtime?.close();
     await this.#p2Runtime?.close();
+    this.#p3Console?.close();
     this.#p2Production?.close();
     await this.#runtime.stop();
     this.#flushAcceptanceEvidence();

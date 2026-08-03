@@ -129,4 +129,12 @@ describe("Console application shell", () => {
     expect(await screen.findByRole("heading", { name: "有效配置与草稿" })).toBeTruthy();
     expect(screen.getByText("VALIDATED_DRAFT_NOT_AVAILABLE")).toBeTruthy();
   });
+
+  it("routes the P3 retrieval console instead of a disabled placeholder", async () => {
+    window.location.hash = "#/retrieval";
+    render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "召回知识" })).toBeTruthy();
+    expect(screen.getByText(/P3 结果始终是 SHADOW/u)).toBeTruthy();
+    expect(screen.queryByText(/P3 实现后启用/u)).toBeNull();
+  });
 });

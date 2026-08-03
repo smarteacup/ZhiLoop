@@ -35,14 +35,14 @@
 
 ## 4. P0c Sidecar Integration and First Usable Console — Serialized
 
-- [ ] 4.1 [Sidecar Owner] Extend the Sidecar Unix-socket protocol with versioned bounded query requests without changing existing hook/health/worker/capture behavior
-- [ ] 4.2 [Sidecar Owner] Compose Session Catalog and operational query ports while preserving Sidecar as the only Ledger writer
-- [ ] 4.3 [Sidecar Owner] Add injection capability placeholders that report real `DISABLED/NOT_VERIFIED` reason codes instead of synthesized UI status
-- [ ] 4.4 [Sidecar Owner] Expose capture dry-run as a Console command and bind commit to session identity, preview revision and idempotency key
-- [ ] 4.5 [Web Feature Lane] Add capture preview, stale-preview, commit, duplicate and unavailable-sidecar interaction states to the session page
-- [ ] 4.6 [Integration Owner] Add `zhiloop ui` launcher and local release packaging for Gateway and Web assets without making Gateway part of the Hook path
-- [ ] 4.7 [Quality Owner] Add browser E2E for bootstrap → overview → session list → detail → capture preview/commit and verify no Codex session mutation
-- [ ] 4.8 [Quality Owner] Run P0 performance and security Gate: ≥99% catalog fixture coverage, Overview P95 <300ms, 100k-event list P95 <500ms, Hook P95 delta <5ms, unauthorized requests 100% rejected
+- [x] 4.1 [Sidecar Owner] Extend the Sidecar Unix-socket protocol with versioned bounded query requests without changing existing hook/health/worker/capture behavior
+- [x] 4.2 [Sidecar Owner] Compose Session Catalog and operational query ports while preserving Sidecar as the only Ledger writer
+- [x] 4.3 [Sidecar Owner] Add injection capability placeholders that report real `DISABLED/NOT_VERIFIED` reason codes instead of synthesized UI status
+- [x] 4.4 [Sidecar Owner] Expose capture dry-run as a Console command and bind commit to session identity, preview revision and idempotency key
+- [x] 4.5 [Web Feature Lane] Add capture preview, stale-preview, commit, duplicate and unavailable-sidecar interaction states to the session page
+- [x] 4.6 [Integration Owner] Add `zhiloop ui` launcher and local release packaging for Gateway and Web assets without making Gateway part of the Hook path
+- [x] 4.7 [Quality Owner] Add browser E2E for bootstrap → overview → session list → detail → capture preview/commit and verify no Codex session mutation
+- [x] 4.8 [Quality Owner] Run P0 performance and security Gate: ≥99% catalog fixture coverage, Overview P95 <300ms, 100k-event list P95 <500ms, Hook P95 delta <5ms, unauthorized requests 100% rejected
 - [ ] 4.9 [Integration Owner] Complete Integration and Release Reviews, document actual P0 capability matrix, and deploy only after all P0 Gates pass
 
 ## 5. P1 Durable Jobs and Automatic Ingestion — Parallel Wave 3

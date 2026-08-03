@@ -15,6 +15,7 @@ import {
   sessionDetailSchema,
   sessionPageSchema,
   type ControlRequest,
+  type ControlResponse,
 } from "@zhiloop/control-api";
 
 import type {
@@ -39,6 +40,7 @@ export class ControlClientError extends Error {
   public constructor(
     message: string,
     public readonly code: "UNAVAILABLE" | "TIMEOUT" | "PROTOCOL" | "REMOTE_ERROR",
+    public readonly remoteCode?: Extract<ControlResponse, { readonly ok: false }>["error"]["code"],
   ) {
     super(message);
     this.name = "ControlClientError";
@@ -152,16 +154,16 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
           return;
         }
         chunks.push(chunk);
-        const combined = Buffer.concat(chunks);
-        const newline = combined.indexOf(0x0a);
+        const newline = chunk.indexOf(0x0a);
         if (newline < 0) return;
-        if (newline !== combined.byteLength - 1) {
+        if (newline !== chunk.byteLength - 1) {
           finish(() => reject(new ControlClientError("Invalid Sidecar response", "PROTOCOL")));
           return;
         }
+        const combined = chunks.length === 1 ? chunk : Buffer.concat(chunks, received);
         let decoded: unknown;
         try {
-          decoded = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+          decoded = JSON.parse(combined.subarray(0, combined.byteLength - 1).toString("utf8")) as unknown;
         } catch {
           finish(() => reject(new ControlClientError("Invalid Sidecar response", "PROTOCOL")));
           return;
@@ -180,7 +182,8 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
           return;
         }
         if (!envelope.data.ok) {
-          finish(() => reject(new ControlClientError("Sidecar rejected the request", "REMOTE_ERROR")));
+          const remoteCode = envelope.data.error.code;
+          finish(() => reject(new ControlClientError("Sidecar rejected the request", "REMOTE_ERROR", remoteCode)));
           return;
         }
         const parsed = resultSchema.safeParse(envelope.data.result);

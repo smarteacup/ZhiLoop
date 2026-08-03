@@ -388,4 +388,25 @@ describe("ReadOnlySessionCatalog", () => {
     expect(source.calls).toBe(1);
     expect(fallback.calls).toBe(0);
   });
+
+  it("discovers at least 99 percent of the bounded P0 catalog fixture", async () => {
+    const records = Array.from({ length: 250 }, (_value, index) => sourceRecord({
+      sessionId: `coverage-${String(index).padStart(3, "0")}`,
+      lastActivityAt: new Date(Date.parse("2026-08-03T10:00:00.000Z") - index * 1_000).toISOString(),
+    }));
+    const catalog = new ReadOnlySessionCatalog(
+      new FixedSource(snapshot("CODEX_APP_SERVER", "AVAILABLE", records)),
+      new FixedSource(snapshot("CODEX_TRANSCRIPT", "AVAILABLE")),
+      { clock: () => now },
+    );
+    const discovered = new Set<string>();
+    let after: { readonly lastActivityAt: string; readonly sessionId: string } | undefined;
+    do {
+      const page = await catalog.list({ limit: 100, ...(after === undefined ? {} : { after }) });
+      for (const item of page.items) discovered.add(item.sessionId);
+      after = page.nextPosition;
+    } while (after !== undefined);
+    expect(discovered.size / records.length).toBeGreaterThanOrEqual(0.99);
+    expect(discovered.size).toBe(records.length);
+  });
 });

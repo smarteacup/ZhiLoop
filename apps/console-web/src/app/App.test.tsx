@@ -39,6 +39,8 @@ const api: ConsoleApi = {
   events: async () => ({ items: [] }),
   jobs: async () => ({ items: [] }),
   diagnostics: async () => ({ schemaVersion: 1, observedAt: timestamp, ledgerSequence: 0, spoolDepth: 0, consumerLags: [], worker: { healthy: true, consumed: 0, produced: 0, retryableFailures: 0 }, storage: { healthy: true, databaseBytes: 4096 } }),
+  previewCapture: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: "a".repeat(64), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 0, lineNumber: 0 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" }),
+  commitCapture: async (command) => ({ schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 0, duplicateEvents: 0, cursor: { byteOffset: 0, lineNumber: 0 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } }),
 };
 
 afterEach(() => cleanup());

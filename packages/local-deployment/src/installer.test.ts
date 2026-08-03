@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -7,7 +7,7 @@ import process from "node:process";
 import type { SidecarHealth } from "@zhiloop/plugin-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installLocalRelease, planLocalInstall } from "./installer.js";
+import { installLocalRelease, planLocalInstall, REQUIRED_LOCAL_RELEASE_FILES } from "./installer.js";
 import { doctorLocalInstallation } from "./doctor.js";
 import { resolveDeploymentPaths } from "./paths.js";
 import type { HealthProbe, ServiceController } from "./types.js";
@@ -37,6 +37,14 @@ async function artifact(root: string, version = "0.1.0"): Promise<string> {
   const files = new Map([
     ["apps/sidecar/dist/main.js", "#!/usr/bin/env node\n// sidecar\n"],
     ["apps/sidecar/dist/deploy-main.js", "#!/usr/bin/env node\n// deploy cli\n"],
+    ["apps/cli/dist/ui-main.js", "#!/usr/bin/env node\n// ui cli\n"],
+    ["apps/cli/dist/ui-cli.js", "// ui launcher\n"],
+    ["apps/console-gateway/dist/main.js", "#!/usr/bin/env node\n// gateway executable\n"],
+    ["apps/console-web/dist/index.html", "<!doctype html><title>ZhiLoop</title>\n"],
+    ["node_modules/@zhiloop/console-gateway/package.json", "{\"name\":\"@zhiloop/console-gateway\"}\n"],
+    ["node_modules/@zhiloop/control-api/package.json", "{\"name\":\"@zhiloop/control-api\"}\n"],
+    ["node_modules/@zhiloop/local-deployment/package.json", "{\"name\":\"@zhiloop/local-deployment\"}\n"],
+    ["node_modules/zod/package.json", "{\"name\":\"zod\"}\n"],
   ]);
   for (const [path, content] of files) {
     const target = join(directory, ...path.split("/"));
@@ -112,6 +120,21 @@ async function seedCcmHooks(targetHome: string): Promise<{ hooksText: string; cc
 }
 
 describe("local installer", () => {
+  it("publishes one required runtime inventory for release fixture owners", () => {
+    expect(REQUIRED_LOCAL_RELEASE_FILES).toEqual([
+      "apps/sidecar/dist/main.js",
+      "apps/sidecar/dist/deploy-main.js",
+      "apps/cli/dist/ui-main.js",
+      "apps/cli/dist/ui-cli.js",
+      "apps/console-gateway/dist/main.js",
+      "apps/console-web/dist/index.html",
+      "node_modules/@zhiloop/console-gateway/package.json",
+      "node_modules/@zhiloop/control-api/package.json",
+      "node_modules/@zhiloop/local-deployment/package.json",
+      "node_modules/zod/package.json",
+    ]);
+  });
+
   it("plans without host mutation", async () => {
     const targetHome = await home();
     const source = await artifact(targetHome);
@@ -144,6 +167,10 @@ describe("local installer", () => {
     expect(await readlink(paths.currentLink)).toBe("releases/0.1.0");
     expect((await lstat(paths.configPath)).mode & 0o777).toBe(0o600);
     expect((await lstat(paths.sidecarLauncher)).mode & 0o777).toBe(0o700);
+    const cliLauncher = await readFile(paths.zhiloopLauncher, "utf8");
+    expect(cliLauncher).toContain('if [ "$1" = "ui" ]');
+    expect(cliLauncher).toContain("apps/cli/dist/ui-main.js");
+    expect(cliLauncher).toContain("apps/sidecar/dist/deploy-main.js");
     expect(await readFile(join(targetHome, ".ccm", "config.json"), "utf8")).toBe(before.ccmText);
     const installedHooks = JSON.parse(await readFile(paths.codexHooksPath, "utf8")) as typeof JSON;
     expect(JSON.stringify(installedHooks)).toContain("CCM_HOOK_PLATFORM=codex");
@@ -170,6 +197,7 @@ describe("local installer", () => {
     expect(service.running).toBe(true);
     const paths = resolveDeploymentPaths(targetHome, "0.2.0");
     const hooksBefore = await readFile(paths.codexHooksPath, "utf8");
+    const launcherBefore = await readFile(paths.zhiloopLauncher, "utf8");
     const failingHealth: HealthProbe = { health: async () => undefined };
     await expect(installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome, "0.2.0"), service,
@@ -179,7 +207,27 @@ describe("local installer", () => {
     expect(await readlink(paths.currentLink)).toBe("releases/0.1.0");
     expect(JSON.parse(await readFile(paths.manifestPath, "utf8"))).toMatchObject({ version: "0.1.0" });
     expect(await readFile(paths.codexHooksPath, "utf8")).toBe(hooksBefore);
+    expect(await readFile(paths.zhiloopLauncher, "utf8")).toBe(launcherBefore);
     expect(service.running).toBe(true);
+  });
+
+  it("rejects an otherwise valid release that omits the isolated Console runtime", async () => {
+    const targetHome = await home();
+    const source = await artifact(targetHome);
+    const metadataPath = join(source, "release.json");
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as { files: Array<{ path: string }> };
+    metadata.files = metadata.files.filter(({ path }) => path !== "apps/console-web/dist/index.html");
+    await unlink(join(source, "apps", "console-web", "dist", "index.html"));
+    await writeFile(metadataPath, JSON.stringify(metadata));
+    const service = new FakeService();
+    await expect(planLocalInstall({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+    })).rejects.toThrow("missing required local runtime files");
+    expect(service.calls).toEqual([]);
   });
 
   it("accepts retained semver release ownership across three upgrades and rejects unrelated manifest paths", async () => {

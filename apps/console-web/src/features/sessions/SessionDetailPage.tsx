@@ -4,6 +4,7 @@ import type { ConsoleApi } from "../../api/client.js";
 import { useAsync } from "../../app/useAsync.js";
 import { ErrorState, LoadingState } from "../../components/AsyncState.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
+import { CapturePanel } from "./CapturePanel.js";
 
 export function SessionDetailPage({ api, sessionId }: { readonly api: ConsoleApi; readonly sessionId: string }): React.JSX.Element {
   const [tab, setTab] = useState<"chain" | "events" | "injections">("chain");
@@ -16,6 +17,7 @@ export function SessionDetailPage({ api, sessionId }: { readonly api: ConsoleApi
   if (state.status === "error") return <ErrorState error={state.error} retry={retry} />;
   const { detail, events } = state.value;
   return <div className="page-stack"><a className="back-link" href="#/sessions">← 返回会话</a><header className="page-header"><div><p className="eyebrow">{detail.summary.sessionId}</p><h1>{detail.summary.title}</h1><p>{detail.summary.projectHint ?? "未识别项目"} · 只读</p></div><StatusBadge status={detail.summary.captureStatus} /></header>
+    <CapturePanel api={api} sessionId={sessionId} sourceAvailable={detail.summary.sourceStatus === "AVAILABLE"} />
     <div className="tab-list" role="tablist" aria-label="会话详情"><button type="button" role="tab" aria-selected={tab === "chain"} onClick={() => setTab("chain")}>生产链</button><button type="button" role="tab" aria-selected={tab === "events"} onClick={() => setTab("events")}>事件元数据</button><button type="button" role="tab" aria-selected={tab === "injections"} onClick={() => setTab("injections")}>注入记录</button></div>
     {tab === "chain" ? <section className="panel" role="tabpanel"><div className="section-heading"><h2>知识生产链</h2><span>{detail.stages.length} 个阶段</span></div>{detail.stages.length === 0 ? <p className="muted">生产知识能力未接通，暂无阶段记录。</p> : <ol className="stage-list">{detail.stages.map((stage) => <li key={`${stage.stage}:${stage.lastTransitionAt}`}><div><strong>{stage.stage}</strong><small>{stage.reasonCode}</small></div><StatusBadge status={stage.status} /></li>)}</ol>}</section> : undefined}
     {tab === "events" ? <section className="panel" role="tabpanel"><div className="section-heading"><h2>事件元数据</h2><span>仅展示脱敏索引，不展示原始 Prompt</span></div>{events.items.length === 0 ? <p className="muted">当前会话没有已沉淀事件。</p> : <div className="event-list">{events.items.map((event) => <article key={event.eventId}><div><strong>#{event.sequence} · {event.eventType}</strong><time>{new Date(event.occurredAt).toLocaleString()}</time></div><dl className="detail-grid"><div><dt>事件 ID</dt><dd>{event.eventId}</dd></div><div><dt>关联 ID</dt><dd>{event.correlationId}</dd></div><div><dt>脱敏数量</dt><dd>{event.redactionCount}</dd></div><div><dt>内容状态</dt><dd>{event.payloadPurged ? "已清除" : "哈希已记录"}</dd></div></dl></article>)}</div>}<p className="muted">{events.nextCursor === undefined ? "已到末页" : "还有更多事件，可使用服务端游标继续读取"}</p></section> : undefined}

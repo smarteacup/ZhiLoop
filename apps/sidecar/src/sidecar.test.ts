@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
+import { CONTROL_API_SCHEMA_VERSION, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SidecarApplication } from "./application.js";
@@ -60,6 +61,34 @@ async function writeRollout(config: SidecarConfig, sessionId: string): Promise<v
   ].join(""));
 }
 
+function controlResult(response: unknown): unknown {
+  const value = response as ControlResponse;
+  expect(value).toMatchObject({ schemaVersion: CONTROL_API_SCHEMA_VERSION, ok: true });
+  if (!value.ok) throw new Error("expected successful control response");
+  return value.result;
+}
+
+async function sendRawFrames(socketPath: string, serialized: string): Promise<unknown> {
+  const socket = createConnection(socketPath);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  socket.write(serialized);
+  const chunks: Buffer[] = [];
+  return await new Promise<unknown>((resolve, reject) => {
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.once("error", reject);
+    socket.once("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
 describe("sidecar configuration", () => {
   it("loads a regular absolute SHADOW configuration and applies bounded defaults", async () => {
     const { root, config } = await temporaryConfig();
@@ -99,7 +128,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.1.4",
+      sidecarVersion: "0.1.5",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });
@@ -122,6 +151,14 @@ describe("sidecar service", () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
     expect(workerHealth).toMatchObject({ lastWorkerCycle: { cursor: 1 } });
+    const events = controlResult(await requestSidecar(config.socketPath, {
+      schemaVersion: 1,
+      requestId: "hook-events-request",
+      type: "session.events.list",
+      sessionId: "session-1",
+      page: { limit: 10 },
+    }, 1_000)) as { items: Array<{ sessionId: string; eventType: string }> };
+    expect(events.items).toEqual([expect.objectContaining({ sessionId: "session-1", eventType: "user.prompted" })]);
     expect(await readFile(config.logPath, "utf8")).not.toContain(secretPrompt);
 
     await stopSidecarServer(server, config.socketPath);
@@ -285,6 +322,300 @@ describe("sidecar service", () => {
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({ status: "READY" });
     await stopSidecarServer(server, config.socketPath);
     await application.close();
+  });
+
+  it("serves strict bounded Control API views while retaining honest disabled capabilities", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-control-view");
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      const overview = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "overview-request",
+        type: "overview.get",
+      }, 1_000)) as { capabilities: Array<{ capabilityId: string; status: string; reasonCode: string }> };
+      expect(overview.capabilities).toEqual(expect.arrayContaining([
+        expect.objectContaining({ capabilityId: "knowledge.compile", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED" }),
+        expect.objectContaining({ capabilityId: "context.injection", status: "DISABLED" }),
+        expect.objectContaining({ capabilityId: "knowledge.mcp", status: "DISABLED", reasonCode: "MCP_TRANSPORT_NOT_ENABLED" }),
+      ]));
+
+      const sessions = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "sessions-request",
+        type: "sessions.list",
+        page: { limit: 10 },
+      }, 1_000)) as { items: Array<{ sessionId: string; captureStatus: string }> };
+      expect(sessions.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sessionId: "session-control-view", captureStatus: "DISCOVERED_NOT_CAPTURED" }),
+      ]));
+
+      const detail = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "session-detail-request",
+        type: "session.get",
+        sessionId: "session-control-view",
+      }, 1_000)) as { injections: unknown[] };
+      expect(detail.injections).toEqual([]);
+
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "jobs-request",
+        type: "jobs.list",
+        page: { limit: 10 },
+      }, 1_000))).toEqual({ items: [] });
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "diagnostics-request",
+        type: "diagnostics.get",
+      }, 1_000))).toMatchObject({ ledgerSequence: 0, spoolDepth: 0 });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
+  it("keeps preview dry-run side-effect free, rejects stale source, and commits idempotently", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-controlled-capture");
+    await writeRollout(config, "session-other-capture");
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      const previewRequest: ControlRequest = {
+        schemaVersion: 1,
+        requestId: "preview-request-1",
+        type: "capture.preview",
+        sessionId: "session-controlled-capture",
+      };
+      const preview = controlResult(await requestSidecar(config.socketPath, previewRequest, 1_000)) as {
+        previewRevision: number;
+        transcriptIdentityHash: string;
+        projectedEvents: number;
+      };
+      expect(preview).toMatchObject({ previewRevision: 1, projectedEvents: 3 });
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "diagnostics-after-preview",
+        type: "diagnostics.get",
+      }, 1_000))).toMatchObject({ ledgerSequence: 0 });
+
+      const transcript = join(config.codexSessionsRoot, "2026", "08", "03", "rollout-session-controlled-capture.jsonl");
+      await appendFile(transcript, rolloutRecord("turn_context", "2026-08-03T00:00:04.000Z", { turn_id: "turn-2" }));
+      const stale = await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "stale-commit-request",
+        type: "capture.commit",
+        sessionId: "session-controlled-capture",
+        previewRevision: preview.previewRevision,
+        transcriptIdentityHash: preview.transcriptIdentityHash,
+        idempotencyKey: "capture:controlled:revision:1",
+      }, 1_000) as ControlResponse;
+      expect(stale).toMatchObject({ ok: false, error: { code: "STALE_REVISION" } });
+
+      const fresh = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "preview-request-2",
+        type: "capture.preview",
+        sessionId: "session-controlled-capture",
+      }, 1_000)) as { previewRevision: number; transcriptIdentityHash: string };
+      const commit = {
+        schemaVersion: 1 as const,
+        type: "capture.commit" as const,
+        sessionId: "session-controlled-capture",
+        previewRevision: fresh.previewRevision,
+        transcriptIdentityHash: fresh.transcriptIdentityHash,
+        idempotencyKey: "capture:controlled:revision:2",
+      };
+      const first = controlResult(await requestSidecar(config.socketPath, { ...commit, requestId: "commit-request-1" }, 1_000));
+      expect(first).toMatchObject({
+        appendedEvents: 3,
+        duplicateEvents: 0,
+        knowledgeCompileStage: { status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED" },
+      });
+      const replay = controlResult(await requestSidecar(config.socketPath, { ...commit, requestId: "commit-request-retry" }, 1_000));
+      expect(replay).toEqual(first);
+      const conflict = await requestSidecar(config.socketPath, {
+        ...commit,
+        requestId: "commit-request-conflict",
+        transcriptIdentityHash: "b".repeat(64),
+      }, 1_000) as ControlResponse;
+      expect(conflict).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+
+      const otherPreview = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "other-preview",
+        type: "capture.preview",
+        sessionId: "session-other-capture",
+      }, 1_000)) as { previewRevision: number; transcriptIdentityHash: string };
+      const crossSessionConflict = await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "cross-session-conflict",
+        type: "capture.commit",
+        sessionId: "session-other-capture",
+        previewRevision: otherPreview.previewRevision,
+        transcriptIdentityHash: otherPreview.transcriptIdentityHash,
+        idempotencyKey: commit.idempotencyKey,
+      }, 1_000) as ControlResponse;
+      expect(crossSessionConflict).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+
+      const events = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "events-after-commit",
+        type: "session.events.list",
+        sessionId: "session-controlled-capture",
+        page: { limit: 10 },
+      }, 1_000)) as { items: unknown[] };
+      expect(events.items).toHaveLength(3);
+      expect(JSON.stringify(events)).not.toContain("capture me");
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+    const ledger = new SqliteEventLedger(config.ledgerPath);
+    expect(ledger.count()).toBe(3);
+    ledger.close();
+  });
+
+  it("continues an accepted capture after client disconnect and safely replays the command", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-abandoned-capture");
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      const preview = controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "abandoned-preview",
+        type: "capture.preview",
+        sessionId: "session-abandoned-capture",
+      }, 1_000)) as { previewRevision: number; transcriptIdentityHash: string };
+      const command = {
+        schemaVersion: 1 as const,
+        type: "capture.commit" as const,
+        sessionId: "session-abandoned-capture",
+        previewRevision: preview.previewRevision,
+        transcriptIdentityHash: preview.transcriptIdentityHash,
+        idempotencyKey: "capture:abandoned:revision:1",
+      };
+      const abandoned = createConnection(config.socketPath);
+      await new Promise<void>((resolve, reject) => {
+        abandoned.once("connect", resolve);
+        abandoned.once("error", reject);
+      });
+      abandoned.write(`${JSON.stringify({ ...command, requestId: "abandoned-commit" })}\n`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      abandoned.destroy();
+      const replay = controlResult(await requestSidecar(config.socketPath, { ...command, requestId: "abandoned-replay" }, 2_000));
+      expect(replay).toMatchObject({ appendedEvents: 3 });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
+  it("replays an exact capture receipt after Sidecar restart without requiring a new preview", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-restart-replay");
+    let application = await SidecarApplication.create(config);
+    await application.start();
+    const preview = controlResult(await application.handleControl({
+      schemaVersion: 1,
+      requestId: "restart-preview",
+      type: "capture.preview",
+      sessionId: "session-restart-replay",
+    })) as { previewRevision: number; transcriptIdentityHash: string };
+    const command = {
+      schemaVersion: 1 as const,
+      type: "capture.commit" as const,
+      sessionId: "session-restart-replay",
+      previewRevision: preview.previewRevision,
+      transcriptIdentityHash: preview.transcriptIdentityHash,
+      idempotencyKey: "capture:restart:revision:1",
+    };
+    const committed = controlResult(await application.handleControl({ ...command, requestId: "restart-commit" }));
+    await application.close();
+
+    application = await SidecarApplication.create(config);
+    await application.start();
+    try {
+      expect(controlResult(await application.handleControl({ ...command, requestId: "restart-replay" }))).toEqual(committed);
+      const conflict = await application.handleControl({
+        ...command,
+        requestId: "restart-conflict",
+        transcriptIdentityHash: "c".repeat(64),
+      });
+      expect(conflict).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    } finally {
+      await application.close();
+    }
+  });
+
+  it("reports an unreadable spool as an unhealthy retryable diagnostic", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    try {
+      await rm(config.spoolPath, { recursive: true, force: true });
+      await writeFile(config.spoolPath, "not-a-directory");
+      expect(controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "unreadable-spool-diagnostics",
+        type: "diagnostics.get",
+      }))).toMatchObject({
+        spoolDepth: 0,
+        worker: { healthy: false, retryableFailures: 1 },
+      });
+    } finally {
+      await application.close();
+    }
+  });
+
+  it("rejects a pre-existing cursor secret with group or world access", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.close();
+    await chmod(join(dirname(config.ledgerPath), "control-cursor.key"), 0o644);
+    await expect(SidecarApplication.create(config)).rejects.toThrow("permissions are too broad");
+  });
+
+  it("rejects oversized Control API messages and same-chunk trailing frames before side effects", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      await expect(requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "oversized-control-request",
+        type: "config.validate",
+        baseRevision: 0,
+        draft: { padding: "x".repeat(1_100_000) },
+      }, 2_000)).rejects.toMatchObject({ code: "MESSAGE_TOO_LARGE" });
+      await expect(requestSidecar(config.socketPath, {
+        schemaVersion: 2,
+        requestId: "unknown-version",
+        type: "overview.get",
+      } as never, 1_000)).rejects.toMatchObject({ code: "UNSUPPORTED_SCHEMA_VERSION" });
+      await expect(requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "unknown-field",
+        type: "overview.get",
+        rawPrompt: "must not cross the boundary",
+      } as never, 1_000)).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+      const trailing = await sendRawFrames(
+        config.socketPath,
+        `${JSON.stringify({ type: "worker" })}\n${JSON.stringify({ type: "worker" })}\n`,
+      );
+      expect(trailing).toMatchObject({ ok: false, errorCode: "INVALID_JSON" });
+      expect(await requestSidecar(config.socketPath, { type: "health" }, 1_000)).toMatchObject({ status: "READY" });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
   });
 });
 

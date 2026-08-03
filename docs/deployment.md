@@ -82,7 +82,27 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 
 预期 stdout 为空；ledger 事件数增加；诊断日志不出现合成 prompt 正文。
 
-## 7. 主动采集指定 Codex 会话
+## 7. 本地控制台
+
+安装完成后可启动仅监听 loopback 的本地控制台：
+
+```bash
+~/.local/bin/zhiloop ui
+```
+
+默认会直接打开浏览器，stdout 只输出 `RUNNING`、本地 origin 和是否已打开浏览器，不记录一次性 bootstrap fragment。无图形环境可显式使用：
+
+```bash
+~/.local/bin/zhiloop ui --no-open --json
+```
+
+仅在 `--no-open` 模式下，JSON 会返回一次性 `bootstrapUrl`。该 URL 的 fragment 会在页面发起认证前从地址栏移除；Gateway 使用短期 HttpOnly SameSite 会话、内存 CSRF token、Host/Origin 校验和无 CORS 策略。页面不使用 localStorage、sessionStorage 或 IndexedDB 持久化会话和知识数据。
+
+控制台当前支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、部署状态，以及会话级采集 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识编译、召回、注入、MCP、闭环和 ACTIVE 仍显示实际 `DISABLED/NOT_VERIFIED`，不能从页面开启。
+
+Gateway 是独立进程，不被 Sidecar launcher 或 Codex Hook 引用。关闭 `zhiloop ui` 不影响 Hook、Ledger 或后台 Sidecar。
+
+## 8. 主动采集指定 Codex 会话
 
 先进行严格只读预览：
 
@@ -114,7 +134,7 @@ CLI 只通过当前用户 Unix socket 请求 Sidecar，Sidecar 是 SQLite 唯一
 
 这表示规范化对话事件已经进入 ledger，但生产知识编译、分层入库和后续注入尚未由该命令触发。
 
-## 8. 卸载、保留数据与 purge
+## 9. 卸载、保留数据与 purge
 
 先查看卸载计划：
 
@@ -139,7 +159,7 @@ CLI 只通过当前用户 Unix socket 请求 Sidecar，Sidecar 是 SQLite 唯一
 
 该操作不可恢复；普通 uninstall、upgrade 和失败回滚不会触发 purge。
 
-## 9. 故障定位
+## 10. 故障定位
 
 - `release ... integrity`：重新构建发行目录，不要原地修改已生成 artifact。
 - `changed after deployment planning`：Codex/CCM 正在写 Hook；等待写入结束后重新 plan/apply。

@@ -7,11 +7,13 @@ import {
   type CaptureSessionRequest,
   type TranscriptCursor,
 } from "@zhiloop/codex-session-capture";
+import type { ControlRequest, ControlResponse } from "@zhiloop/control-api";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { ZhiLoopDaemonRuntime, type DaemonHealthSnapshot, type DaemonWorkerCycle } from "@zhiloop/daemon";
 import { CodexHookHandler, LocalEventSpool, type HookCaptureResult, type HookEventSink } from "@zhiloop/hook-runtime";
 
 import type { SidecarConfig } from "./config.js";
+import { SidecarControlPlane, type CaptureExecutionPort } from "./control-plane.js";
 import { SafeDiagnosticLog } from "./diagnostic-log.js";
 import { SIDECAR_COMPATIBILITY, SIDECAR_VERSION } from "./metadata.js";
 
@@ -31,6 +33,7 @@ export class SidecarApplication {
   readonly #ledger: SqliteEventLedger;
   readonly #capture: CodexSessionCaptureService;
   readonly #log: SafeDiagnosticLog;
+  #controlPlane: SidecarControlPlane | undefined;
   #closed = false;
   #captureTail: Promise<void> = Promise.resolve();
   #workerTail: Promise<void> = Promise.resolve();
@@ -83,6 +86,7 @@ export class SidecarApplication {
             cursor: ledger.count(),
             retryableFailures: drained.stopReason === null ? 0 : 1,
           };
+          await this.#controlPlane?.scheduleLedgerProjection();
           await log.write({ component: "worker", code: drained.stopReason ?? "completed", count: drained.delivered }).catch(() => undefined);
           return cycle;
         },
@@ -101,12 +105,23 @@ export class SidecarApplication {
       mkdir(dirname(config.logPath), { recursive: true, mode: 0o700 }),
     ]);
     const ledger = new SqliteEventLedger(config.ledgerPath);
-    return new SidecarApplication(
+    const application = new SidecarApplication(
       config,
       ledger,
       new LocalEventSpool(config.spoolPath),
       new SafeDiagnosticLog(config.logPath, config.logMaxBytes, config.logRetainFiles),
     );
+    const capture: CaptureExecutionPort = {
+      capture: async (request) => await application.captureSession(request),
+      transaction: async (operation) => await application.#captureTransaction(operation),
+    };
+    application.#controlPlane = await SidecarControlPlane.create({
+      config,
+      ledger,
+      capture,
+      health: async () => await application.health(),
+    });
+    return application;
   }
 
   async start(): Promise<void> {
@@ -126,11 +141,27 @@ export class SidecarApplication {
   }
 
   async captureSession(request: CaptureSessionRequest): Promise<CaptureSessionReport> {
+    const report = await this.#serializeCapture(async () => await this.#captureAndLog(request));
+    await this.#controlPlane?.noteLegacyCapture(report);
+    return report;
+  }
+
+  async #serializeCapture<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#captureTail.then(operation);
+    this.#captureTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async #captureTransaction<T>(
+    operation: (capture: (request: CaptureSessionRequest) => Promise<CaptureSessionReport>) => Promise<T>,
+  ): Promise<T> {
+    return this.#serializeCapture(async () => await operation(async (request) => await this.#captureAndLog(request)));
+  }
+
+  async #captureAndLog(request: CaptureSessionRequest): Promise<CaptureSessionReport> {
     const startedAt = Date.now();
-    const operation = this.#captureTail.then(async () => await this.#capture.capture(request));
-    this.#captureTail = operation.then(() => undefined, () => undefined);
     try {
-      const report = await operation;
+      const report = await this.#capture.capture(request);
       await this.#log.write({
         component: "capture",
         code: report.status,
@@ -147,6 +178,11 @@ export class SidecarApplication {
     }
   }
 
+  async handleControl(request: ControlRequest): Promise<ControlResponse> {
+    if (!this.#controlPlane) throw new Error("control plane is not initialized");
+    return this.#controlPlane.handle(request);
+  }
+
   async health(): Promise<SidecarHealthReport> {
     return Object.freeze({ ...(await this.#runtime.health()), rolloutMode: "SHADOW", socketStatus: "READY" });
   }
@@ -156,6 +192,7 @@ export class SidecarApplication {
     await this.#captureTail;
     await this.#workerTail;
     await this.#runtime.stop();
+    await this.#controlPlane?.close();
     this.#ledger.close();
     this.#closed = true;
   }

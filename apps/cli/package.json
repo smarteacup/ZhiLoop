@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "bin": {
-    "zhiloop-knowledge": "./dist/main.js"
+    "zhiloop-knowledge": "./dist/main.js",
+    "zhiloop-ui": "./dist/ui-main.js"
   },
   "zhiloop": {
     "allowedWorkspaceDependencies": [
       "@zhiloop/knowledge-governance",
       "@zhiloop/knowledge-registry",
-      "@zhiloop/markdown-repository"
+      "@zhiloop/markdown-repository",
+      "@zhiloop/local-deployment"
     ],
     "allowedExternalDependencies": ["node:*"]
   },
@@ -21,6 +23,7 @@
   "dependencies": {
     "@zhiloop/knowledge-governance": "0.0.0",
     "@zhiloop/knowledge-registry": "0.0.0",
+    "@zhiloop/local-deployment": "0.1.0",
     "@zhiloop/markdown-repository": "0.0.0"
   }
 }

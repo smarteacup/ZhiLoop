@@ -7,6 +7,8 @@ import { Writable } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { REQUIRED_LOCAL_RELEASE_FILES } from "@zhiloop/local-deployment";
+
 import { SidecarApplication } from "./application.js";
 import { runDeploymentCli } from "./deployment-cli.js";
 import { startSidecarServer, stopSidecarServer } from "./transport.js";
@@ -29,10 +31,13 @@ async function fixture(): Promise<{ home: string; artifact: string }> {
   const home = await mkdtemp(join(tmpdir(), "zhiloop-cli-"));
   roots.push(home);
   const artifact = join(home, "artifact");
-  const relative = "apps/sidecar/dist/main.js";
-  const content = "sidecar";
-  await mkdir(join(artifact, "apps", "sidecar", "dist"), { recursive: true });
-  await writeFile(join(artifact, relative), content);
+  const files: Array<{ readonly path: string; readonly sha256: string; readonly mode: number }> = [];
+  for (const relative of REQUIRED_LOCAL_RELEASE_FILES) {
+    const content = relative.endsWith(".json") ? "{}\n" : relative.endsWith(".html") ? "<!doctype html><title>ZhiLoop</title>\n" : `// fixture ${relative}\n`;
+    await mkdir(join(artifact, ...relative.split("/").slice(0, -1)), { recursive: true });
+    await writeFile(join(artifact, ...relative.split("/")), content);
+    files.push({ path: relative, sha256: createHash("sha256").update(content).digest("hex"), mode: 0o444 });
+  }
   await writeFile(join(artifact, "release.json"), JSON.stringify({
     schemaVersion: 1,
     version: "0.1.0",
@@ -42,7 +47,7 @@ async function fixture(): Promise<{ home: string; artifact: string }> {
     nodePath: process.execPath,
     nodeVersion: process.versions.node,
     createdAt: "2026-08-03T00:00:00.000Z",
-    files: [{ path: relative, sha256: createHash("sha256").update(content).digest("hex"), mode: 0o444 }],
+    files,
   }));
   return { home, artifact };
 }

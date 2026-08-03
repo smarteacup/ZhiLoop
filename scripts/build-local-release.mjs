@@ -6,17 +6,21 @@ import process from "node:process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 const WORKSPACES = [
+  ["apps/console-gateway", "console-gateway"],
   ["packages/codex-session-capture", "codex-session-capture"],
+  ["packages/control-api", "control-api"],
   ["packages/daemon-runtime", "daemon"],
   ["packages/conversation-ledger", "conversation-ledger"],
   ["packages/domain", "domain"],
   ["packages/hook-runtime", "hook-runtime"],
   ["packages/ingestion-codex", "ingestion-codex"],
   ["packages/local-deployment", "local-deployment"],
+  ["packages/operational-read-model", "operational-read-model"],
   ["packages/plugin-runtime", "plugin-runtime"],
   ["packages/schemas", "schemas"],
+  ["packages/session-catalog", "session-catalog"],
 ];
 const EXTERNALS = [
   ["packages/schemas/node_modules/ajv", "ajv"],
@@ -25,6 +29,7 @@ const EXTERNALS = [
   ["node_modules/fast-uri", "fast-uri"],
   ["packages/schemas/node_modules/json-schema-traverse", "json-schema-traverse"],
   ["node_modules/require-from-string", "require-from-string"],
+  ["node_modules/zod", "zod"],
 ];
 
 function option(name) {
@@ -71,6 +76,8 @@ async function listFiles(directory, prefix = "") {
 function releaseMode(relativePath) {
   return relativePath === "apps/sidecar/dist/main.js"
     || relativePath === "apps/sidecar/dist/deploy-main.js"
+    || relativePath === "apps/cli/dist/ui-main.js"
+    || relativePath === "apps/console-gateway/dist/main.js"
     || relativePath.startsWith("plugins/zhiloop/scripts/")
     ? 0o555
     : 0o444;
@@ -91,10 +98,28 @@ async function main() {
   const temporary = `${output}.tmp-${randomUUID()}`;
   try {
     const sidecarDist = path.join(process.cwd(), "apps", "sidecar", "dist");
-    if (!(await exists(path.join(sidecarDist, "main.js"))) || !(await exists(path.join(sidecarDist, "deploy-main.js")))) {
+    const cliDist = path.join(process.cwd(), "apps", "cli", "dist");
+    const gatewayDist = path.join(process.cwd(), "apps", "console-gateway", "dist");
+    if (!(await exists(path.join(sidecarDist, "main.js"))) || !(await exists(path.join(sidecarDist, "deploy-main.js")))
+      || !(await exists(path.join(cliDist, "ui-main.js"))) || !(await exists(path.join(cliDist, "ui-cli.js")))
+      || !(await exists(path.join(gatewayDist, "index.js"))) || !(await exists(path.join(gatewayDist, "main.js")))) {
       throw new Error("build the repository before creating a local release");
     }
+    const viteEntrypoint = path.join(process.cwd(), "node_modules", "vite", "bin", "vite.js");
+    if (!(await exists(viteEntrypoint))) throw new Error("the local Vite runtime is required to build Console assets");
+    await execFileAsync(process.execPath, [viteEntrypoint, "build"], {
+      cwd: path.join(process.cwd(), "apps", "console-web"),
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const webDist = path.join(process.cwd(), "apps", "console-web", "dist");
+    if (!(await exists(path.join(webDist, "index.html")))) throw new Error("Console Web build did not produce index.html");
     await copyTree(sidecarDist, path.join(temporary, "apps", "sidecar", "dist"), (name) => name !== ".tsbuildinfo");
+    await copyTree(path.join(cliDist, "ui-main.js"), path.join(temporary, "apps", "cli", "dist", "ui-main.js"));
+    await copyTree(path.join(cliDist, "ui-cli.js"), path.join(temporary, "apps", "cli", "dist", "ui-cli.js"));
+    await copyTree(gatewayDist, path.join(temporary, "apps", "console-gateway", "dist"), (name) => name !== ".tsbuildinfo");
+    await copyTree(webDist, path.join(temporary, "apps", "console-web", "dist"));
     for (const [workspace, packageName] of WORKSPACES) {
       const source = path.join(process.cwd(), workspace);
       const target = path.join(temporary, "node_modules", "@zhiloop", packageName);

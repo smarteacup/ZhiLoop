@@ -5,6 +5,9 @@ import { once } from "node:events";
 import {
   CONTROL_API_SCHEMA_VERSION,
   capabilityPageSchema,
+  captureCommitResultSchema,
+  capturePreviewSchema,
+  controlRequestSchema,
   diagnosticsSchema,
   eventMetadataPageSchema,
   jobPageSchema,
@@ -13,10 +16,12 @@ import {
   sessionDetailSchema,
   sessionIdSchema,
   sessionPageSchema,
+  type ControlResponse,
 } from "@zhiloop/control-api";
 
 import { BrowserSessionManager, createBootstrapToken } from "./auth.js";
-import type { ControlQueryPort, PageQuery, QueryOptions } from "./ports.js";
+import { ControlClientError } from "./control-client.js";
+import type { ControlCommandPort, ControlQueryPort, PageQuery, QueryOptions } from "./ports.js";
 import {
   FixedWindowRateLimiter,
   applySafeHeaders,
@@ -26,6 +31,7 @@ import {
 import { StaticAssetStore } from "./static-assets.js";
 
 const MAX_BOOTSTRAP_BODY_BYTES = 8_192;
+const MAX_COMMAND_BODY_BYTES = 16_384;
 const MAX_JSON_RESPONSE_BYTES = 1_048_576;
 
 interface OutputSchema<T> {
@@ -34,6 +40,7 @@ interface OutputSchema<T> {
 
 export interface ConsoleGatewayOptions {
   readonly queryPort: ControlQueryPort;
+  readonly commandPort?: ControlCommandPort;
   readonly staticRoot: string;
   readonly host?: string;
   readonly port?: number;
@@ -58,7 +65,7 @@ export interface ConsoleGateway {
   close(): Promise<void>;
 }
 
-type ControlErrorCode = "UNAUTHORIZED" | "FORBIDDEN_ORIGIN" | "CSRF_REJECTED" | "NOT_FOUND" | "INVALID_REQUEST" | "RATE_LIMITED" | "SIDECAR_UNAVAILABLE" | "INTERNAL_ERROR";
+type ControlErrorCode = Extract<ControlResponse, { readonly ok: false }>["error"]["code"];
 
 function safeError(response: ServerResponse, status: number, code: ControlErrorCode, message: string): void {
   sendJson(response, status, {
@@ -170,6 +177,43 @@ async function executeView<T>(
   }
 }
 
+async function executeCommand<T>(
+  response: ServerResponse,
+  schema: OutputSchema<T>,
+  timeoutMs: number,
+  maximumBytes: number,
+  operation: (options: QueryOptions) => Promise<T>,
+): Promise<void> {
+  try {
+    const value = await withTimeout(timeoutMs, operation);
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      safeError(response, 502, "INTERNAL_ERROR", "Control API returned an invalid response");
+      return;
+    }
+    sendJson(response, 200, {
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      requestId: randomUUID(),
+      observedAt: new Date().toISOString(),
+      ok: true,
+      result: parsed.data,
+    }, maximumBytes);
+  } catch (error) {
+    const remoteCode = error instanceof ControlClientError ? error.remoteCode : undefined;
+    if (remoteCode === "CONFLICT" || remoteCode === "STALE_REVISION") {
+      safeError(response, 409, remoteCode, "Capture preview is stale or conflicts with current state");
+    } else if (remoteCode === "INVALID_REQUEST") {
+      safeError(response, 400, remoteCode, "Capture command was rejected");
+    } else if (remoteCode === "RATE_LIMITED") {
+      safeError(response, 429, remoteCode, "Capture command rate limit exceeded");
+    } else if (remoteCode === "CAPABILITY_UNAVAILABLE" || remoteCode === "SIDECAR_UNAVAILABLE") {
+      safeError(response, 503, remoteCode, "Capture command capability is unavailable");
+    } else {
+      safeError(response, 503, "SIDECAR_UNAVAILABLE", "Capture command is unavailable");
+    }
+  }
+}
+
 export async function createConsoleGateway(options: ConsoleGatewayOptions): Promise<ConsoleGateway> {
   const host = options.host ?? "127.0.0.1";
   assertLoopbackBind(host);
@@ -275,13 +319,70 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         safeError(response, 403, "CSRF_REJECTED", "CSRF proof rejected");
         return;
       }
+      const execute = <T>(schema: OutputSchema<T>, operation: (queryOptions: QueryOptions) => Promise<T>) =>
+        executeView(response, schema, queryTimeoutMs, maximumJsonResponseBytes, operation);
+      const executeCapture = <T>(schema: OutputSchema<T>, operation: (queryOptions: QueryOptions) => Promise<T>) =>
+        executeCommand(response, schema, queryTimeoutMs, maximumJsonResponseBytes, operation);
+      if (url.pathname === "/api/v1/capture-jobs") {
+        if (request.method !== "POST" || url.searchParams.size !== 0 || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "INVALID_REQUEST", "Capture command requires application/json POST");
+          return;
+        }
+        const commandPort = options.commandPort;
+        if (commandPort === undefined) {
+          safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Capture command capability is unavailable");
+          return;
+        }
+        try {
+          const decoded = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (typeof decoded !== "object" || decoded === null || !("dryRun" in decoded) || typeof (decoded as { dryRun?: unknown }).dryRun !== "boolean") {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid capture command");
+            return;
+          }
+          const dryRun = (decoded as { dryRun: boolean }).dryRun;
+          const expectedKeys = dryRun
+            ? ["dryRun", "sessionId"]
+            : ["dryRun", "idempotencyKey", "previewRevision", "sessionId", "transcriptIdentityHash"];
+          if (Object.keys(decoded).sort().join("|") !== expectedKeys.join("|")) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid capture command fields");
+            return;
+          }
+          const parsed = controlRequestSchema.safeParse(dryRun
+            ? { schemaVersion: CONTROL_API_SCHEMA_VERSION, requestId: randomUUID(), type: "capture.preview", sessionId: (decoded as { sessionId?: unknown }).sessionId }
+            : {
+                schemaVersion: CONTROL_API_SCHEMA_VERSION,
+                requestId: randomUUID(),
+                type: "capture.commit",
+                sessionId: (decoded as { sessionId?: unknown }).sessionId,
+                previewRevision: (decoded as { previewRevision?: unknown }).previewRevision,
+                transcriptIdentityHash: (decoded as { transcriptIdentityHash?: unknown }).transcriptIdentityHash,
+                idempotencyKey: (decoded as { idempotencyKey?: unknown }).idempotencyKey,
+              });
+          if (!parsed.success || (parsed.data.type !== "capture.preview" && parsed.data.type !== "capture.commit")) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid capture command");
+            return;
+          }
+          const captureRequest = parsed.data;
+          if (captureRequest.type === "capture.preview") {
+            await executeCapture(capturePreviewSchema, (queryOptions) => commandPort.previewCapture(captureRequest.sessionId, queryOptions));
+          } else {
+            await executeCapture(captureCommitResultSchema, (queryOptions) => commandPort.commitCapture({
+              sessionId: captureRequest.sessionId,
+              previewRevision: captureRequest.previewRevision,
+              transcriptIdentityHash: captureRequest.transcriptIdentityHash,
+              idempotencyKey: captureRequest.idempotencyKey,
+            }, queryOptions));
+          }
+        } catch {
+          if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Capture command is invalid or too large");
+        }
+        return;
+      }
       if (request.method !== "GET") {
         safeError(response, 405, "INVALID_REQUEST", "Read-only endpoint requires GET");
         return;
       }
       const page = parsePage(url.searchParams);
-      const execute = <T>(schema: OutputSchema<T>, operation: (queryOptions: QueryOptions) => Promise<T>) =>
-        executeView(response, schema, queryTimeoutMs, maximumJsonResponseBytes, operation);
       if (url.pathname === "/api/v1/overview" && url.searchParams.size === 0) {
         await execute(overviewSchema, (queryOptions) => options.queryPort.getOverview(queryOptions));
         return;

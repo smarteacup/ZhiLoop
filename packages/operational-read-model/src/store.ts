@@ -6,6 +6,7 @@ import {
   CONTROL_API_SCHEMA_VERSION,
   MAX_PAGE_SIZE,
   capabilitySnapshotSchema,
+  captureCommitResultSchema,
   diagnosticsSchema,
   eventMetadataSchema,
   jobSnapshotSchema,
@@ -14,6 +15,7 @@ import {
   sessionSummarySchema,
   stageSnapshotSchema,
   type CapabilitySnapshot,
+  type CaptureCommitResult,
   type Diagnostics,
   type EventMetadata,
   type JobSnapshot,
@@ -48,7 +50,7 @@ import {
 } from "./validation.js";
 
 const COMPONENT = "operational-read-model";
-const CURRENT_MIGRATION_VERSION = 1;
+const CURRENT_MIGRATION_VERSION = 2;
 const DEFAULT_PAGE_SIZE = 50;
 
 interface JsonRow {
@@ -328,6 +330,12 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
           lag INTEGER NOT NULL CHECK(lag >= 0),
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS capture_command_receipts (
+          idempotency_key TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL CHECK(length(fingerprint) = 64),
+          result_json TEXT NOT NULL,
+          committed_at TEXT NOT NULL
+        );
       `);
       this.#faultInjector?.("migration.after-schema");
       this.#database.prepare(`
@@ -504,6 +512,48 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
 
   projectEventMetadata(input: EventMetadata): void {
     this.#transaction(() => this.#writeEvent(input));
+  }
+
+  projectEventMetadataBatch(inputs: readonly EventMetadata[]): void {
+    if (inputs.length === 0) return;
+    if (inputs.length > 1_000) throw new RangeError("event projection batch exceeds 1000 records");
+    this.#transaction(() => {
+      for (const input of inputs) this.#writeEvent(input);
+    });
+  }
+
+  latestEventSequence(): number {
+    this.#assertOpen();
+    const row = this.#database.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM projected_event_metadata").get() as { sequence: number };
+    return row.sequence;
+  }
+
+  getCaptureCommandReceipt(idempotencyKey: string): { readonly fingerprint: string; readonly result: CaptureCommitResult } | undefined {
+    this.#assertOpen();
+    const row = this.#database.prepare(
+      "SELECT fingerprint, result_json FROM capture_command_receipts WHERE idempotency_key = ?",
+    ).get(idempotencyKey) as { fingerprint: string; result_json: string } | undefined;
+    if (row === undefined) return undefined;
+    return Object.freeze({ fingerprint: row.fingerprint, result: captureCommitResultSchema.parse(JSON.parse(row.result_json) as unknown) });
+  }
+
+  saveCaptureCommandReceipt(idempotencyKey: string, fingerprint: string, result: CaptureCommitResult): void {
+    if (!/^[A-Za-z0-9._:-]{16,200}$/u.test(idempotencyKey) || !/^[a-f0-9]{64}$/u.test(fingerprint)) {
+      throw new Error("invalid capture command receipt identity");
+    }
+    const parsed = captureCommitResultSchema.parse(result);
+    this.#transaction(() => {
+      const existing = this.#database.prepare(
+        "SELECT fingerprint, result_json FROM capture_command_receipts WHERE idempotency_key = ?",
+      ).get(idempotencyKey) as { fingerprint: string; result_json: string } | undefined;
+      if (existing !== undefined) {
+        if (existing.fingerprint !== fingerprint || existing.result_json !== JSON.stringify(parsed)) throw new Error("capture command receipt conflict");
+        return;
+      }
+      this.#database.prepare(
+        "INSERT INTO capture_command_receipts(idempotency_key, fingerprint, result_json, committed_at) VALUES (?, ?, ?, ?)",
+      ).run(idempotencyKey, fingerprint, JSON.stringify(parsed), this.#clock().toISOString());
+    });
   }
 
   projectOperatorDiagnostic(input: OperatorDiagnostic): void {

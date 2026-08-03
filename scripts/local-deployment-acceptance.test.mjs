@@ -31,7 +31,7 @@ function ready() {
     schemaVersion: 1,
     status: "READY",
     pluginVersion: "0.1.0",
-    sidecarVersion: "0.1.4",
+    sidecarVersion: "0.1.5",
     protocolVersion: 1,
     hookSchemaVersion: "codex-hooks-v1",
     appServerSchemaVersion: "codex-app-server-v2",
@@ -69,11 +69,42 @@ async function waitForHealth(launcher, config) {
   throw lastError;
 }
 
+async function waitForJsonLine(child) {
+  return await new Promise((resolve, reject) => {
+    let buffered = "";
+    const timer = setTimeout(() => reject(new Error("timed out waiting for Console startup")), 5_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout.off("data", onData);
+      child.off("error", onError);
+      child.off("close", onClose);
+    };
+    const onError = (error) => { cleanup(); reject(error); };
+    const onClose = (code) => { cleanup(); reject(new Error(`Console exited before startup: ${code}`)); };
+    const onData = (chunk) => {
+      buffered += chunk;
+      const newline = buffered.indexOf("\n");
+      if (newline < 0) return;
+      cleanup();
+      try {
+        resolve(JSON.parse(buffered.slice(0, newline)));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", onData);
+    child.once("error", onError);
+    child.once("close", onClose);
+  });
+}
+
 test("built release installs, captures in SHADOW, preserves CCM, and uninstalls recoverably", async () => {
   const temporary = await mkdtemp(path.join(tmpdir(), "zhiloop-acceptance-"));
   const home = path.join(temporary, "home");
   const artifact = path.join(temporary, "artifact");
   let sidecar;
+  let consoleProcess;
   try {
     await mkdir(path.join(home, ".codex"), { recursive: true });
     await mkdir(path.join(home, ".ccm"), { recursive: true });
@@ -85,6 +116,18 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     await writeFile(path.join(home, ".codex", "hooks.json"), originalHooks);
     await writeFile(path.join(home, ".ccm", "config.json"), ccmConfig);
     await execFileAsync(process.execPath, [path.join(repository, "scripts", "build-local-release.mjs"), "--output", artifact], { cwd: repository });
+    const release = JSON.parse(await readFile(path.join(artifact, "release.json"), "utf8"));
+    const releaseFiles = new Set(release.files.map(({ path: filePath }) => filePath));
+    for (const required of [
+      "apps/cli/dist/ui-main.js",
+      "apps/cli/dist/ui-cli.js",
+      "apps/console-gateway/dist/main.js",
+      "apps/console-web/dist/index.html",
+      "node_modules/@zhiloop/console-gateway/package.json",
+      "node_modules/@zhiloop/control-api/package.json",
+      "node_modules/@zhiloop/local-deployment/package.json",
+      "node_modules/zod/package.json",
+    ]) assert.equal(releaseFiles.has(required), true, `missing Console release file: ${required}`);
 
     const deployment = await import(pathToFileURL(path.join(repository, "packages", "local-deployment", "dist", "index.js")).href);
     const service = new FakeService();
@@ -103,11 +146,28 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     const paths = deployment.resolveDeploymentPaths(home, "0.1.0");
     assert.equal(await readFile(path.join(home, ".ccm", "config.json"), "utf8"), ccmConfig);
     assert.match(await readFile(paths.codexHooksPath, "utf8"), /zhiloop-sidecar/u);
+    assert.doesNotMatch(await readFile(paths.sidecarLauncher, "utf8"), /console|gateway|ui-main/iu);
+
+    consoleProcess = spawn(paths.zhiloopLauncher, ["ui", "--home", home, "--no-open", "--port", "0", "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const consoleStarted = await waitForJsonLine(consoleProcess);
+    assert.equal(consoleStarted.schemaVersion, 1);
+    assert.match(consoleStarted.origin, /^http:\/\/127\.0\.0\.1:\d+$/u);
+    assert.equal(new URL(consoleStarted.bootstrapUrl).search, "");
+    assert.match(new URL(consoleStarted.bootstrapUrl).hash, /^#bootstrap=/u);
+    const consolePage = await fetch(consoleStarted.origin);
+    assert.equal(consolePage.status, 200);
+    assert.match(await consolePage.text(), /ZhiLoop/u);
+    assert.equal(await readFile(path.join(home, ".ccm", "config.json"), "utf8"), ccmConfig);
+    consoleProcess.kill("SIGTERM");
+    await new Promise((resolve) => consoleProcess.once("close", resolve));
+    consoleProcess = undefined;
 
     const missingConfig = await runHook(paths.sidecarLauncher, `${paths.configPath}.missing`, {
       hook_event_name: "UserPromptSubmit", session_id: "missing-config", turn_id: "1", cwd: home, prompt: "fail open",
     });
-    assert.equal(missingConfig.code, 0);
+    assert.equal(missingConfig.code, 0, JSON.stringify(missingConfig));
     assert.equal(missingConfig.stdout, "");
 
     sidecar = spawn(paths.sidecarLauncher, ["serve", "--config", paths.configPath], { stdio: "ignore" });
@@ -128,23 +188,62 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
 
     const transcriptDirectory = path.join(paths.codexSessionsRoot, "2026", "08", "03");
     await mkdir(transcriptDirectory, { recursive: true });
-    await writeFile(path.join(transcriptDirectory, "rollout-acceptance-history.jsonl"), [
+    const transcriptPath = path.join(transcriptDirectory, "rollout-acceptance-history.jsonl");
+    await writeFile(transcriptPath, [
       JSON.stringify({ type: "session_meta", timestamp: "2026-08-03T00:00:00.000Z", payload: { id: "acceptance-history", session_id: "acceptance-history", cli_version: "0.145.0" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:01.000Z", payload: { type: "user_message", message: "historical prompt" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-08-03T00:00:02.000Z", payload: { type: "task_complete", turn_id: "turn-history", last_agent_message: "historical conclusion" } }),
     ].join("\n") + "\n");
-    const preview = JSON.parse((await execFileAsync(paths.zhiloopLauncher, [
-      "capture", "--home", home, "--session", "acceptance-history", "--dry-run", "--json",
-    ])).stdout);
-    assert.equal(preview.status, "PREVIEWED");
+    const transcriptBefore = await readFile(transcriptPath);
+
+    consoleProcess = spawn(paths.zhiloopLauncher, ["ui", "--home", home, "--no-open", "--port", "0", "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const interactiveConsole = await waitForJsonLine(consoleProcess);
+    const bootstrap = new URL(interactiveConsole.bootstrapUrl);
+    const token = new URLSearchParams(bootstrap.hash.slice(1)).get("bootstrap");
+    assert.equal(typeof token, "string");
+    const exchange = await fetch(`${interactiveConsole.origin}/api/v1/auth/exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: interactiveConsole.origin },
+      body: JSON.stringify({ token }),
+    });
+    assert.equal(exchange.status, 200);
+    const sessionCookie = exchange.headers.get("set-cookie")?.split(";", 1)[0];
+    const { csrfToken } = await exchange.json();
+    assert.equal(typeof sessionCookie, "string");
+    assert.equal(typeof csrfToken, "string");
+    const browserHeaders = { cookie: sessionCookie, "x-zhiloop-csrf": csrfToken, origin: interactiveConsole.origin };
+    const overviewResponse = await fetch(`${interactiveConsole.origin}/api/v1/overview`, { headers: browserHeaders });
+    assert.equal(overviewResponse.status, 200);
+    assert.equal((await overviewResponse.json()).result.rolloutMode, "SHADOW");
+    const sessionsResponse = await fetch(`${interactiveConsole.origin}/api/v1/sessions`, { headers: browserHeaders });
+    const sessions = (await sessionsResponse.json()).result.items;
+    assert.equal(sessions.some(({ sessionId }) => sessionId === "acceptance-history"), true);
+    const detailResponse = await fetch(`${interactiveConsole.origin}/api/v1/sessions/acceptance-history`, { headers: browserHeaders });
+    assert.equal((await detailResponse.json()).result.summary.sessionId, "acceptance-history");
+    const commandHeaders = { ...browserHeaders, "content-type": "application/json" };
+    const previewResponse = await fetch(`${interactiveConsole.origin}/api/v1/capture-jobs`, {
+      method: "POST", headers: commandHeaders, body: JSON.stringify({ sessionId: "acceptance-history", dryRun: true }),
+    });
+    assert.equal(previewResponse.status, 200);
+    const preview = (await previewResponse.json()).result;
     assert.equal(preview.projectedEvents, 3);
-    assert.equal(preview.appendedEvents, 0);
-    const captured = JSON.parse((await execFileAsync(paths.zhiloopLauncher, [
-      "capture", "--home", home, "--session", "acceptance-history", "--json",
-    ])).stdout);
-    assert.equal(captured.status, "CAPTURED");
-    assert.equal(captured.appendedEvents, 3);
-    assert.equal(captured.knowledgeCompiled, false);
+    const commitResponse = await fetch(`${interactiveConsole.origin}/api/v1/capture-jobs`, {
+      method: "POST",
+      headers: commandHeaders,
+      body: JSON.stringify({ sessionId: "acceptance-history", dryRun: false, previewRevision: preview.previewRevision, transcriptIdentityHash: preview.transcriptIdentityHash, idempotencyKey: `acceptance:${preview.previewRevision}:${preview.transcriptIdentityHash.slice(0, 24)}` }),
+    });
+    assert.equal(commitResponse.status, 200);
+    const committed = (await commitResponse.json()).result;
+    assert.equal(committed.appendedEvents, 3);
+    assert.equal(committed.knowledgeCompileStage.status, "DISABLED");
+    assert.equal(committed.knowledgeCompileStage.reasonCode, "KNOWLEDGE_WORKER_NOT_COMPOSED");
+    assert.deepEqual(await readFile(transcriptPath), transcriptBefore);
+    consoleProcess.kill("SIGTERM");
+    await new Promise((resolve) => consoleProcess.once("close", resolve));
+    consoleProcess = undefined;
+
     const repeated = JSON.parse((await execFileAsync(paths.zhiloopLauncher, [
       "capture", "--home", home, "--session", "acceptance-history", "--json",
     ])).stdout);
@@ -163,6 +262,7 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     assert.equal(await readFile(path.join(home, ".ccm", "config.json"), "utf8"), ccmConfig);
     assert.equal((await readFile(paths.ledgerPath)).length > 0, true);
   } finally {
+    consoleProcess?.kill("SIGKILL");
     sidecar?.kill("SIGKILL");
     await rm(temporary, { recursive: true, force: true });
   }

@@ -221,7 +221,7 @@ describe("UnixSocketControlClient", () => {
       error: { code: "SIDECAR_UNAVAILABLE", message: "Unavailable", retryable: true },
     }));
     const remoteErrorClient = new UnixSocketControlClient({ socketPath: remoteErrorSocket });
-    await expect(remoteErrorClient.getOverview({ signal: new AbortController().signal })).rejects.toMatchObject({ code: "REMOTE_ERROR" });
+    await expect(remoteErrorClient.getOverview({ signal: new AbortController().signal })).rejects.toMatchObject({ code: "REMOTE_ERROR", remoteCode: "SIDECAR_UNAVAILABLE" });
 
     const transportErrorSocket = await serve(() => ({ ok: false, errorCode: "CONTROL_REJECTED" }));
     const transportErrorClient = new UnixSocketControlClient({ socketPath: transportErrorSocket });

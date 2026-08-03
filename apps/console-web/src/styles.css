@@ -88,5 +88,25 @@ main { min-width: 0; padding: 48px clamp(32px, 5vw, 76px) 80px; }
 .injection-list, .job-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .injection-list article, .job-list article { padding: 14px; background: #0e1318; border-radius: 8px; }
 .back-link { width: fit-content; color: var(--muted); text-decoration: none; }
+.capture-panel .section-heading > div { display: grid; gap: 6px; }
+.capture-panel .section-heading p { margin: 0; }
+.capture-preview { display: grid; gap: 16px; padding: 16px; background: #0e1318; border: 1px solid var(--line); border-radius: 10px; }
+.capture-preview h3 { margin: 0; }
+.capture-event-types { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.capture-event-types li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; background: var(--panel-raised); border-radius: 7px; }
+.capture-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.primary-button, .secondary-button { border-radius: 8px; padding: 10px 16px; font-weight: 800; cursor: pointer; }
+.primary-button { border: 0; color: #12160d; background: var(--accent); }
+.secondary-button { border: 1px solid var(--line); color: #fff; background: transparent; }
+.primary-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .5; }
+.inline-alert { padding: 14px 16px; margin: 12px 0; border: 1px solid var(--line); border-radius: 9px; background: #10161c; }
+.inline-alert.warning { border-color: #5d4d25; background: #2b2514; }
+.inline-alert.error { border-color: #633731; background: #2d1715; }
+.inline-alert p { color: var(--muted); margin: 6px 0 0; }
+.capture-result { display: grid; gap: 10px; margin-top: 16px; padding: 16px; border: 1px solid #285941; background: #102a20; border-radius: 10px; }
+.capture-result p { margin: 0; }
+.capture-stage { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 12px; background: rgba(8, 14, 11, .55); border-radius: 8px; }
+.capture-stage > div { display: grid; gap: 4px; }
+.capture-stage small { color: var(--muted); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; } }

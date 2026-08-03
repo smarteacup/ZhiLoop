@@ -2,16 +2,19 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
+import { parseControlRequestText, type ControlRequest } from "@zhiloop/control-api";
+
 import type { SidecarApplication } from "./application.js";
 
 const MAX_TRANSPORT_BYTES = 5_500_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 
-type SidecarRequest =
+export type SidecarRequest =
   | { readonly type: "hook"; readonly input: unknown }
   | { readonly type: "health" }
   | { readonly type: "worker" }
-  | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean };
+  | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean }
+  | ControlRequest;
 
 interface SidecarResponse {
   readonly ok: boolean;
@@ -53,7 +56,15 @@ function parseRequest(value: unknown): SidecarRequest {
     if (typeof sessionId !== "string" || typeof dryRun !== "boolean") throw new Error("invalid capture-session request");
     return { type, sessionId, dryRun };
   }
-  throw new Error("unsupported request");
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new Error("invalid request");
+  const parsed = parseControlRequestText(serialized);
+  if (!parsed.ok) {
+    const error = new Error("invalid control request") as Error & { code: string };
+    error.code = parsed.code;
+    throw error;
+  }
+  return parsed.value;
 }
 
 async function readOne(socket: Socket, maximum: number): Promise<unknown> {
@@ -78,12 +89,16 @@ async function readOne(socket: Socket, maximum: number): Promise<unknown> {
         return;
       }
       chunks.push(chunk);
-      const combined = Buffer.concat(chunks);
-      const newline = combined.indexOf(0x0a);
+      const newline = chunk.indexOf(0x0a);
       if (newline < 0) return;
+      if (newline !== chunk.length - 1) {
+        fail(new SyntaxError("transport accepts exactly one frame per connection"));
+        return;
+      }
+      const combined = chunks.length === 1 ? chunk : Buffer.concat(chunks, size);
       cleanup();
       try {
-        resolve(JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown);
+        resolve(JSON.parse(combined.subarray(0, combined.length - 1).toString("utf8")) as unknown);
       } catch (error) {
         reject(error);
       }
@@ -104,7 +119,9 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
         ? await application.health()
         : request.type === "worker"
           ? await application.runWorkerOnce()
-          : await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun });
+          : request.type === "capture-session"
+            ? await application.captureSession({ sessionId: request.sessionId, dryRun: request.dryRun })
+            : await application.handleControl(request);
     response = { ok: true, result };
   } catch (error) {
     const lineNumber = error instanceof Error && "lineNumber" in error && typeof error.lineNumber === "number" && Number.isSafeInteger(error.lineNumber)
@@ -120,7 +137,13 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
       ...(byteOffset === undefined ? {} : { errorByteOffset: byteOffset }),
     };
   }
-  if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
+  if (!socket.destroyed) {
+    let serialized = `${JSON.stringify(response)}\n`;
+    if (Buffer.byteLength(serialized) > MAX_RESPONSE_BYTES) {
+      serialized = `${JSON.stringify({ ok: false, errorCode: "RESPONSE_TOO_LARGE" })}\n`;
+    }
+    socket.end(serialized);
+  }
 }
 
 async function removeStaleSocket(path: string): Promise<void> {

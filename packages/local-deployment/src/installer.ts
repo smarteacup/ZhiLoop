@@ -57,6 +57,10 @@ function launcher(nodePath: string, entrypoint: string): string {
   return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(entrypoint)} "$@"\n`;
 }
 
+export function renderZhiLoopLauncher(nodePath: string, deploymentEntrypoint: string, uiEntrypoint: string): string {
+  return `#!/bin/sh\nif [ "$1" = "ui" ]; then\n  shift\n  exec ${shellQuote(nodePath)} ${shellQuote(uiEntrypoint)} "$@"\nfi\nexec ${shellQuote(nodePath)} ${shellQuote(deploymentEntrypoint)} "$@"\n`;
+}
+
 export function managedHookConfiguration(sidecarLauncher: string, configPath: string): HookConfiguration {
   const command = `${shellQuote(sidecarLauncher)} hook --config ${shellQuote(configPath)}`;
   const cloned = structuredClone(ZHILOOP_HOOK_CONFIGURATION);
@@ -132,12 +136,31 @@ function buildPlan(paths: ReturnType<typeof resolveDeploymentPaths>, metadata: R
       planItem("write-launch-agent", "REPLACE", "write macOS user LaunchAgent", paths.launchAgentPath),
       planItem("switch-current", "REPLACE", "atomically select the release", paths.currentLink),
       planItem("write-sidecar-launcher", "REPLACE", "write stable sidecar launcher", paths.sidecarLauncher),
-      planItem("write-cli-launcher", "REPLACE", "write stable deployment CLI launcher", paths.zhiloopLauncher),
+      planItem("write-cli-launcher", "REPLACE", "write stable deployment and local Console CLI launcher", paths.zhiloopLauncher),
       planItem("merge-codex-hooks", "MERGE", "add owned ZhiLoop hooks without changing CCM", paths.codexHooksPath),
       planItem("write-manifest", "REPLACE", "record deployment ownership", paths.manifestPath),
       planItem("activate-service", "START", "bootstrap READY/SHADOW LaunchAgent", paths.launchAgentPath),
     ]),
   });
+}
+
+export const REQUIRED_LOCAL_RELEASE_FILES = Object.freeze([
+  "apps/sidecar/dist/main.js",
+  "apps/sidecar/dist/deploy-main.js",
+  "apps/cli/dist/ui-main.js",
+  "apps/cli/dist/ui-cli.js",
+  "apps/console-gateway/dist/main.js",
+  "apps/console-web/dist/index.html",
+  "node_modules/@zhiloop/console-gateway/package.json",
+  "node_modules/@zhiloop/control-api/package.json",
+  "node_modules/@zhiloop/local-deployment/package.json",
+  "node_modules/zod/package.json",
+]);
+
+function assertLocalReleaseRuntime(metadata: ReleaseMetadata): void {
+  const files = new Set(metadata.files.map(({ path }) => path));
+  const missing = REQUIRED_LOCAL_RELEASE_FILES.filter((path) => !files.has(path));
+  if (missing.length > 0) throw new Error(`release artifact is missing required local runtime files: ${missing.join(", ")}`);
 }
 
 function expectedManagedPaths(paths: ReturnType<typeof resolveDeploymentPaths>): Set<string> {
@@ -234,6 +257,7 @@ function serviceStep(options: LocalInstallOptions, launchAgentPath: string, expe
 
 export async function planLocalInstall(options: LocalInstallOptions): Promise<DeploymentPlan> {
   const verified = await verifyReleaseArtifact(resolve(options.artifactDirectory));
+  assertLocalReleaseRuntime(verified.metadata);
   if (verified.metadata.pluginVersion !== options.compatibility.pluginVersion
     || verified.metadata.protocolVersion !== options.compatibility.protocolVersion) {
     throw new Error("release artifact is incompatible with the requested plugin contract");
@@ -245,6 +269,7 @@ export async function planLocalInstall(options: LocalInstallOptions): Promise<De
 export async function installLocalRelease(options: LocalInstallOptions): Promise<LocalInstallResult> {
   const artifact = resolve(options.artifactDirectory);
   const verified = await verifyReleaseArtifact(artifact);
+  assertLocalReleaseRuntime(verified.metadata);
   if (verified.metadata.pluginVersion !== options.compatibility.pluginVersion
     || verified.metadata.protocolVersion !== options.compatibility.protocolVersion) {
     throw new Error("release artifact is incompatible with the requested plugin contract");
@@ -276,13 +301,19 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
   });
   const sidecarEntrypoint = resolve(paths.currentLink, "apps", "sidecar", "dist", "main.js");
   const deploymentEntrypoint = resolve(paths.currentLink, "apps", "sidecar", "dist", "deploy-main.js");
+  const uiEntrypoint = resolve(paths.currentLink, "apps", "cli", "dist", "ui-main.js");
   const steps: DeploymentStep[] = [
     await stageReleaseStep("stage-release", artifact, paths.releaseDirectory),
     await replaceFileStep("write-config", paths.configPath, configuration(paths), 0o600),
     await replaceFileStep("write-launch-agent", paths.launchAgentPath, renderLaunchAgent(paths), 0o600),
     await replaceSymlinkStep("switch-current", paths.currentLink, paths.releaseDirectory),
     await replaceFileStep("write-sidecar-launcher", paths.sidecarLauncher, launcher(verified.metadata.nodePath, sidecarEntrypoint), 0o700),
-    await replaceFileStep("write-cli-launcher", paths.zhiloopLauncher, launcher(verified.metadata.nodePath, deploymentEntrypoint), 0o700),
+    await replaceFileStep(
+      "write-cli-launcher",
+      paths.zhiloopLauncher,
+      renderZhiLoopLauncher(verified.metadata.nodePath, deploymentEntrypoint, uiEntrypoint),
+      0o700,
+    ),
     await hookStep(paths),
     await replaceFileStep("write-manifest", paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 0o600),
   ];

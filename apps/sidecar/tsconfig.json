@@ -10,10 +10,13 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/codex-session-capture" },
+    { "path": "../../packages/control-api" },
     { "path": "../../packages/conversation-ledger" },
     { "path": "../../packages/daemon-runtime" },
     { "path": "../../packages/hook-runtime" },
     { "path": "../../packages/local-deployment" },
-    { "path": "../../packages/plugin-runtime" }
+    { "path": "../../packages/operational-read-model" },
+    { "path": "../../packages/plugin-runtime" },
+    { "path": "../../packages/session-catalog" }
   ]
 }

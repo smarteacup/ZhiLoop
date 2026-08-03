@@ -9,6 +9,8 @@ import {
   CONTROL_API_SCHEMA_VERSION,
   MAX_PAGE_SIZE,
   type CapabilitySnapshot,
+  type CaptureCommitResult,
+  type CapturePreview,
   type Diagnostics,
   type EventMetadata,
   type JobSnapshot,
@@ -17,7 +19,8 @@ import {
   type SessionSummary,
 } from "@zhiloop/control-api";
 
-import type { ControlQueryPort, Page, PageQuery, QueryOptions } from "./ports.js";
+import type { CaptureCommitCommand, ControlCommandPort, ControlQueryPort, Page, PageQuery, QueryOptions } from "./ports.js";
+import { ControlClientError } from "./control-client.js";
 import { createConsoleGateway, type ConsoleGateway, type ConsoleGatewayAddress } from "./server.js";
 
 const NOW = "2026-08-03T12:00:00.000Z";
@@ -145,6 +148,23 @@ class FakeQueryPort implements ControlQueryPort {
   }
 }
 
+class FakeCommandPort implements ControlCommandPort {
+  public calls: string[] = [];
+  public failure: Error | undefined;
+
+  public async previewCapture(sessionId: string): Promise<CapturePreview> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`preview:${sessionId}`);
+    return { schemaVersion: 1, sessionId, previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 3, ignoredRecords: 0, eventTypes: { USER_PROMPT: 1 }, cursor: { byteOffset: 100, lineNumber: 4 }, hasMore: false, expiresAt: NOW };
+  }
+
+  public async commitCapture(command: CaptureCommitCommand): Promise<CaptureCommitResult> {
+    if (this.failure) throw this.failure;
+    this.calls.push(`commit:${command.sessionId}:${command.previewRevision}:${command.idempotencyKey}`);
+    return { schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 3, duplicateEvents: 0, cursor: { byteOffset: 100, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: NOW, lastTransitionAt: NOW, retryable: false, evidenceRefs: [] } };
+  }
+}
+
 interface AuthenticatedBrowser {
   readonly cookie: string;
   readonly csrf: string;
@@ -153,6 +173,7 @@ interface AuthenticatedBrowser {
 describe("Console Gateway security boundary", () => {
   let staticRoot: string;
   let queryPort: FakeQueryPort;
+  let commandPort: FakeCommandPort;
   let gateway: ConsoleGateway | undefined;
   let address: ConsoleGatewayAddress | undefined;
 
@@ -162,6 +183,7 @@ describe("Console Gateway security boundary", () => {
     await mkdir(path.join(staticRoot, "assets"));
     await writeFile(path.join(staticRoot, "assets", "app.js"), "document.title = 'ZhiLoop';");
     queryPort = new FakeQueryPort();
+    commandPort = new FakeCommandPort();
   });
 
   afterEach(async () => {
@@ -173,6 +195,7 @@ describe("Console Gateway security boundary", () => {
   async function start(overrides: Partial<Parameters<typeof createConsoleGateway>[0]> = {}): Promise<void> {
     gateway = await createConsoleGateway({
       queryPort,
+      commandPort,
       staticRoot,
       bootstrapToken: BOOTSTRAP_TOKEN,
       ...overrides,
@@ -227,6 +250,14 @@ describe("Console Gateway security boundary", () => {
     expect(queryPort.calls).toEqual([]);
   });
 
+  it("rejects 100 percent of the P0 unauthorized request sample", async () => {
+    await start({ maximumRequestsPerWindow: 120 });
+    const statuses = await Promise.all(Array.from({ length: 100 }, async () => (await fetch(`${address?.origin}/api/v1/overview`)).status));
+    expect(statuses).toHaveLength(100);
+    expect(statuses.every((status) => status === 401)).toBe(true);
+    expect(queryPort.calls).toEqual([]);
+  });
+
   it("refuses wildcard and non-loopback bind addresses", async () => {
     await expect(createConsoleGateway({ queryPort, staticRoot, host: "0.0.0.0" })).rejects.toThrow(/loopback/u);
     await expect(createConsoleGateway({ queryPort, staticRoot, host: "192.0.2.1" })).rejects.toThrow(/loopback/u);
@@ -270,6 +301,36 @@ describe("Console Gateway security boundary", () => {
       "diagnostics",
     ]);
     expect((await fetch(`${address?.origin}/api/v1/sessions?limit=${MAX_PAGE_SIZE + 1}`, { headers })).status).toBe(400);
+  });
+
+  it("binds capture preview and commit to strict authenticated commands", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const headers = { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" };
+    const preview = await fetch(`${address?.origin}/api/v1/capture-jobs`, { method: "POST", headers, body: JSON.stringify({ sessionId: "session-1", dryRun: true }) });
+    expect(preview.status).toBe(200);
+    expect((await preview.json() as { result: CapturePreview }).result.previewRevision).toBe(7);
+    const commit = await fetch(`${address?.origin}/api/v1/capture-jobs`, { method: "POST", headers, body: JSON.stringify({ sessionId: "session-1", dryRun: false, previewRevision: 7, transcriptIdentityHash: "a".repeat(64), idempotencyKey: "capture:session-1:revision-7" }) });
+    expect(commit.status).toBe(200);
+    expect((await commit.json() as { result: CaptureCommitResult }).result.knowledgeCompileStage.reasonCode).toBe("KNOWLEDGE_WORKER_NOT_COMPOSED");
+    expect(commandPort.calls).toEqual(["preview:session-1", "commit:session-1:7:capture:session-1:revision-7"]);
+    const forged = await fetch(`${address?.origin}/api/v1/capture-jobs`, { method: "POST", headers, body: JSON.stringify({ sessionId: "session-1", dryRun: true, unexpected: "field" }) });
+    expect(forged.status).toBe(400);
+  });
+
+  it("preserves stale-preview conflicts without reflecting Sidecar details", async () => {
+    commandPort.failure = new ControlClientError("private transcript changed", "REMOTE_ERROR", "STALE_REVISION");
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const response = await fetch(`${address?.origin}/api/v1/capture-jobs`, {
+      method: "POST",
+      headers: { ...authorizedHeaders(browser), origin: address?.origin ?? "", "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "session-1", dryRun: true }),
+    });
+    expect(response.status).toBe(409);
+    const body = await response.text();
+    expect(body).toContain("STALE_REVISION");
+    expect(body).not.toContain("private transcript changed");
   });
 
   it("bounds oversized views without leaking view content", async () => {

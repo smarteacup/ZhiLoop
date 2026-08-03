@@ -196,10 +196,13 @@ describe("SqliteOperationalReadModel migrations", () => {
       "SELECT migration_version FROM operational_read_model_meta WHERE component = 'operational-read-model'",
     ).get() as { migration_version: number };
     const pragma = checked.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(version.migration_version).toBe(1);
+    expect(version.migration_version).toBe(2);
     expect(pragma.user_version).toBe(77);
     expect(checked.prepare(
       "SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='session_projections'",
+    ).get()).toEqual({ count: 1 });
+    expect(checked.prepare(
+      "SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='capture_command_receipts'",
     ).get()).toEqual({ count: 1 });
     checked.close();
   });
@@ -306,6 +309,28 @@ describe("SqliteOperationalReadModel projections", () => {
         jobs: { queued: 1, running: 0, retryWait: 0, failed: 1 },
         alertCount: 1,
       });
+    model.close();
+  });
+
+  it("keeps a maximum-size P0 Overview below the 300ms P95 gate", () => {
+    const model = new SqliteOperationalReadModel(databasePath(), { cursorSecret: CURSOR_SECRET });
+    model.rebuild({
+      capabilities: Array.from({ length: 200 }, (_value, index) => capability({ capabilityId: `capability.${index}` })),
+      sessions: Array.from({ length: 20 }, (_value, index) => session(`session-${index}`, new Date(Date.parse(NOW) - index).toISOString())),
+      stages: [],
+      jobs: [],
+      events: [],
+      diagnostics: [],
+    });
+    const runtime = { observedAt: NOW, rolloutMode: "SHADOW" as const, sidecarVersion: "0.1.4", alertCount: 0 };
+    model.getOverview(runtime);
+    const latencies = Array.from({ length: 200 }, () => {
+      const startedAt = performance.now();
+      model.getOverview(runtime);
+      return performance.now() - startedAt;
+    }).sort((left, right) => left - right);
+    const p95 = latencies[Math.ceil(latencies.length * 0.95) - 1] as number;
+    expect(p95).toBeLessThan(300);
     model.close();
   });
 });

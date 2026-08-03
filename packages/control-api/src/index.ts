@@ -1,4 +1,7 @@
 export * from "./constants.js";
 export * from "./fixtures.js";
+export * from "./p2-contracts.js";
+export * from "./p2-fixtures.js";
+export * from "./p3-contracts.js";
 export * from "./schemas.js";
 export * from "./state-machine.js";

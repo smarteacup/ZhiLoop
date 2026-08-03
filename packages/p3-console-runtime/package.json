@@ -1,0 +1,39 @@
+{
+  "name": "@zhiloop/p3-console-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/config",
+      "@zhiloop/control-api",
+      "@zhiloop/domain",
+      "@zhiloop/knowledge-registry",
+      "@zhiloop/model-codex-exec",
+      "@zhiloop/retrieval-engine",
+      "@zhiloop/retrieval-query-service"
+    ],
+    "allowedExternalDependencies": ["node:*", "zod"],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@zhiloop/config": "0.0.0",
+    "@zhiloop/control-api": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/knowledge-registry": "0.0.0",
+    "@zhiloop/model-codex-exec": "0.0.0",
+    "@zhiloop/retrieval-engine": "0.0.0",
+    "@zhiloop/retrieval-query-service": "0.0.0",
+    "zod": "^4.4.3"
+  }
+}

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import {
   evaluateSidecarCompatibility,
@@ -147,10 +147,23 @@ function expectedManagedPaths(paths: ReturnType<typeof resolveDeploymentPaths>):
   ]);
 }
 
+function isManagedReleasePath(paths: ReturnType<typeof resolveDeploymentPaths>, candidate: string): boolean {
+  const version = relative(paths.releasesDirectory, candidate);
+  if (version.length === 0 || version.startsWith("..") || isAbsolute(version) || /[/\\]/u.test(version)) return false;
+  try {
+    return resolveDeploymentPaths(paths.home, version).releaseDirectory === candidate;
+  } catch {
+    return false;
+  }
+}
+
 async function validateExistingOwnership(paths: ReturnType<typeof resolveDeploymentPaths>, manifest: DeploymentManifest | undefined): Promise<void> {
   if (manifest !== undefined) {
     const expected = expectedManagedPaths(resolveDeploymentPaths(paths.home, manifest.version));
-    if (manifest.managedPaths.length !== expected.size || manifest.managedPaths.some((path) => !expected.has(path))) {
+    const unique = new Set(manifest.managedPaths);
+    if (unique.size !== manifest.managedPaths.length
+      || [...expected].some((path) => !unique.has(path))
+      || manifest.managedPaths.some((path) => !expected.has(path) && !isManagedReleasePath(paths, path))) {
       throw new Error("deployment manifest ownership does not match this installation layout");
     }
     return;

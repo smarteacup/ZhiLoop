@@ -182,6 +182,40 @@ describe("local installer", () => {
     expect(service.running).toBe(true);
   });
 
+  it("accepts retained semver release ownership across three upgrades and rejects unrelated manifest paths", async () => {
+    const targetHome = await home();
+    await seedCcmHooks(targetHome);
+    const service = new FakeService();
+    for (const version of ["0.1.0", "0.2.0", "0.3.0"]) {
+      await installLocalRelease({
+        home: targetHome,
+        artifactDirectory: await artifact(targetHome, version),
+        service,
+        health: { health: async () => ready(version) },
+        compatibility,
+        readinessAttempts: 1,
+        readinessDelayMs: 0,
+        randomId: () => `upgrade-${version.replaceAll(".", "-")}`,
+      });
+    }
+    const paths = resolveDeploymentPaths(targetHome, "0.3.0");
+    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8")) as { managedPaths: string[] };
+    expect(manifest.managedPaths).toEqual(expect.arrayContaining([
+      resolveDeploymentPaths(targetHome, "0.1.0").releaseDirectory,
+      resolveDeploymentPaths(targetHome, "0.2.0").releaseDirectory,
+      resolveDeploymentPaths(targetHome, "0.3.0").releaseDirectory,
+    ]));
+    manifest.managedPaths.push(join(targetHome, "unrelated-owned-path"));
+    await writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await expect(installLocalRelease({
+      home: targetHome,
+      artifactDirectory: await artifact(targetHome, "0.4.0"),
+      service,
+      health: { health: async () => ready("0.4.0") },
+      compatibility,
+    })).rejects.toThrow("ownership does not match");
+  });
+
   it("rejects a conflicting ZhiLoop hook before service activation", async () => {
     const targetHome = await home();
     const source = await artifact(targetHome);

@@ -7,19 +7,19 @@
 | 指标 | 数值 |
 |---|---:|
 | CR 标识 | `main@1743851+capture-codex-session` |
-| CR 耗时 | 210s |
-| 🔴 高风险 | 0 个 |
+| CR 耗时 | 360s |
+| 🔴 高风险 | 1 个 |
 | 🟡 中风险 | 2 个 |
 | 🟢 低风险 | 0 个 |
-| 修复程度 | 已修复 2/2（100%） |
+| 修复程度 | 已修复 3/3（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
 | 总 CR 次数 | 49 次 |
-| 总耗时 | 23169s |
-| 🔴 高风险累计 | 222 个 |
+| 总耗时 | 23319s |
+| 🔴 高风险累计 | 223 个 |
 | 🟡 中风险累计 | 308 个 |
 | 🟢 低风险累计 | 0 个 |
 | 平均修复程度 | 100% |
@@ -36,6 +36,7 @@ SQLite 新增 `ingestion_cursors` 辅助表但保留 `user_version = 1`，旧 `0
 
 | 维度 | 风险 | 代码定位 | 问题描述 | 影响范围 | 修复结果 |
 |---|---|---|---|---|---|
+| 删/升级所有权校验 | 🔴 高 | `packages/local-deployment/src/installer.ts` | 旧实现会在 manifest 中保留最近发行目录用于回滚，但下一次升级又要求 `managedPaths` 与“当前发行 + 固定路径”完全相等；真实多代 manifest 因多出合法旧发行而被拒绝，`0.1.3` 无法升级。 | 所有已经经历多次升级的真实安装，属于发布阻塞。 | 固定托管路径仍要求完整精确匹配，额外路径只允许位于同一 `releases/` 根下且能由合法 semver 反解；重复和任意外部路径继续拒绝。新增三代升级与恶意路径回归，已修复。 |
 | 增/可观测接口 | 🟡 中 | `apps/sidecar/src/transport.ts`、`apps/sidecar/src/deployment-cli.ts` | transcript adapter 已产生安全的行号和字节偏移，但初版 transport 只返回错误码，CLI 无法定位坏行；虽无正文泄漏，但不满足可诊断契约。 | 历史会话存在损坏或未来格式漂移时的排查效率。 | Sidecar response 和 `SidecarRequestError` 增加仅数字的 `lineNumber`/`byteOffset`，CLI 透传安全位置元数据；新增坏行正文不进入响应或日志的回归测试，已修复。 |
 | 增/性能与并发 | 🟡 中 | `packages/codex-session-capture/src/service.ts` | 活跃 transcript 末尾没有完整换行时，adapter 会返回未前进游标与 `hasMore=true`；初版会重复读取直到总批次上限。大事件批次若一次同步 append，也可能延迟 Hook 事件循环。 | 活跃会话重复采集的空转开销，以及大 transcript 下 Hook 延迟。 | 增加无游标进展即停止并保留 `hasMore`；event append 固定最多 500 条/批并在批间 `setImmediate` 让出事件循环；增加不完整末行单批停止测试，已修复。 |
 
@@ -61,10 +62,10 @@ SQLite 新增 `ingestion_cursors` 辅助表但保留 `user_version = 1`，旧 `0
 | 主动采集专项 | 41/41 通过 |
 | 临时发行验收 | build → install → dry-run → capture → repeat → uninstall 通过 |
 | 架构/Gate | 52/52 通过 |
-| 模块测试 | 681/681 通过 |
+| 模块测试 | 682/682 通过 |
 | 新模块覆盖率 | Statements 87.24%、Branches 80.55%、Functions 100%、Lines 92.74% |
-| 全仓覆盖率 | Statements 92.70%、Branches 87.98%、Functions 95.43%、Lines 95.68% |
+| 全仓覆盖率 | Statements 92.68%、Branches 87.98%、Functions 95.44%、Lines 95.66% |
 
 ## Review 结论
 
-会话身份、路径边界、参数上限、单写入者、append-before-cursor、崩溃重放、活跃文件、日志脱敏、旧版本回滚和 SHADOW 语义均有直接实现与测试证据。发现的两个中风险问题已闭环；无遗留 actionable finding。当前主要产品边界仍是主动采集只到 ledger，生产知识编译与注入没有被本变更隐式开启。
+会话身份、路径边界、参数上限、单写入者、append-before-cursor、崩溃重放、活跃文件、日志脱敏、旧版本回滚和 SHADOW 语义均有直接实现与测试证据。发现的一个高风险和两个中风险问题已闭环；无遗留 actionable finding。当前主要产品边界仍是主动采集只到 ledger，生产知识编译与注入没有被本变更隐式开启。

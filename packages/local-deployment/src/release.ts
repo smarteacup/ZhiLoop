@@ -23,8 +23,15 @@ export const REQUIRED_LOCAL_RELEASE_FILES = Object.freeze([
   "node_modules/@zhiloop/configuration-service/package.json",
   "node_modules/@zhiloop/control-api/package.json",
   "node_modules/@zhiloop/job-runtime/package.json",
+  "node_modules/@zhiloop/knowledge-governance-service/package.json",
+  "node_modules/@zhiloop/knowledge-worker-runtime/package.json",
   "node_modules/@zhiloop/local-deployment/package.json",
+  "node_modules/@zhiloop/model-codex-exec/package.json",
   "node_modules/@zhiloop/observability/package.json",
+  "node_modules/@zhiloop/retrieval-query-service/package.json",
+  "node_modules/@zhiloop/runtime-audit-store/package.json",
+  "node_modules/@zhiloop/session-extraction/package.json",
+  "node_modules/yaml/package.json",
   "node_modules/zod/package.json",
 ]);
 

@@ -7,26 +7,6 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const VERSION = "0.2.1";
-const WORKSPACES = [
-  ["apps/console-gateway", "console-gateway"],
-  ["packages/automatic-ingestion", "automatic-ingestion"],
-  ["packages/codex-backfill", "codex-backfill"],
-  ["packages/codex-session-capture", "codex-session-capture"],
-  ["packages/configuration-service", "configuration-service"],
-  ["packages/control-api", "control-api"],
-  ["packages/daemon-runtime", "daemon"],
-  ["packages/conversation-ledger", "conversation-ledger"],
-  ["packages/domain", "domain"],
-  ["packages/hook-runtime", "hook-runtime"],
-  ["packages/ingestion-codex", "ingestion-codex"],
-  ["packages/job-runtime", "job-runtime"],
-  ["packages/local-deployment", "local-deployment"],
-  ["packages/operational-read-model", "operational-read-model"],
-  ["packages/observability", "observability"],
-  ["packages/plugin-runtime", "plugin-runtime"],
-  ["packages/schemas", "schemas"],
-  ["packages/session-catalog", "session-catalog"],
-];
 const EXTERNALS = [
   ["packages/schemas/node_modules/ajv", "ajv"],
   ["node_modules/ajv-formats", "ajv-formats"],
@@ -34,8 +14,25 @@ const EXTERNALS = [
   ["node_modules/fast-uri", "fast-uri"],
   ["packages/schemas/node_modules/json-schema-traverse", "json-schema-traverse"],
   ["node_modules/require-from-string", "require-from-string"],
+  ["node_modules/yaml", "yaml"],
   ["node_modules/zod", "zod"],
 ];
+
+async function releaseWorkspaces() {
+  const result = [["apps/console-gateway", "console-gateway"]];
+  for (const entry of (await readdir(path.join(process.cwd(), "packages"), { withFileTypes: true }))) {
+    if (!entry.isDirectory()) continue;
+    const workspace = path.join("packages", entry.name);
+    const manifestPath = path.join(process.cwd(), workspace, "package.json");
+    if (!(await exists(manifestPath))) continue;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (typeof manifest.name !== "string" || !/^@zhiloop\/[a-z0-9-]+$/u.test(manifest.name)) {
+      throw new Error(`release workspace has an invalid package name: ${workspace}`);
+    }
+    result.push([workspace, manifest.name.slice("@zhiloop/".length)]);
+  }
+  return result.sort(([left], [right]) => left.localeCompare(right));
+}
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -125,7 +122,7 @@ async function main() {
     await copyTree(path.join(cliDist, "ui-cli.js"), path.join(temporary, "apps", "cli", "dist", "ui-cli.js"));
     await copyTree(gatewayDist, path.join(temporary, "apps", "console-gateway", "dist"), (name) => name !== ".tsbuildinfo");
     await copyTree(webDist, path.join(temporary, "apps", "console-web", "dist"));
-    for (const [workspace, packageName] of WORKSPACES) {
+    for (const [workspace, packageName] of await releaseWorkspaces()) {
       const source = path.join(process.cwd(), workspace);
       const target = path.join(temporary, "node_modules", "@zhiloop", packageName);
       await mkdir(target, { recursive: true, mode: 0o700 });

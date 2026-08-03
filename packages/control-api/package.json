@@ -1,0 +1,31 @@
+{
+  "name": "@zhiloop/control-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [],
+    "allowedExternalDependencies": [
+      "node:*",
+      "zod"
+    ],
+    "requireDirectTests": true
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

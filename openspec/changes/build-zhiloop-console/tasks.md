@@ -1,11 +1,11 @@
 ## 1. P0a Contract and Test Foundation — Serialized Owner
 
-- [ ] 1.1 [Contract Owner] Add `packages/control-api` workspace with versioned request, response, error, pagination, ID, Capability, Stage, Job, Injection, configuration and SSE schemas
-- [ ] 1.2 [Contract Owner] Define stable reason-code registries and legal state transitions, including `DISABLED`, `NOT_CONFIGURED`, `NOT_VERIFIED`, `SHADOWED` and `INJECTED`
-- [ ] 1.3 [Contract Owner] Define session → turn → source sequence → snapshot → run → trace → knowledge version relationships and redacted contract fixtures
-- [ ] 1.4 [Contract Owner] Add unknown-version, unknown-field, byte-limit, invalid-state, cursor-tamper, expected-revision and idempotency contract tests
-- [ ] 1.5 [Integration Owner] Add new Console workspaces to dependency/import policy, TypeScript references and explicit coverage include; make an empty-test Console workspace fail checks
-- [ ] 1.6 [Integration Owner] Add `console-p0-contract-gate` to `npm run check` and complete Contract Review before opening parallel implementation lanes
+- [x] 1.1 [Contract Owner] Add `packages/control-api` workspace with versioned request, response, error, pagination, ID, Capability, Stage, Job, Injection, configuration and SSE schemas
+- [x] 1.2 [Contract Owner] Define stable reason-code registries and legal state transitions, including `DISABLED`, `NOT_CONFIGURED`, `NOT_VERIFIED`, `SHADOWED` and `INJECTED`
+- [x] 1.3 [Contract Owner] Define session → turn → source sequence → snapshot → run → trace → knowledge version relationships and redacted contract fixtures
+- [x] 1.4 [Contract Owner] Add unknown-version, unknown-field, byte-limit, invalid-state, cursor-tamper, expected-revision and idempotency contract tests
+- [x] 1.5 [Integration Owner] Add new Console workspaces to dependency/import policy, TypeScript references and explicit coverage include; make an empty-test Console workspace fail checks
+- [x] 1.6 [Integration Owner] Add `console-p0-contract-gate` to `npm run check` and complete Contract Review before opening parallel implementation lanes
 
 ## 2. P0b Read-Only Data Foundations — Parallel Wave 1
 

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const safeText = (maximum: number) => z.string().min(1).max(maximum).refine((value) => !value.includes("\0"));
 const safeId = safeText(500).regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,499}$/u);
-const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
+const fingerprint = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const timestamp = z.string().min(20).max(40).refine((value) => {

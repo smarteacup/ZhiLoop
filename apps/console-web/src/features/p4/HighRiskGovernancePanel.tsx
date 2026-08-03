@@ -23,7 +23,7 @@ export function HighRiskGovernancePanel({ api }: { readonly api: Pick<P4ConsoleA
   if (state.status === "loading") return <LoadingState label="正在读取高风险治理门禁" />;
   if (state.status === "error") return <ErrorState error={state.error} retry={retry} />;
   const gate = state.value.actions[kind];
-  const commandValid = splitIds(assets).length > 0 && reason.trim().length >= 4 && /^[a-f0-9]{64}$/u.test(payloadFingerprint.trim());
+  const commandValid = splitIds(assets).length > 0 && reason.trim().length >= 4 && /^sha256:[a-f0-9]{64}$/u.test(payloadFingerprint.trim());
   const canPreview = gate.enabled && gate.capabilityStatus === "READY" && gate.expectedRevision === state.value.policyRevision && gate.idempotencyKey !== undefined && state.value.activeStageEnabled && commandValid && pending === undefined;
   const previewFresh = preview !== undefined && preview.kind === kind && preview.policyRevision === state.value.policyRevision && preview.actor === state.value.actor && Date.parse(preview.expiresAt) >= Date.now();
   const canCommit = canPreview && previewFresh && confirmation === preview?.confirmationPhrase;

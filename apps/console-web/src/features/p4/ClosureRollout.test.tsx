@@ -23,7 +23,7 @@ describe("P4 evidence views", () => {
     render(<RolloutPage api={p4Api()} />);
     expect(await screen.findByRole("heading", { name: "Scoped canary" })).toBeTruthy();
     expect(screen.getByText("project-1")).toBeTruthy();
-    expect(screen.getByText("c".repeat(64))).toBeTruthy();
+    expect(screen.getByText(`sha256:${"c".repeat(64)}`)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Last-known-good" })).toBeTruthy();
   });
 

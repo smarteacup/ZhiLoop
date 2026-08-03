@@ -31,7 +31,7 @@ describe("P4 fail-closed server fact schemas", () => {
     expect(highRiskPreviewViewSchema.safeParse({
       previewId: "preview", policyRevision: 1, kind: "GLOBAL_PROMOTION",
       expiresAt: "2099-08-04T00:00:00.000Z", actor: "operator", confirmationPhrase: "confirm",
-      confirmationFingerprint: "a".repeat(64),
+      confirmationFingerprint: `sha256:${"a".repeat(64)}`,
       blastRadius: { affectedAssets: 1, affectedProjects: 1, affectedRules: 0, affectedBindings: 0, affectedTraces: 0, affectedInjections: 0, irreversible: false, reasonCodes: ["GLOBAL"] },
     }).success).toBe(false);
   });

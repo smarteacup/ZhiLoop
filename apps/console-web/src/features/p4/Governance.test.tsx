@@ -34,7 +34,7 @@ describe("P4 feedback and high-risk governance", () => {
     const previewValue: HighRiskPreviewView = { previewId: "preview-1", policyRevision: 2, kind: "GLOBAL_PROMOTION", expiresAt: "2099-08-04T00:00:00.000Z", actor: "local-operator", confirmationPhrase: "CONFIRM GLOBAL preview-1", blastRadius: { affectedAssets: 1, affectedProjects: 2, affectedRules: 0, affectedBindings: 0, affectedTraces: 5, affectedInjections: 1, irreversible: false, reasonCodes: ["GLOBAL_IMPACT"] } };
     const preview = vi.fn(async () => previewValue); const commit = vi.fn(async () => ({ operationId: "operation-1", previewId: "preview-1", kind: "GLOBAL_PROMOTION" as const, actor: "local-operator", policyRevision: 2, committedAt: "2026-08-04T00:00:00.000Z" }));
     const user = userEvent.setup(); render(<HighRiskGovernancePanel api={p4Api({ highRiskGovernance: async () => enabled, previewHighRisk: preview, commitHighRisk: commit })} />);
-    await user.type(await screen.findByLabelText(/Asset IDs/u), "knowledge-1"); await user.type(screen.getByLabelText(/原因/u), "promote reviewed knowledge"); await user.type(screen.getByLabelText(/Payload fingerprint/u), "a".repeat(64));
+    await user.type(await screen.findByLabelText(/Asset IDs/u), "knowledge-1"); await user.type(screen.getByLabelText(/原因/u), "promote reviewed knowledge"); await user.type(screen.getByLabelText(/Payload fingerprint/u), `sha256:${"a".repeat(64)}`);
     await user.click(screen.getByRole("button", { name: "服务端预览影响范围" }));
     const commitButton = await screen.findByRole("button", { name: "确认执行高风险操作" });
     expect(commitButton).toHaveProperty("disabled", true);

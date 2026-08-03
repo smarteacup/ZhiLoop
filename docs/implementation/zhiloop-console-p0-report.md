@@ -57,4 +57,4 @@ zhiloop ui --no-open --json
 
 ## Release Review 结论
 
-P0 页面状态均来自 Control API/Sidecar 投影，没有硬编码 READY。Hook/spool 写入会按批增量投影，查询前有 freshness barrier；认证、隐私、单写入者、跨重启幂等、stale、恢复和 Hook 隔离均有直接自动化证据。全量门禁为 56 个 Node 测试与 773 个 Vitest 测试通过，语句覆盖率 91.22%；允许发布 `0.1.5` 本地 SHADOW 控制台，但不得据此开启自动知识编译、实际注入或 ACTIVE。
+P0 页面状态均来自 Control API/Sidecar 投影，没有硬编码 READY。Hook/spool 写入会按批增量投影，查询前有 freshness barrier；会话目录发现延迟到首次目录查询，Sidecar READY 不受历史会话规模阻塞。认证、隐私、单写入者、跨重启幂等、stale、恢复和 Hook 隔离均有直接自动化证据。全量门禁为 56 个 Node 测试与 774 个 Vitest 测试通过，语句覆盖率 91.22%；允许发布 `0.1.5` 本地 SHADOW 控制台，但不得据此开启自动知识编译、实际注入或 ACTIVE。

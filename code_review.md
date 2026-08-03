@@ -7,19 +7,19 @@
 | 指标 | 数值 |
 |---|---:|
 | CR 标识 | `main@0af59d8+build-zhiloop-console-p0c` |
-| CR 耗时 | 510s |
-| 🔴 高风险 | 4 个 |
+| CR 耗时 | 720s |
+| 🔴 高风险 | 5 个 |
 | 🟡 中风险 | 5 个 |
 | 🟢 低风险 | 2 个 |
-| 修复程度 | 已修复 11/11（100%） |
+| 修复程度 | 已修复 12/12（100%） |
 
 ### 累计情况
 
 | 指标 | 累计值 |
 |---|---:|
 | 总 CR 次数 | 51 次 |
-| 总耗时 | 24159s |
-| 🔴 高风险累计 | 228 个 |
+| 总耗时 | 24369s |
+| 🔴 高风险累计 | 229 个 |
 | 🟡 中风险累计 | 317 个 |
 | 🟢 低风险累计 | 2 个 |
 | 平均修复程度 | 100% |
@@ -38,6 +38,7 @@ capture commit 绑定会话、preview revision、transcript identity hash 和 id
 |---|---|---|---|---|---|
 | 增/运行时投影 | 🔴 高 | `apps/sidecar/src/application.ts`、`control-plane.ts` | Hook 写入 Ledger 后运行态事件未增量投影，页面直到重启或手动采集都看不到事件。 | 实时会话事件与诊断可信度。 | worker drain 后调度投影，所有相关查询前执行 freshness barrier，并增加 Hook→Ledger→事件列表回归。 |
 | 增/启动性能 | 🔴 高 | `control-plane.ts`、`operational-read-model/src/store.ts` | 冷启动按事件开启 SQLite 事务并同步追赶，会阻塞事件循环且随 Ledger 线性恶化。 | 大 Ledger 下 Sidecar 启动和控制面响应。 | 500 条分批读取、单批单事务、批间 `setImmediate` 让出事件循环；内存状态只在批事务成功后推进。 |
+| 增/真实部署时限 | 🔴 高 | `control-plane.ts` | 启动时同步扫描完整 Codex transcript 目录，真实历史规模超过安装器 5 秒 READY 门禁并触发回滚。 | 既有重度 Codex 用户无法升级 P0c。 | 服务先 READY，Ledger 后台分批追赶；catalog 首次查询时发现并把能力从 `STARTING` 投影为 `READY/DEGRADED`。真实目录 1 秒内健康响应，状态迁移有直接回归。 |
 | 增/发行边界 | 🔴 高 | `apps/cli/src/ui-cli.ts`、`scripts/build-local-release.mjs` | CLI 初版直接依赖 Gateway 应用模块，发行物缺少独立 Gateway runtime，违反 app→app 边界且安装后无法启动。 | 所有真实 `zhiloop ui` 启动。 | CLI 仅 spawn 发行入口；Gateway 独立 composition root 随发行物打包，依赖门禁通过。 |
 | 增/凭证泄漏 | 🔴 高 | `apps/console-gateway/src/runtime.ts` | 默认打开浏览器时曾把一次性 bootstrap URL 同时写到终端输出。 | 屏幕录制、终端日志与 shell history 暴露短时凭证。 | 默认模式只输出 origin；仅显式 `--no-open` 才返回 bootstrap URL，并有格式化回归。 |
 | 增/跨重启幂等 | 🟡 中 | `operational-read-model/src/store.ts`、`control-plane.ts` | 成功 commit 仅在内存缓存，Sidecar 重启后无法精确重放。 | 客户端超时重试与升级恢复。 | 新增持久化 receipt 表和严格 schema/fingerprint 校验，重启回放与冲突均有集成测试。 |
@@ -65,7 +66,7 @@ capture commit 绑定会话、preview revision、transcript identity hash 和 id
 | 检查项 | 结果 |
 |---|---|
 | 根级 Node Gate | 56/56，通过；含真实本地发行、两次安装、采集、UI 链路、卸载与 CCM 不变性 |
-| Vitest | 87 files / 773 tests，通过 |
+| Vitest | 87 files / 774 tests，通过 |
 | Coverage | statements 91.22%、branches 86.54%、functions 92.94%、lines 94.47% |
 | 性能/规模 | Catalog 250/250；Overview P95 <300ms；10 万事件首屏 <500ms 且全量无缺口 |
 | 安全 | 未授权 100/100 拒绝；stale/conflict、路径、socket、secret mode、CSRF、限流与消息上限通过 |
@@ -73,4 +74,4 @@ capture commit 绑定会话、preview revision、transcript identity hash 和 id
 
 ## Review 结论
 
-P0c 的投影新鲜度、批处理、身份、路径、分页、事务、响应大小、认证、CSRF、敏感信息、跨重启幂等和发行边界已有直接实现与测试证据。本轮 11 个发现均已闭环，当前无遗留 actionable finding；代码满足 P0 发布条件，实际用户目录部署仍需作为 4.9 的最终 Gate。
+P0c 的启动时限、投影新鲜度、批处理、身份、路径、分页、事务、响应大小、认证、CSRF、敏感信息、跨重启幂等和发行边界已有直接实现与测试证据。本轮 12 个发现均已闭环，当前无遗留 actionable finding；代码满足 P0 发布条件，实际用户目录部署仍需作为 4.9 的最终 Gate。

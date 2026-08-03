@@ -294,30 +294,31 @@ export class SidecarControlPlane {
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     });
     const control = new SidecarControlPlane(options, readModel, catalog, createCursorCodec(secret), captureStates);
-    await control.#initialize();
+    control.#initialize();
     return control;
   }
 
-  async #initialize(): Promise<void> {
+  #initialize(): void {
     const capabilities = this.#baseCapabilities(timestamp(this.#clock));
     for (const value of capabilities) this.#readModel.projectCapability(value);
-    await this.#restoreProjectionState();
-    await this.#projectThrough(this.#ledger.count());
-    try {
-      const listed = await this.#catalog.list({ limit: 20 });
-      for (const entry of listed.items) this.#readModel.projectSession({ summary: summary(entry) });
-      const transcript = listed.sourceCapabilities.find((item) => item.source === "CODEX_TRANSCRIPT");
-      const status = transcript?.status === "AVAILABLE" ? "READY" : "DEGRADED";
-      this.#readModel.projectCapability(capability(
-        "session.catalog",
-        status,
-        status === "READY" ? "COMPONENT_READY" : "SOURCE_UNAVAILABLE",
-        timestamp(this.#clock),
-        status !== "READY",
-      ));
-    } catch {
-      this.#readModel.projectCapability(capability("session.catalog", "DEGRADED", "SOURCE_UNAVAILABLE", timestamp(this.#clock), true));
-    }
+    const initialization = new Promise<void>((resolvePromise) => setImmediate(resolvePromise)).then(async () => {
+      await this.#restoreProjectionState();
+      await this.#projectThrough(this.#ledger.count());
+    });
+    this.#projectionTail = initialization.then(
+      () => undefined,
+      () => {
+        this.#readModel.projectOperatorDiagnostic({
+          diagnosticId: "ledger-projection-initialization",
+          component: "sidecar.control-plane",
+          code: "LEDGER_PROJECTION_RETRY_REQUIRED",
+          severity: "WARNING",
+          observedAt: timestamp(this.#clock),
+          retryable: true,
+          evidenceRefs: ["ledger:projection"],
+        });
+      },
+    );
   }
 
   #baseCapabilities(observedAt: string): CapabilitySnapshot[] {
@@ -440,6 +441,15 @@ export class SidecarControlPlane {
       limit: request.page?.limit ?? 50,
       ...(after === undefined ? {} : { after }),
     });
+    const transcript = listed.sourceCapabilities.find((item) => item.source === "CODEX_TRANSCRIPT");
+    const status = transcript?.status === "AVAILABLE" ? "READY" : "DEGRADED";
+    this.#readModel.projectCapability(capability(
+      "session.catalog",
+      status,
+      status === "READY" ? "COMPONENT_READY" : "SOURCE_UNAVAILABLE",
+      timestamp(this.#clock),
+      status !== "READY",
+    ));
     const items = listed.items.map(summary);
     for (const item of items) this.#readModel.projectSession({ summary: item });
     const next = listed.nextPosition;

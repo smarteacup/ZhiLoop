@@ -377,6 +377,45 @@ describe("sidecar service", () => {
     }
   });
 
+  it("defers transcript catalog discovery until a catalog query so service readiness stays bounded", async () => {
+    const { config } = await temporaryConfig();
+    await writeRollout(config, "session-lazy-catalog");
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    try {
+      const before = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "capabilities-before-catalog",
+        type: "capabilities.list",
+        page: { limit: 50 },
+      })) as { items: Array<{ capabilityId: string; status: string }> };
+      expect(before.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ capabilityId: "session.catalog", status: "STARTING" }),
+      ]));
+
+      const sessions = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "lazy-catalog-query",
+        type: "sessions.list",
+        page: { limit: 10 },
+      })) as { items: Array<{ sessionId: string }> };
+      expect(sessions.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sessionId: "session-lazy-catalog" }),
+      ]));
+      const after = controlResult(await application.handleControl({
+        schemaVersion: 1,
+        requestId: "capabilities-after-catalog",
+        type: "capabilities.list",
+        page: { limit: 50 },
+      })) as { items: Array<{ capabilityId: string; status: string }> };
+      expect(after.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ capabilityId: "session.catalog", status: "READY" }),
+      ]));
+    } finally {
+      await application.close();
+    }
+  });
+
   it("keeps preview dry-run side-effect free, rejects stale source, and commits idempotently", async () => {
     const { config } = await temporaryConfig();
     await writeRollout(config, "session-controlled-capture");

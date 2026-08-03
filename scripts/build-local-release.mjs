@@ -6,7 +6,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const WORKSPACES = [
   ["apps/console-gateway", "console-gateway"],
   ["packages/automatic-ingestion", "automatic-ingestion"],

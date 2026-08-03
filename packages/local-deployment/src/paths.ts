@@ -42,7 +42,9 @@ export function resolveDeploymentPaths(home: string, version: string): Deploymen
     manifestPath: join(installDirectory, "manifest.json"),
     journalPath: join(installDirectory, "journal.json"),
     hookReceiptPath: join(installDirectory, "receipts", "codex-hooks.json"),
+    hookTrustReceiptPath: join(installDirectory, "receipts", "codex-hook-trust.json"),
     codexHooksPath: join(normalizedHome, ".codex", "hooks.json"),
+    codexConfigPath: join(normalizedHome, ".codex", "config.toml"),
     launchAgentPath: join(normalizedHome, "Library", "LaunchAgents", "dev.zhiloop.sidecar.plist"),
   });
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 
-import type { SidecarHealth } from "@zhiloop/plugin-runtime";
+import type { CodexHookState, CodexHookTrustControlPort, CodexHookTrustInspection, SidecarHealth } from "@zhiloop/plugin-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { installLocalRelease, planLocalInstall, REQUIRED_LOCAL_RELEASE_FILES } from "./installer.js";
@@ -100,6 +100,52 @@ class FakeService implements ServiceController {
   async status(): Promise<"RUNNING" | "STOPPED"> { return this.running ? "RUNNING" : "STOPPED"; }
 }
 
+class FakeHookTrustControl implements CodexHookTrustControlPort {
+  readonly #states = new Map<string, Record<string, CodexHookState>>();
+  readonly #versions = new Map<string, number>();
+
+  async inspect(input: { readonly targetPath: string; readonly configPath: string }): Promise<CodexHookTrustInspection> {
+    const configuration = JSON.parse(await readFile(input.targetPath, "utf8")) as {
+      hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command?: string }> }>>;
+    };
+    const hooks = Object.entries(configuration.hooks).flatMap(([event, groups]) => event === "SessionEnd" ? [] : groups.flatMap((group, groupIndex) =>
+      group.hooks.map((handler, handlerIndex) => ({
+        key: `${input.targetPath}:${event.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase()}:${groupIndex}:${handlerIndex}`,
+        eventName: `${event.slice(0, 1).toLowerCase()}${event.slice(1)}`,
+        handlerType: handler.type,
+        command: handler.command ?? null,
+        sourcePath: input.targetPath,
+        source: "user",
+        enabled: true,
+        isManaged: false,
+        currentHash: `sha256:${createHash("sha256").update(`${event}\0${JSON.stringify(group)}\0${handlerIndex}`).digest("hex")}`,
+        trustStatus: "untrusted" as const,
+      })),
+    ));
+    const version = this.#versions.get(input.configPath) ?? 0;
+    return {
+      hooks,
+      states: structuredClone(this.#states.get(input.configPath) ?? {}),
+      configVersion: `sha256:${createHash("sha256").update(`config-${version}`).digest("hex")}`,
+    };
+  }
+
+  async replaceStates(input: {
+    readonly configPath: string;
+    readonly expectedVersion?: string;
+    readonly states: Readonly<Record<string, CodexHookState>>;
+  }): Promise<{ readonly configVersion: string }> {
+    const version = this.#versions.get(input.configPath) ?? 0;
+    const current = `sha256:${createHash("sha256").update(`config-${version}`).digest("hex")}`;
+    if (input.expectedVersion !== current) throw new Error("stale fake Codex config version");
+    this.#states.set(input.configPath, structuredClone(input.states));
+    this.#versions.set(input.configPath, version + 1);
+    return { configVersion: `sha256:${createHash("sha256").update(`config-${version + 1}`).digest("hex")}` };
+  }
+}
+
+const hookTrustControl = new FakeHookTrustControl();
+
 async function seedCcmHooks(targetHome: string): Promise<{ hooksText: string; ccmText: string }> {
   const hooks = {
     hooks: {
@@ -150,6 +196,7 @@ describe("local installer", () => {
     const plan = await planLocalInstall({ home: targetHome, artifactDirectory: source, service, health: { health: async () => ready() }, compatibility });
     expect(plan).toMatchObject({ mode: "SHADOW", version: "0.1.0" });
     expect(plan.items.map(({ id }) => id)).toContain("merge-codex-hooks");
+    expect(plan.items.map(({ id }) => id)).toContain("trust-codex-hooks");
     await expect(lstat(join(targetHome, ".ckl"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(service.calls).toEqual([]);
   });
@@ -162,6 +209,7 @@ describe("local installer", () => {
     const options = {
       home: targetHome, artifactDirectory: source, service,
       health: { health: async () => ready() }, compatibility,
+      hookTrustControl,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "install-1",
       clock: () => new Date("2026-08-03T01:00:00.000Z"),
     };
@@ -199,6 +247,7 @@ describe("local installer", () => {
     const service = new FakeService();
     await installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome, "0.1.0"), service,
+      hookTrustControl,
       health: { health: async () => ready("0.1.0") }, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "initial",
     });
@@ -209,6 +258,7 @@ describe("local installer", () => {
     const failingHealth: HealthProbe = { health: async () => undefined };
     await expect(installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome, "0.2.0"), service,
+      hookTrustControl,
       health: failingHealth, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "upgrade",
     })).rejects.toThrow("READY");
@@ -245,6 +295,7 @@ describe("local installer", () => {
     for (const version of ["0.1.0", "0.2.0", "0.3.0"]) {
       await installLocalRelease({
         home: targetHome,
+        hookTrustControl,
         artifactDirectory: await artifact(targetHome, version),
         service,
         health: { health: async () => ready(version) },
@@ -265,11 +316,49 @@ describe("local installer", () => {
     await writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await expect(installLocalRelease({
       home: targetHome,
+      hookTrustControl,
       artifactDirectory: await artifact(targetHome, "0.4.0"),
       service,
       health: { health: async () => ready("0.4.0") },
       compatibility,
     })).rejects.toThrow("ownership does not match");
+  });
+
+  it("adopts the new trust receipt only when upgrading a legacy owned manifest without an existing receipt", async () => {
+    const targetHome = await home();
+    await seedCcmHooks(targetHome);
+    const service = new FakeService();
+    await installLocalRelease({
+      home: targetHome,
+      artifactDirectory: await artifact(targetHome, "0.1.0"),
+      service,
+      health: { health: async () => ready("0.1.0") },
+      compatibility,
+      hookTrustControl,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+      randomId: () => "legacy-base",
+    });
+    const paths = resolveDeploymentPaths(targetHome, "0.1.0");
+    await unlink(paths.hookTrustReceiptPath);
+    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8")) as { managedPaths: string[] };
+    manifest.managedPaths = manifest.managedPaths.filter((path) => path !== paths.hookTrustReceiptPath);
+    await writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    await installLocalRelease({
+      home: targetHome,
+      artifactDirectory: await artifact(targetHome, "0.2.0"),
+      service,
+      health: { health: async () => ready("0.2.0") },
+      compatibility,
+      hookTrustControl,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+      randomId: () => "legacy-upgrade",
+    });
+    expect((await lstat(paths.hookTrustReceiptPath)).isFile()).toBe(true);
+    const upgraded = JSON.parse(await readFile(paths.manifestPath, "utf8")) as { managedPaths: string[] };
+    expect(upgraded.managedPaths).toContain(paths.hookTrustReceiptPath);
   });
 
   it("rejects a conflicting ZhiLoop hook before service activation", async () => {
@@ -282,6 +371,7 @@ describe("local installer", () => {
     const service = new FakeService();
     await expect(installLocalRelease({
       home: targetHome, artifactDirectory: source, service,
+      hookTrustControl,
       health: { health: async () => ready() }, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0,
     })).rejects.toThrow("different ZhiLoop hook");
@@ -298,6 +388,7 @@ describe("local installer", () => {
     const service = new FakeService();
     await expect(installLocalRelease({
       home: targetHome, artifactDirectory: source, service,
+      hookTrustControl,
       health: { health: async () => ready() }, compatibility,
     })).rejects.toThrow("unowned deployment target");
     expect(await readFile(paths.sidecarLauncher, "utf8")).toBe("user-owned-launcher");
@@ -310,6 +401,7 @@ describe("local installer", () => {
     const service = new FakeService();
     await installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome), service,
+      hookTrustControl,
       health: { health: async () => shadowReady() }, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "doctor-install",
     });
@@ -321,7 +413,7 @@ describe("local installer", () => {
     })).toMatchObject({ healthy: true, mode: "SHADOW", version: "0.1.0" });
 
     const removed = await uninstallLocalRelease({
-      home: targetHome, service, randomId: () => "uninstall", removalToken: "remove-1",
+      home: targetHome, service, randomId: () => "uninstall", removalToken: "remove-1", hookTrustControl,
     });
     expect(removed).toMatchObject({ status: "REMOVED" });
     expect(await readFile(paths.ledgerPath, "utf8")).toBe("durable-knowledge");
@@ -330,7 +422,7 @@ describe("local installer", () => {
     for (const path of [paths.releaseDirectory, paths.currentLink, paths.sidecarLauncher, paths.zhiloopLauncher, paths.launchAgentPath, paths.configPath, paths.manifestPath]) {
       await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
     }
-    expect(await uninstallLocalRelease({ home: targetHome, service })).toMatchObject({ status: "NOT_INSTALLED" });
+    expect(await uninstallLocalRelease({ home: targetHome, service, hookTrustControl })).toMatchObject({ status: "NOT_INSTALLED" });
   });
 
   it("managed-unmerge preserves safe external hook drift", async () => {
@@ -339,6 +431,7 @@ describe("local installer", () => {
     const service = new FakeService();
     await installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome), service,
+      hookTrustControl,
       health: { health: async () => ready() }, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "drift-install",
     });
@@ -346,7 +439,7 @@ describe("local installer", () => {
     const hooks = JSON.parse(await readFile(paths.codexHooksPath, "utf8")) as { hooks: Record<string, unknown[]> };
     hooks.hooks["SessionStart"]?.push({ hooks: [{ type: "command", command: "/user/new-hook" }] });
     await writeFile(paths.codexHooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
-    await uninstallLocalRelease({ home: targetHome, service, randomId: () => "drift-uninstall", removalToken: "remove-2" });
+    await uninstallLocalRelease({ home: targetHome, service, randomId: () => "drift-uninstall", removalToken: "remove-2", hookTrustControl });
     const after = await readFile(paths.codexHooksPath, "utf8");
     expect(after).toContain("/user/new-hook");
     expect(after).toContain("CCM_HOOK_PLATFORM=codex");
@@ -359,12 +452,13 @@ describe("local installer", () => {
     const service = new FakeService();
     await installLocalRelease({
       home: targetHome, artifactDirectory: await artifact(targetHome), service,
+      hookTrustControl,
       health: { health: async () => ready() }, compatibility,
       readinessAttempts: 1, readinessDelayMs: 0, randomId: () => "rollback-install",
     });
     const paths = resolveDeploymentPaths(targetHome, "0.1.0");
     await expect(uninstallLocalRelease({
-      home: targetHome, service, failAfterStep: "remove-current", randomId: () => "rollback-uninstall", removalToken: "remove-3",
+      home: targetHome, service, failAfterStep: "remove-current", randomId: () => "rollback-uninstall", removalToken: "remove-3", hookTrustControl,
     })).rejects.toThrow("injected");
     expect(await readlink(paths.currentLink)).toBe("releases/0.1.0");
     expect(await readFile(paths.codexHooksPath, "utf8")).toContain("zhiloop-sidecar");

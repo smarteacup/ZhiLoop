@@ -4,10 +4,14 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 import {
   evaluateSidecarCompatibility,
+  CodexAppServerHookTrustControl,
+  CodexHookTrustInstaller,
   HookConfigurationInstaller,
   parseHookConfiguration,
   ZHILOOP_HOOK_CONFIGURATION,
   type HookConfiguration,
+  type CodexHookTrustControlPort,
+  type ManagedHookEntry,
   type SidecarCompatibilityPolicy,
 } from "@zhiloop/plugin-runtime";
 
@@ -41,6 +45,7 @@ export interface LocalInstallOptions {
   readonly failAfterStep?: string;
   readonly clock?: () => Date;
   readonly randomId?: () => string;
+  readonly hookTrustControl?: CodexHookTrustControlPort;
 }
 
 export interface LocalInstallResult extends DeploymentTransactionResult {
@@ -138,6 +143,7 @@ function buildPlan(paths: ReturnType<typeof resolveDeploymentPaths>, metadata: R
       planItem("write-sidecar-launcher", "REPLACE", "write stable sidecar launcher", paths.sidecarLauncher),
       planItem("write-cli-launcher", "REPLACE", "write stable deployment and local Console CLI launcher", paths.zhiloopLauncher),
       planItem("merge-codex-hooks", "MERGE", "add owned ZhiLoop hooks without changing CCM", paths.codexHooksPath),
+      planItem("trust-codex-hooks", "MERGE", "register exact owned Hook hashes through Codex app-server", paths.codexConfigPath),
       planItem("write-manifest", "REPLACE", "record deployment ownership", paths.manifestPath),
       planItem("activate-service", "START", "bootstrap READY/SHADOW LaunchAgent", paths.launchAgentPath),
     ]),
@@ -170,7 +176,7 @@ function assertLocalReleaseRuntime(metadata: ReleaseMetadata): void {
 function expectedManagedPaths(paths: ReturnType<typeof resolveDeploymentPaths>): Set<string> {
   return new Set([
     paths.releaseDirectory, paths.currentLink, paths.sidecarLauncher, paths.zhiloopLauncher,
-    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.manifestPath,
+    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.hookTrustReceiptPath, paths.manifestPath,
   ]);
 }
 
@@ -188,37 +194,106 @@ async function validateExistingOwnership(paths: ReturnType<typeof resolveDeploym
   if (manifest !== undefined) {
     const expected = expectedManagedPaths(resolveDeploymentPaths(paths.home, manifest.version));
     const unique = new Set(manifest.managedPaths);
+    const legacyTrustReceiptMissing = !unique.has(paths.hookTrustReceiptPath);
+    const required = new Set(expected);
+    if (legacyTrustReceiptMissing) required.delete(paths.hookTrustReceiptPath);
     if (unique.size !== manifest.managedPaths.length
-      || [...expected].some((path) => !unique.has(path))
+      || [...required].some((path) => !unique.has(path))
       || manifest.managedPaths.some((path) => !expected.has(path) && !isManagedReleasePath(paths, path))) {
       throw new Error("deployment manifest ownership does not match this installation layout");
+    }
+    if (legacyTrustReceiptMissing && await pathExists(paths.hookTrustReceiptPath)) {
+      throw new Error(`refusing to adopt an unowned deployment target: ${paths.hookTrustReceiptPath}`);
     }
     return;
   }
   const unownedTargets = [
     paths.currentLink, paths.sidecarLauncher, paths.zhiloopLauncher, paths.configPath,
-    paths.launchAgentPath, paths.hookReceiptPath, paths.manifestPath,
+    paths.launchAgentPath, paths.hookReceiptPath, paths.hookTrustReceiptPath, paths.manifestPath,
   ];
   for (const target of unownedTargets) {
     if (await pathExists(target)) throw new Error(`refusing to overwrite an unowned deployment target: ${target}`);
   }
 }
 
-async function hookStep(paths: ReturnType<typeof resolveDeploymentPaths>): Promise<DeploymentStep> {
+interface HookInstallState {
+  inserted: readonly ManagedHookEntry[];
+}
+
+async function hookStep(paths: ReturnType<typeof resolveDeploymentPaths>, state: HookInstallState): Promise<DeploymentStep> {
   const installer = new HookConfigurationInstaller();
   const alreadyInstalled = await pathExists(paths.hookReceiptPath);
   return Object.freeze({
     id: "merge-codex-hooks",
     apply: async () => {
-      await installer.install({
+      const receipt = await installer.install({
         targetPath: paths.codexHooksPath,
         receiptPath: paths.hookReceiptPath,
         managedConfiguration: managedHookConfiguration(paths.sidecarLauncher, paths.configPath),
       });
+      state.inserted = receipt.inserted;
       return async () => {
         if (!alreadyInstalled) {
           const result = await installer.uninstall(paths.codexHooksPath, paths.hookReceiptPath);
           if (result.status === "CONFLICT") throw new Error("Codex hooks drifted during deployment rollback");
+        }
+      };
+    },
+  });
+}
+
+function hookTrustControl(options: LocalInstallOptions, paths: ReturnType<typeof resolveDeploymentPaths>): CodexHookTrustControlPort {
+  return options.hookTrustControl ?? new CodexAppServerHookTrustControl({ codexHome: resolve(paths.home, ".codex") });
+}
+
+function hookTrustStep(
+  options: LocalInstallOptions,
+  paths: ReturnType<typeof resolveDeploymentPaths>,
+  state: HookInstallState,
+): DeploymentStep {
+  const installer = new CodexHookTrustInstaller();
+  const control = hookTrustControl(options, paths);
+  const alreadyInstalled = pathExists(paths.hookTrustReceiptPath);
+  return Object.freeze({
+    id: "trust-codex-hooks",
+    apply: async () => {
+      const existed = await alreadyInstalled;
+      try {
+        await installer.install({
+          targetPath: paths.codexHooksPath,
+          configPath: paths.codexConfigPath,
+          receiptPath: paths.hookTrustReceiptPath,
+          cwd: paths.home,
+          inserted: state.inserted,
+          requiredEvents: ["UserPromptSubmit", "PostToolUse", "Stop"],
+          optionalUndiscoveredEvents: ["SessionEnd"],
+          control,
+        });
+      } catch (error) {
+        if (!existed && await pathExists(paths.hookTrustReceiptPath)) {
+          const cleanup = await installer.uninstall({
+            targetPath: paths.codexHooksPath,
+            configPath: paths.codexConfigPath,
+            receiptPath: paths.hookTrustReceiptPath,
+            cwd: paths.home,
+            control,
+          });
+          if (cleanup.status === "CONFLICT") {
+            throw new AggregateError([error], "Codex Hook trust failed and its partial state could not be rolled back", { cause: error });
+          }
+        }
+        throw error;
+      }
+      return async () => {
+        if (!existed) {
+          const result = await installer.uninstall({
+            targetPath: paths.codexHooksPath,
+            configPath: paths.codexConfigPath,
+            receiptPath: paths.hookTrustReceiptPath,
+            cwd: paths.home,
+            control,
+          });
+          if (result.status === "CONFLICT") throw new Error("Codex Hook trust drifted during deployment rollback");
         }
       };
     },
@@ -290,7 +365,7 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
   const retainedReleasePaths = retainedReleaseVersions.map((version) => resolveDeploymentPaths(options.home, version).releaseDirectory);
   const managedPaths = Object.freeze([...new Set([
     paths.releaseDirectory, paths.currentLink, paths.sidecarLauncher, paths.zhiloopLauncher,
-    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.manifestPath,
+    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.hookTrustReceiptPath, paths.manifestPath,
     ...retainedReleasePaths,
   ])]);
   const manifest: DeploymentManifest = Object.freeze({
@@ -306,6 +381,7 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
   const sidecarEntrypoint = resolve(paths.currentLink, "apps", "sidecar", "dist", "main.js");
   const deploymentEntrypoint = resolve(paths.currentLink, "apps", "sidecar", "dist", "deploy-main.js");
   const uiEntrypoint = resolve(paths.currentLink, "apps", "cli", "dist", "ui-main.js");
+  const hookInstallState: HookInstallState = { inserted: Object.freeze([]) };
   const steps: DeploymentStep[] = [
     await stageReleaseStep("stage-release", artifact, paths.releaseDirectory),
     await replaceFileStep("write-config", paths.configPath, configuration(paths), 0o600),
@@ -318,7 +394,8 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
       renderZhiLoopLauncher(verified.metadata.nodePath, deploymentEntrypoint, uiEntrypoint),
       0o700,
     ),
-    await hookStep(paths),
+    await hookStep(paths, hookInstallState),
+    hookTrustStep(options, paths, hookInstallState),
     await replaceFileStep("write-manifest", paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 0o600),
   ];
   const serviceState = { touched: false };

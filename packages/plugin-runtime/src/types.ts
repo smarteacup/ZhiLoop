@@ -40,6 +40,62 @@ export interface HookInstallReceipt {
   readonly createdAt: string;
 }
 
+export interface CodexHookState {
+  readonly enabled?: boolean;
+  readonly trusted_hash?: string;
+}
+
+export interface CodexHookMetadata {
+  readonly key: string;
+  readonly eventName: string;
+  readonly handlerType: string;
+  readonly command: string | null;
+  readonly sourcePath: string;
+  readonly source: string;
+  readonly enabled: boolean;
+  readonly isManaged: boolean;
+  readonly currentHash: string;
+  readonly trustStatus: "managed" | "modified" | "trusted" | "untrusted";
+}
+
+export interface CodexHookTrustInspection {
+  readonly hooks: readonly CodexHookMetadata[];
+  readonly states: Readonly<Record<string, CodexHookState>>;
+  readonly configVersion: string;
+}
+
+export interface CodexHookTrustControlPort {
+  inspect(input: {
+    readonly cwd: string;
+    readonly targetPath: string;
+    readonly configPath: string;
+  }): Promise<CodexHookTrustInspection>;
+  replaceStates(input: {
+    readonly cwd: string;
+    readonly configPath: string;
+    readonly expectedVersion: string;
+    readonly states: Readonly<Record<string, CodexHookState>>;
+  }): Promise<{ readonly configVersion: string }>;
+}
+
+export interface TrustedHookReceiptEntry {
+  readonly key: string;
+  readonly event: string;
+  readonly command: string;
+  readonly trustedHash: string;
+  readonly previousTrustedHash?: string;
+}
+
+export interface HookTrustInstallReceipt {
+  readonly schemaVersion: 1;
+  readonly state: "PREPARED" | "ACTIVE";
+  readonly targetPath: string;
+  readonly configPath: string;
+  readonly entries: readonly TrustedHookReceiptEntry[];
+  readonly unsupportedEvents: readonly string[];
+  readonly createdAt: string;
+}
+
 export interface HookMergeResult {
   readonly configuration: HookConfiguration;
   readonly inserted: readonly ManagedHookEntry[];

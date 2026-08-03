@@ -4,15 +4,15 @@
 
 | 指标 | 当前 P1 | 累计 |
 |---|---:|---:|
-| CR 标识 | `main@e4b2d53+build-zhiloop-console-p1` | 52 次 |
-| 高风险 | 10 | 240 |
+| CR 标识 | `main@b194c2e+build-zhiloop-console-p1.1` | 53 次 |
+| 高风险 | 11 | 241 |
 | 中风险 | 9 | 327 |
 | 低风险 | 0 | 2 |
-| 修复程度 | 19/19（100%） | 100% |
+| 修复程度 | 20/20（100%） | 100% |
 
 ## 改动说明
 
-本次交付 Console P1 的持久 Job、自动会话采集、配置事务、告警、实时更新、Job 安全命令和真实 Codex acceptance。发行版本为 `0.2.0`，运行模式仍固定 `SHADOW`；P2 知识编译、P3 召回/Codex query、P4 实际注入与 ACTIVE 均没有被提前开启。
+本次交付 Console P1 的持久 Job、自动会话采集、配置事务、告警、实时更新、Job 安全命令和真实 Codex acceptance。补丁发行版本为 `0.2.1`，运行模式仍固定 `SHADOW`；P2 知识编译、P3 召回/Codex query、P4 实际注入与 ACTIVE 均没有被提前开启。
 
 核心边界保持不变：Hook 不等待 P1 后台服务或 Console；Sidecar 是 Ledger/运行状态唯一写入者；Gateway 只监听 loopback；浏览器不持久化业务数据；Job 写命令必须通过状态、能力、revision 和幂等门禁；配置失败保持 last-known-good；acceptance 缺证据只能 `NOT_VERIFIED`。
 
@@ -30,6 +30,7 @@
 | Acceptance Hook | 高 | Hook 内同步 SQLite FULL 写会增加关键路径延迟 | Hook 只入有界内存队列，返回后 `setImmediate` 批量单事务落库 |
 | Acceptance 新鲜度 | 高 | 旧 session 可被新的 `taskCreatedAt` 冒充为新任务 | 每阶段时间必须不早于创建时间；旧 session 重验保持 NOT_VERIFIED |
 | Acceptance 隐私 | 高 | 原始 evidence identity/路径若入库会扩大敏感面 | 只持久化 exact session、stage、timestamp、opaque SHA-256 和结果状态 |
+| Hook 信任 | 高 | 新安装的 unmanaged Codex Hook 默认处于 untrusted，普通任务不会触发采集，只有绕过信任参数的验收能通过 | 通过 Codex App Server `hooks/list` 获取精确 current hash，以 expected-version 原子写入用户 Hook trust state；安装、升级、卸载和回滚均保留 CCM 与其他 Hook 状态，禁用 Hook 失败关闭 |
 | 发行依赖 | 中 | P1 workspace 未进入 release inventory，安装后可能缺包 | builder 与 installer required inventory 同时冻结新增运行时包 |
 | Alert 语义 | 中 | `notify=false` 若关闭评估会隐藏故障 | 健康评估始终运行，只抑制通知决定 |
 | 配置事务 | 中 | component partial apply 可能与数据库 effective revision 分裂 | prepare/apply 串行，失败逆序 rollback；提交失败同样回滚组件 |
@@ -65,4 +66,4 @@
 
 ## Review 结论
 
-当前源码阶段的 19 个发现均已闭环，没有遗留高风险 finding。P1 代码满足提交和本地发行构建条件；Release Review 仍以真实 `0.2.0` journal、doctor、CCM hash 不变以及新建 Codex 会话五阶段 acceptance 为最终门禁。在这些真实证据完成前，不勾选 5.7/6.11，也不进入 P2 自动编译启用。
+当前源码阶段的 20 个发现均已闭环，没有遗留高风险 finding。`0.2.1` Hook 信任补丁已完成单元、构建和静态检查；Release Review 仍以真实 journal 升级、doctor、CCM hash 不变，以及不使用 Hook 信任绕过参数的新 Codex 会话五阶段 acceptance 为最终门禁。在这些真实证据完成前不勾选 6.11，也不启用 P2 自动编译。

@@ -1,7 +1,13 @@
 import { lstat, readFile, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
-import { HookConfigurationInstaller, type HookConfiguration } from "@zhiloop/plugin-runtime";
+import {
+  CodexAppServerHookTrustControl,
+  CodexHookTrustInstaller,
+  HookConfigurationInstaller,
+  type CodexHookTrustControlPort,
+  type HookConfiguration,
+} from "@zhiloop/plugin-runtime";
 
 import { managedHookConfiguration, readDeploymentManifest } from "./installer.js";
 import { resolveDeploymentPaths } from "./paths.js";
@@ -17,6 +23,7 @@ export interface LocalUninstallOptions {
   readonly clock?: () => Date;
   readonly randomId?: () => string;
   readonly removalToken?: string;
+  readonly hookTrustControl?: CodexHookTrustControlPort;
 }
 
 export interface LocalUninstallResult {
@@ -27,7 +34,7 @@ export interface LocalUninstallResult {
 function releasePathsFromManifest(paths: ReturnType<typeof resolveDeploymentPaths>, managedPaths: readonly string[]): string[] {
   const fixed = new Set([
     paths.currentLink, paths.sidecarLauncher, paths.zhiloopLauncher,
-    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.manifestPath,
+    paths.configPath, paths.launchAgentPath, paths.hookReceiptPath, paths.hookTrustReceiptPath, paths.manifestPath,
   ]);
   const releases = managedPaths.filter((path) => !fixed.has(path));
   if (managedPaths.length !== fixed.size + releases.length || [...fixed].some((path) => !managedPaths.includes(path))
@@ -37,6 +44,39 @@ function releasePathsFromManifest(paths: ReturnType<typeof resolveDeploymentPath
     throw new Error("deployment manifest ownership does not match this installation layout");
   }
   return releases;
+}
+
+function hookTrustRemovalStep(
+  paths: ReturnType<typeof resolveDeploymentPaths>,
+  control: CodexHookTrustControlPort,
+): DeploymentStep {
+  const installer = new CodexHookTrustInstaller();
+  return Object.freeze({
+    id: "untrust-codex-hooks",
+    apply: async () => {
+      const result = await installer.uninstall({
+        targetPath: paths.codexHooksPath,
+        configPath: paths.codexConfigPath,
+        receiptPath: paths.hookTrustReceiptPath,
+        cwd: paths.home,
+        control,
+      });
+      if (result.status === "CONFLICT") throw new Error("Codex Hook trust contains a conflicting ZhiLoop edit");
+      return async () => {
+        if (result.status === "REMOVED" && result.removedReceipt !== undefined) {
+          await installer.install({
+            targetPath: paths.codexHooksPath,
+            configPath: paths.codexConfigPath,
+            receiptPath: paths.hookTrustReceiptPath,
+            cwd: paths.home,
+            inserted: result.removedReceipt.entries.map(({ event, command }) => ({ event, command, fingerprint: "0".repeat(64) })),
+            requiredEvents: result.removedReceipt.entries.map(({ event }) => event),
+            control,
+          });
+        }
+      };
+    },
+  });
 }
 
 async function hookRemovalStep(paths: ReturnType<typeof resolveDeploymentPaths>, managed: HookConfiguration): Promise<DeploymentStep> {
@@ -82,8 +122,10 @@ export async function uninstallLocalRelease(options: LocalUninstallOptions): Pro
     quarantineDirectoryStep(`remove-release-${index}`, path, `${token}-${index}`),
   ));
   const wasRunning = await options.service.status() === "RUNNING";
+  const trustControl = options.hookTrustControl ?? new CodexAppServerHookTrustControl({ codexHome: join(paths.home, ".codex") });
   const steps: DeploymentStep[] = [
     stopServiceStep(options.service, paths.launchAgentPath, wasRunning),
+    hookTrustRemovalStep(paths, trustControl),
     await hookRemovalStep(paths, managedHookConfiguration(paths.sidecarLauncher, paths.configPath)),
     await removeRegularFileStep("remove-launch-agent", paths.launchAgentPath),
     await removeRegularFileStep("remove-sidecar-launcher", paths.sidecarLauncher),

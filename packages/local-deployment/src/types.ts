@@ -23,7 +23,9 @@ export interface DeploymentPaths {
   readonly manifestPath: string;
   readonly journalPath: string;
   readonly hookReceiptPath: string;
+  readonly hookTrustReceiptPath: string;
   readonly codexHooksPath: string;
+  readonly codexConfigPath: string;
   readonly launchAgentPath: string;
 }
 

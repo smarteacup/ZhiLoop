@@ -20,7 +20,7 @@
 
 ## 4. Real Session Acceptance
 
-- [ ] 4.1 Upgrade the local deployment through the journaled installer and verify READY health
-- [ ] 4.2 Dry-run session `019f837a-34d4-7e60-800c-6361f6fb6d49` and verify no ledger mutation
-- [ ] 4.3 Capture the session, verify expected canonical events and empty spool, then repeat and verify zero new rows
-- [ ] 4.4 Commit and push the completed change with a clean worktree
+- [x] 4.1 Upgrade the local deployment through the journaled installer and verify READY health
+- [x] 4.2 Dry-run session `019f837a-34d4-7e60-800c-6361f6fb6d49` and verify no ledger mutation
+- [x] 4.3 Capture the session, verify expected canonical events and empty spool, then repeat and verify zero new rows
+- [x] 4.4 Commit and push the completed change with a clean worktree

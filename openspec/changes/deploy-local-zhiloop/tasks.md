@@ -40,4 +40,4 @@
 - [x] 6.3 Apply the current-user LaunchAgent deployment and verify compatible READY/SHADOW health
 - [x] 6.4 Run a synthetic hook smoke test, confirm empty model-visible output and privacy-safe diagnostics, and verify CCM-owned hooks are unchanged
 - [x] 6.5 Review implementation for correctness, security, bottlenecks, rollback gaps, and platform coupling; resolve all blocking findings
-- [ ] 6.6 Commit and push the completed deployment change with acceptance evidence
+- [x] 6.6 Commit and push the completed deployment change with acceptance evidence

@@ -223,6 +223,136 @@ export const sseInvalidationEventSchema = z.strictObject({
   reasonCode: reasonCodeSchema.optional(),
 });
 
+export const sessionSourceSchema = z.enum(["CODEX_APP_SERVER", "CODEX_TRANSCRIPT"]);
+export const sessionSourceStatusSchema = z.enum(["AVAILABLE", "UNAVAILABLE", "UNSUPPORTED"]);
+export const sessionCaptureStatusSchema = z.enum([
+  "DISCOVERED_NOT_CAPTURED",
+  "CAPTURED_PARTIAL",
+  "CAPTURED_CURRENT",
+  "SOURCE_UNAVAILABLE",
+]);
+
+export const sessionSummarySchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  sessionId: sessionIdSchema,
+  title: z.string().min(1).max(300),
+  source: sessionSourceSchema,
+  sourceStatus: sessionSourceStatusSchema,
+  sourceVersion: z.string().min(1).max(100).optional(),
+  captureStatus: sessionCaptureStatusSchema,
+  projectHint: z.string().min(1).max(500).optional(),
+  cwdAlias: z.string().min(1).max(500).optional(),
+  firstActivityAt: isoTimestampSchema,
+  lastActivityAt: isoTimestampSchema,
+  eventCount: z.number().int().nonnegative(),
+  turnCount: z.number().int().nonnegative(),
+  ignoredRecords: z.number().int().nonnegative(),
+  redactionCount: z.number().int().nonnegative(),
+});
+
+export const eventMetadataSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  sequence: z.number().int().positive(),
+  eventId: safeId(),
+  eventType: z.string().min(1).max(120),
+  source: z.string().min(1).max(120),
+  sessionId: sessionIdSchema,
+  turnId: turnIdSchema.optional(),
+  occurredAt: isoTimestampSchema,
+  correlationId: safeId(),
+  contentHash: sha256Schema,
+  redactionCount: z.number().int().nonnegative(),
+  payloadPurged: z.boolean(),
+});
+
+export const sessionDetailSchema = z.strictObject({
+  summary: sessionSummarySchema,
+  stages: z.array(stageSnapshotSchema).max(100),
+  injections: z.array(injectionAttemptSchema).max(1_000),
+  latestCursor: z.strictObject({
+    byteOffset: z.number().int().nonnegative(),
+    lineNumber: z.number().int().nonnegative(),
+    observedAt: isoTimestampSchema,
+  }).optional(),
+});
+
+export const jobCountsSchema = z.strictObject({
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  retryWait: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export const overviewSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  observedAt: isoTimestampSchema,
+  rolloutMode: z.enum(["OFF", "SHADOW", "ACTIVE"]),
+  sidecarVersion: z.string().min(1).max(100),
+  capabilities: z.array(capabilitySnapshotSchema).max(200),
+  recentSessions: z.array(sessionSummarySchema).max(20),
+  jobs: jobCountsSchema,
+  alertCount: z.number().int().nonnegative(),
+});
+
+export const diagnosticsSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  observedAt: isoTimestampSchema,
+  ledgerSequence: z.number().int().nonnegative(),
+  spoolDepth: z.number().int().nonnegative(),
+  consumerLags: z.array(z.strictObject({
+    consumerId: safeId(200),
+    sequence: z.number().int().nonnegative(),
+    lag: z.number().int().nonnegative(),
+    updatedAt: isoTimestampSchema,
+  })).max(500),
+  worker: z.strictObject({
+    healthy: z.boolean(),
+    lastCycleAt: isoTimestampSchema.optional(),
+    consumed: z.number().int().nonnegative(),
+    produced: z.number().int().nonnegative(),
+    retryableFailures: z.number().int().nonnegative(),
+  }),
+  storage: z.strictObject({
+    healthy: z.boolean(),
+    databaseBytes: z.number().int().nonnegative(),
+    availableBytes: z.number().int().nonnegative().optional(),
+  }),
+});
+
+export const capturePreviewSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  sessionId: sessionIdSchema,
+  previewRevision: z.number().int().positive(),
+  transcriptIdentityHash: sha256Schema,
+  projectedEvents: z.number().int().nonnegative(),
+  ignoredRecords: z.number().int().nonnegative(),
+  eventTypes: z.record(z.string().min(1).max(120), z.number().int().nonnegative()),
+  cursor: z.strictObject({
+    byteOffset: z.number().int().nonnegative(),
+    lineNumber: z.number().int().nonnegative(),
+  }),
+  hasMore: z.boolean(),
+  expiresAt: isoTimestampSchema,
+});
+
+export const captureCommitResultSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  sessionId: sessionIdSchema,
+  previewRevision: z.number().int().positive(),
+  appendedEvents: z.number().int().nonnegative(),
+  duplicateEvents: z.number().int().nonnegative(),
+  cursor: z.strictObject({
+    byteOffset: z.number().int().nonnegative(),
+    lineNumber: z.number().int().nonnegative(),
+  }),
+  knowledgeCompileStage: stageSnapshotSchema,
+});
+
+export const sessionPageSchema = createPageSchema(sessionSummarySchema);
+export const capabilityPageSchema = createPageSchema(capabilitySnapshotSchema);
+export const eventMetadataPageSchema = createPageSchema(eventMetadataSchema);
+export const jobPageSchema = createPageSchema(jobSnapshotSchema);
+
 export type ControlRequest = z.infer<typeof controlRequestSchema>;
 export type ControlResponse = z.infer<typeof controlResponseSchema>;
 export type CapabilitySnapshot = z.infer<typeof capabilitySnapshotSchema>;
@@ -232,6 +362,13 @@ export type InjectionAttempt = z.infer<typeof injectionAttemptSchema>;
 export type ProvenanceLink = z.infer<typeof provenanceLinkSchema>;
 export type ConfigurationRevision = z.infer<typeof configurationRevisionSchema>;
 export type SseInvalidationEvent = z.infer<typeof sseInvalidationEventSchema>;
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+export type SessionDetail = z.infer<typeof sessionDetailSchema>;
+export type EventMetadata = z.infer<typeof eventMetadataSchema>;
+export type Overview = z.infer<typeof overviewSchema>;
+export type Diagnostics = z.infer<typeof diagnosticsSchema>;
+export type CapturePreview = z.infer<typeof capturePreviewSchema>;
+export type CaptureCommitResult = z.infer<typeof captureCommitResultSchema>;
 
 export type ControlRequestParseResult =
   | { readonly ok: true; readonly value: ControlRequest }

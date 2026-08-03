@@ -7,10 +7,12 @@ import {
   REDACTED_CONTRACT_FIXTURES,
   capabilitySnapshotSchema,
   controlRequestSchema,
+  diagnosticsSchema,
   idempotencyKeySchema,
   injectionAttemptSchema,
   parseControlRequestText,
   provenanceLinkSchema,
+  sessionSummarySchema,
 } from "./index.js";
 import { createCursorCodec } from "./server.js";
 import { assertTransition, canTransition } from "./state-machine.js";
@@ -84,6 +86,35 @@ describe("control API strict contracts", () => {
       sourceSequenceFrom: 9,
       sourceSequenceTo: 8,
       knowledge: [],
+    }).success).toBe(false);
+  });
+
+  it("keeps P0 session and diagnostics views bounded and content-free", () => {
+    const session = sessionSummarySchema.parse({
+      schemaVersion: 1,
+      sessionId: "session-1",
+      title: "Deployment planning",
+      source: "CODEX_TRANSCRIPT",
+      sourceStatus: "AVAILABLE",
+      captureStatus: "DISCOVERED_NOT_CAPTURED",
+      firstActivityAt: "2026-08-03T10:00:00.000Z",
+      lastActivityAt: "2026-08-03T11:00:00.000Z",
+      eventCount: 0,
+      turnCount: 0,
+      ignoredRecords: 0,
+      redactionCount: 0,
+    });
+    expect(session.captureStatus).toBe("DISCOVERED_NOT_CAPTURED");
+    expect(session).not.toHaveProperty("prompt");
+    expect(diagnosticsSchema.safeParse({
+      schemaVersion: 1,
+      observedAt: "2026-08-03T11:00:00.000Z",
+      ledgerSequence: 10,
+      spoolDepth: 0,
+      consumerLags: [],
+      worker: { healthy: true, consumed: 2, produced: 2, retryableFailures: 0 },
+      storage: { healthy: true, databaseBytes: 4096 },
+      rawPrompt: "must be rejected",
     }).success).toBe(false);
   });
 });

@@ -29,6 +29,7 @@ export class NodeCodexExecProcess implements CodexExecProcessPort {
     return await new Promise<CodexExecProcessResult>((resolve, reject) => {
       const child = spawn(request.executable, [...request.args], {
         cwd: request.cwd,
+        env: request.env,
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,

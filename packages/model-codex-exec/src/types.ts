@@ -6,6 +6,8 @@ export interface CodexExecProcessRequest {
   readonly signal: AbortSignal;
   readonly maxStdoutBytes: number;
   readonly maxStderrBytes: number;
+  /** When supplied, replaces rather than extends the child environment. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface CodexExecProcessResult {

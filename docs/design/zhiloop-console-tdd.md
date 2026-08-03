@@ -11,6 +11,7 @@
 - [本地部署与回滚](../deployment.md)
 - [ADR-0001：模块化单体与端口适配器](../adr/0001-modular-monolith.md)
 - [ADR-0004：可控复杂度知识注入与闭环验证](../adr/0004-context-orchestration-and-closure.md)
+- [OpenSpec：build-zhiloop-console](../../openspec/changes/build-zhiloop-console/design.md)
 
 ## 1. 摘要
 
@@ -776,6 +777,18 @@ SSE 只发布轻量失效通知，不携带知识正文：
 推荐 React + TypeScript + Vite，复用现有 TypeScript 类型并按 feature 拆包；数据获取使用轻量 query cache，实时变化由 SSE 触发失效。首版不引入大型组件库和图表套件，优先使用 CSS variables、原生 SVG 和可访问表格，避免体积与主题绑定。
 
 ## 15. 实施拆分
+
+本节的 C0～C5 表示能力成熟度，不再作为实际开发顺序。后续开发、Agent 分工、合并顺序和 Gate 以 OpenSpec `build-zhiloop-console` 的 P0～P4 纵向优先级及 `tasks.md` 为唯一执行计划：
+
+| 开发优先级 | 目标 | 对应能力阶段 |
+|---|---|---|
+| P0 | 真实状态和只读会话可见 | C0 + C1 只读/capture 子集 |
+| P1 | Durable Job、自动采集和基础配置 | C1 其余部分 + C2 采集子集 |
+| P2 | snapshot 提取、生产知识链和普通治理 | C2 知识生产 + C4 普通治理子集 |
+| P3 | 确定性召回、Trace 和 Codex 辅助问答 | C3 召回/query 子集 |
+| P4 | MCP、真实注入、闭环、反馈和 ACTIVE | C3 生效子集 + C4 高风险治理 |
+
+跨平台、迁移和同步仍属于后续独立 change，不进入本次 Console 核心实施任务。
 
 ### Phase C0：协议与状态基础
 

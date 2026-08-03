@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { stageReleaseStep, verifyReleaseArtifact } from "./release.js";
+import { assertSupportedDeploymentNodeVersion, stageReleaseStep, verifyReleaseArtifact } from "./release.js";
 import { executeDeploymentTransaction } from "./transaction.js";
 
 const roots: string[] = [];
@@ -68,6 +68,30 @@ describe("release verification and staging", () => {
     expect(await verifyReleaseArtifact(target)).toMatchObject({ digest: (await verifyReleaseArtifact(value.directory)).digest });
   });
 
+  it("treats metadata Node fields as provenance and never executes their path", async () => {
+    const value = await artifact();
+    const marker = join(value.root, "untrusted-node-executed");
+    const untrustedNode = join(value.root, "untrusted-node");
+    await writeFile(untrustedNode, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 99\n`, { mode: 0o755 });
+    const metadata = JSON.parse(await readFile(join(value.directory, "release.json"), "utf8")) as Record<string, unknown>;
+    metadata["nodePath"] = untrustedNode;
+    metadata["nodeVersion"] = "23.0.0";
+    await writeFile(join(value.directory, "release.json"), JSON.stringify(metadata));
+
+    await expect(verifyReleaseArtifact(value.directory)).resolves.toMatchObject({ metadata: { nodePath: untrustedNode, nodeVersion: "23.0.0" } });
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("enforces the supported current-runtime version boundaries", () => {
+    expect(() => assertSupportedDeploymentNodeVersion("24.17.9")).toThrow("unsupported");
+    expect(() => assertSupportedDeploymentNodeVersion("24.18.0")).not.toThrow();
+    expect(() => assertSupportedDeploymentNodeVersion("25.8.1")).not.toThrow();
+    expect(() => assertSupportedDeploymentNodeVersion("26.99.0")).not.toThrow();
+    expect(() => assertSupportedDeploymentNodeVersion("27.0.0")).toThrow("unsupported");
+    expect(() => assertSupportedDeploymentNodeVersion("v25.8.1")).toThrow("unsupported");
+    expect(() => assertSupportedDeploymentNodeVersion("24.18.0-rc.1")).toThrow("unsupported");
+  });
+
   it("removes a newly staged release after a later transaction failure", async () => {
     const value = await artifact();
     const target = join(value.root, "installed", "releases", "0.1.0");
@@ -75,6 +99,21 @@ describe("release verification and staging", () => {
       journalPath: join(value.root, "journal.json"), operation: "install", failAfterStep: "stage", randomId: () => "rollback",
     })).rejects.toThrow("injected");
     await expect(access(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses to reuse a same-content release whose metadata differs", async () => {
+    const value = await artifact();
+    const target = join(value.root, "installed", "releases", "0.1.0");
+    await mkdir(join(value.root, "installed", "releases"), { recursive: true });
+    await cp(value.directory, target, { recursive: true });
+    const metadataPath = join(target, "release.json");
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
+    metadata["sourceCommit"] = "deadbee";
+    await writeFile(metadataPath, JSON.stringify(metadata));
+
+    await expect(stageReleaseStep("stage", value.directory, target)).rejects.toThrow(
+      "different content or metadata",
+    );
   });
 
   it("rejects tampering, extra files, symbolic links, and version collisions", async () => {
@@ -90,12 +129,6 @@ describe("release verification and staging", () => {
     const linked = await artifact();
     await symlink(join(linked.directory, "release.json"), join(linked.directory, "linked.json"));
     await expect(verifyReleaseArtifact(linked.directory)).rejects.toThrow("symbolic link");
-
-    const unsupported = await artifact();
-    const unsupportedMetadata = JSON.parse(await readFile(join(unsupported.directory, "release.json"), "utf8")) as Record<string, unknown>;
-    unsupportedMetadata["nodeVersion"] = "23.0.0";
-    await writeFile(join(unsupported.directory, "release.json"), JSON.stringify(unsupportedMetadata));
-    await expect(verifyReleaseArtifact(unsupported.directory)).rejects.toThrow("unsupported");
 
     const collision = await artifact();
     const target = join(collision.root, "installed", "releases", "0.1.0");

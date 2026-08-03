@@ -17,7 +17,7 @@ import {
 
 import { renderLaunchAgent } from "./macos.js";
 import { resolveDeploymentPaths } from "./paths.js";
-import { stageReleaseStep, verifyReleaseArtifact } from "./release.js";
+import { stageReleaseStep, verifyCompatibleLocalReleaseArtifact } from "./release.js";
 import { pathExists } from "./secure-files.js";
 import { replaceFileStep, replaceSymlinkStep } from "./steps.js";
 import { executeDeploymentTransaction } from "./transaction.js";
@@ -148,29 +148,6 @@ function buildPlan(paths: ReturnType<typeof resolveDeploymentPaths>, metadata: R
       planItem("activate-service", "START", "bootstrap READY/SHADOW LaunchAgent", paths.launchAgentPath),
     ]),
   });
-}
-
-export const REQUIRED_LOCAL_RELEASE_FILES = Object.freeze([
-  "apps/sidecar/dist/main.js",
-  "apps/sidecar/dist/deploy-main.js",
-  "apps/cli/dist/ui-main.js",
-  "apps/cli/dist/ui-cli.js",
-  "apps/console-gateway/dist/main.js",
-  "apps/console-web/dist/index.html",
-  "node_modules/@zhiloop/console-gateway/package.json",
-  "node_modules/@zhiloop/automatic-ingestion/package.json",
-  "node_modules/@zhiloop/configuration-service/package.json",
-  "node_modules/@zhiloop/control-api/package.json",
-  "node_modules/@zhiloop/job-runtime/package.json",
-  "node_modules/@zhiloop/local-deployment/package.json",
-  "node_modules/@zhiloop/observability/package.json",
-  "node_modules/zod/package.json",
-]);
-
-function assertLocalReleaseRuntime(metadata: ReleaseMetadata): void {
-  const files = new Set(metadata.files.map(({ path }) => path));
-  const missing = REQUIRED_LOCAL_RELEASE_FILES.filter((path) => !files.has(path));
-  if (missing.length > 0) throw new Error(`release artifact is missing required local runtime files: ${missing.join(", ")}`);
 }
 
 function expectedManagedPaths(paths: ReturnType<typeof resolveDeploymentPaths>): Set<string> {
@@ -335,24 +312,14 @@ function serviceStep(options: LocalInstallOptions, launchAgentPath: string, expe
 }
 
 export async function planLocalInstall(options: LocalInstallOptions): Promise<DeploymentPlan> {
-  const verified = await verifyReleaseArtifact(resolve(options.artifactDirectory));
-  assertLocalReleaseRuntime(verified.metadata);
-  if (verified.metadata.pluginVersion !== options.compatibility.pluginVersion
-    || verified.metadata.protocolVersion !== options.compatibility.protocolVersion) {
-    throw new Error("release artifact is incompatible with the requested plugin contract");
-  }
+  const verified = await verifyCompatibleLocalReleaseArtifact(resolve(options.artifactDirectory), options.compatibility);
   const paths = resolveDeploymentPaths(options.home, verified.metadata.version);
   return buildPlan(paths, verified.metadata, await pathExists(paths.releaseDirectory));
 }
 
 export async function installLocalRelease(options: LocalInstallOptions): Promise<LocalInstallResult> {
   const artifact = resolve(options.artifactDirectory);
-  const verified = await verifyReleaseArtifact(artifact);
-  assertLocalReleaseRuntime(verified.metadata);
-  if (verified.metadata.pluginVersion !== options.compatibility.pluginVersion
-    || verified.metadata.protocolVersion !== options.compatibility.protocolVersion) {
-    throw new Error("release artifact is incompatible with the requested plugin contract");
-  }
+  const verified = await verifyCompatibleLocalReleaseArtifact(artifact, options.compatibility);
   const paths = resolveDeploymentPaths(options.home, verified.metadata.version);
   const previous = await readDeploymentManifest(paths.manifestPath);
   await validateExistingOwnership(paths, previous);
@@ -387,11 +354,11 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
     await replaceFileStep("write-config", paths.configPath, configuration(paths), 0o600),
     await replaceFileStep("write-launch-agent", paths.launchAgentPath, renderLaunchAgent(paths), 0o600),
     await replaceSymlinkStep("switch-current", paths.currentLink, paths.releaseDirectory),
-    await replaceFileStep("write-sidecar-launcher", paths.sidecarLauncher, launcher(verified.metadata.nodePath, sidecarEntrypoint), 0o700),
+    await replaceFileStep("write-sidecar-launcher", paths.sidecarLauncher, launcher(process.execPath, sidecarEntrypoint), 0o700),
     await replaceFileStep(
       "write-cli-launcher",
       paths.zhiloopLauncher,
-      renderZhiLoopLauncher(verified.metadata.nodePath, deploymentEntrypoint, uiEntrypoint),
+      renderZhiLoopLauncher(process.execPath, deploymentEntrypoint, uiEntrypoint),
       0o700,
     ),
     await hookStep(paths, hookInstallState),

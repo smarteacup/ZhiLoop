@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { Writable } from "node:stream";
 
 import {
+  delegateUpgradeToVerifiedArtifact,
   doctorLocalInstallation,
   installLocalRelease,
   MacOsLaunchctlController,
@@ -15,7 +16,7 @@ import {
 } from "@zhiloop/local-deployment";
 import type { SidecarHealth } from "@zhiloop/plugin-runtime";
 
-import { SIDECAR_COMPATIBILITY } from "./metadata.js";
+import { SIDECAR_COMPATIBILITY, SIDECAR_VERSION } from "./metadata.js";
 import { requestSidecar, SidecarRequestError } from "./transport.js";
 
 function option(args: readonly string[], name: string): string | undefined {
@@ -63,7 +64,19 @@ function captureExitCode(code: string): number {
   return 70;
 }
 
-export async function runDeploymentCli(args: readonly string[], stdout: Writable, stderr: Writable): Promise<number> {
+export interface DeploymentCliRuntime {
+  readonly currentVersion?: string;
+  readonly currentEntrypoint?: string;
+  readonly delegationTimeoutMs?: number;
+  readonly delegationMaxOutputBytes?: number;
+}
+
+export async function runDeploymentCli(
+  args: readonly string[],
+  stdout: Writable,
+  stderr: Writable,
+  runtime: DeploymentCliRuntime = {},
+): Promise<number> {
   const command = args[0];
   const json = args.includes("--json");
   const apply = args.includes("--apply");
@@ -121,9 +134,25 @@ export async function runDeploymentCli(args: readonly string[], stdout: Writable
   if (command === "install" || command === "upgrade") {
     const artifact = option(args, "--artifact");
     if (artifact === undefined) throw new Error(`${command} requires --artifact <absolute-release-directory>`);
+    const artifactDirectory = resolve(artifact);
+    if (command === "upgrade") {
+      const delegation = await delegateUpgradeToVerifiedArtifact({
+        artifactDirectory,
+        home,
+        args,
+        currentVersion: runtime.currentVersion ?? SIDECAR_VERSION,
+        ...(runtime.currentEntrypoint === undefined ? {} : { currentEntrypoint: runtime.currentEntrypoint }),
+        compatibility: SIDECAR_COMPATIBILITY,
+        stdout,
+        stderr,
+        ...(runtime.delegationTimeoutMs === undefined ? {} : { timeoutMs: runtime.delegationTimeoutMs }),
+        ...(runtime.delegationMaxOutputBytes === undefined ? {} : { maxOutputBytes: runtime.delegationMaxOutputBytes }),
+      });
+      if (delegation.delegated) return delegation.exitCode;
+    }
     const options = {
       home,
-      artifactDirectory: resolve(artifact),
+      artifactDirectory,
       service,
       health: probe(home),
       compatibility: SIDECAR_COMPATIBILITY,

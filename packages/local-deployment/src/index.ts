@@ -1,5 +1,6 @@
 export * from "./paths.js";
 export * from "./release.js";
+export * from "./artifact-delegation.js";
 export * from "./installer.js";
 export * from "./macos.js";
 export * from "./doctor.js";

@@ -1,15 +1,32 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { chmod, copyFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+
+import type { SidecarCompatibilityPolicy } from "@zhiloop/plugin-runtime";
 
 import type { DeploymentStep, ReleaseFile, ReleaseMetadata } from "./types.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u;
 const MAX_METADATA_BYTES = 4 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
+
+export const REQUIRED_LOCAL_RELEASE_FILES = Object.freeze([
+  "apps/sidecar/dist/main.js",
+  "apps/sidecar/dist/deploy-main.js",
+  "apps/cli/dist/ui-main.js",
+  "apps/cli/dist/ui-cli.js",
+  "apps/console-gateway/dist/main.js",
+  "apps/console-web/dist/index.html",
+  "node_modules/@zhiloop/console-gateway/package.json",
+  "node_modules/@zhiloop/automatic-ingestion/package.json",
+  "node_modules/@zhiloop/configuration-service/package.json",
+  "node_modules/@zhiloop/control-api/package.json",
+  "node_modules/@zhiloop/job-runtime/package.json",
+  "node_modules/@zhiloop/local-deployment/package.json",
+  "node_modules/@zhiloop/observability/package.json",
+  "node_modules/zod/package.json",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,20 +111,27 @@ export interface VerifiedRelease {
   readonly digest: string;
 }
 
+function sameVerifiedRelease(left: VerifiedRelease, right: VerifiedRelease): boolean {
+  return left.digest === right.digest
+    && JSON.stringify(left.metadata) === JSON.stringify(right.metadata);
+}
+
+export function assertSupportedDeploymentNodeVersion(version: string): void {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(version);
+  if (match === null) throw new Error("current Node runtime version is unsupported");
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major < 24 || major >= 27 || (major === 24 && minor < 18)) {
+    throw new Error("current Node runtime version is unsupported");
+  }
+}
+
 export async function verifyReleaseArtifact(directory: string): Promise<VerifiedRelease> {
   if (!isAbsolute(directory)) throw new Error("release artifact path must be absolute");
   const stat = await lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("release artifact must be a real directory");
+  assertSupportedDeploymentNodeVersion(process.versions.node);
   const metadata = await readMetadata(directory);
-  const nodeStat = await lstat(metadata.nodePath);
-  if (!nodeStat.isFile() || nodeStat.isSymbolicLink() || (process.platform !== "win32" && (nodeStat.mode & 0o111) === 0)) {
-    throw new Error("release Node runtime must be an executable regular file");
-  }
-  const major = Number(metadata.nodeVersion.split(".")[0]);
-  const minor = Number(metadata.nodeVersion.split(".")[1]);
-  if (major < 24 || major >= 27 || (major === 24 && minor < 18)) throw new Error("release Node runtime version is unsupported");
-  const runtime = await execFileAsync(metadata.nodePath, ["--version"], { encoding: "utf8", timeout: 5_000 });
-  if (runtime.stdout.trim().replace(/^v/u, "") !== metadata.nodeVersion) throw new Error("release Node runtime version does not match metadata");
   const actual = await scanFiles(directory);
   const expected = ["release.json", ...metadata.files.map(({ path }) => path)].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("release artifact file inventory does not match metadata");
@@ -122,6 +146,21 @@ export async function verifyReleaseArtifact(directory: string): Promise<Verified
   return Object.freeze({ metadata, digest });
 }
 
+export async function verifyCompatibleLocalReleaseArtifact(
+  directory: string,
+  compatibility: SidecarCompatibilityPolicy,
+): Promise<VerifiedRelease> {
+  const verified = await verifyReleaseArtifact(resolve(directory));
+  const files = new Set(verified.metadata.files.map(({ path }) => path));
+  const missing = REQUIRED_LOCAL_RELEASE_FILES.filter((path) => !files.has(path));
+  if (missing.length > 0) throw new Error(`release artifact is missing required local runtime files: ${missing.join(", ")}`);
+  if (verified.metadata.pluginVersion !== compatibility.pluginVersion
+    || verified.metadata.protocolVersion !== compatibility.protocolVersion) {
+    throw new Error("release artifact is incompatible with the requested plugin contract");
+  }
+  return verified;
+}
+
 async function copyVerifiedRelease(source: string, target: string, verified: VerifiedRelease): Promise<void> {
   await mkdir(target, { recursive: false, mode: 0o700 });
   for (const file of verified.metadata.files) {
@@ -131,6 +170,36 @@ async function copyVerifiedRelease(source: string, target: string, verified: Ver
     if (process.platform !== "win32") await chmod(destination, file.mode);
   }
   await writeFile(join(target, "release.json"), `${JSON.stringify(verified.metadata, null, 2)}\n`, { flag: "wx", mode: 0o444 });
+}
+
+export interface VerifiedReleaseSnapshot {
+  readonly directory: string;
+  readonly verified: VerifiedRelease;
+  cleanup(): Promise<void>;
+}
+
+export async function createVerifiedReleaseSnapshot(
+  source: string,
+  compatibility: SidecarCompatibilityPolicy,
+): Promise<VerifiedReleaseSnapshot> {
+  const verified = await verifyCompatibleLocalReleaseArtifact(resolve(source), compatibility);
+  const root = await mkdtemp(join(tmpdir(), "zhiloop-delegated-release-"));
+  const directory = join(root, "artifact");
+  try {
+    await copyVerifiedRelease(resolve(source), directory, verified);
+    const copied = await verifyReleaseArtifact(directory);
+    if (!sameVerifiedRelease(copied, verified)) {
+      throw new Error("verified release snapshot does not match the source artifact");
+    }
+    return Object.freeze({
+      directory,
+      verified: copied,
+      cleanup: async () => rm(root, { recursive: true, force: true }),
+    });
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function stageReleaseStep(id: string, artifactDirectory: string, releaseDirectory: string): Promise<DeploymentStep> {
@@ -145,7 +214,9 @@ export async function stageReleaseStep(id: string, artifactDirectory: string, re
     const stat = await lstat(target);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("release target must be a real directory or absent");
     const existing = await verifyReleaseArtifact(target);
-    if (existing.digest !== verified.digest) throw new Error("installed release version has different content");
+    if (!sameVerifiedRelease(existing, verified)) {
+      throw new Error("installed release version has different content or metadata");
+    }
     reuse = true;
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
@@ -158,6 +229,10 @@ export async function stageReleaseStep(id: string, artifactDirectory: string, re
       const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
       try {
         await copyVerifiedRelease(source, temporary, verified);
+        const staged = await verifyReleaseArtifact(temporary);
+        if (!sameVerifiedRelease(staged, verified)) {
+          throw new Error("staged release does not match the verified source artifact");
+        }
         await rename(temporary, target);
       } catch (error) {
         await rm(temporary, { recursive: true, force: true });

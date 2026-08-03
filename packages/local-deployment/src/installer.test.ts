@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, unlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readlink, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -7,7 +7,8 @@ import process from "node:process";
 import type { CodexHookState, CodexHookTrustControlPort, CodexHookTrustInspection, SidecarHealth } from "@zhiloop/plugin-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installLocalRelease, planLocalInstall, REQUIRED_LOCAL_RELEASE_FILES } from "./installer.js";
+import { installLocalRelease, planLocalInstall } from "./installer.js";
+import { REQUIRED_LOCAL_RELEASE_FILES } from "./release.js";
 import { doctorLocalInstallation } from "./doctor.js";
 import { resolveDeploymentPaths } from "./paths.js";
 import type { HealthProbe, ServiceController } from "./types.js";
@@ -32,7 +33,7 @@ async function home(): Promise<string> {
   return value;
 }
 
-async function artifact(root: string, version = "0.1.0"): Promise<string> {
+async function artifact(root: string, version = "0.1.0", nodePath = process.execPath): Promise<string> {
   const directory = join(root, `artifact-${version}`);
   const files = new Map([
     ["apps/sidecar/dist/main.js", "#!/usr/bin/env node\n// sidecar\n"],
@@ -61,7 +62,7 @@ async function artifact(root: string, version = "0.1.0"): Promise<string> {
     pluginVersion: "0.1.0",
     protocolVersion: 1,
     sourceCommit: "d3bdb8b",
-    nodePath: process.execPath,
+    nodePath,
     nodeVersion: process.versions.node,
     createdAt: "2026-08-03T00:00:00.000Z",
     files: [...files].map(([path, content]) => ({
@@ -203,7 +204,10 @@ describe("local installer", () => {
 
   it("installs SHADOW, preserves CCM hooks and credentials, and is idempotent", async () => {
     const targetHome = await home();
-    const source = await artifact(targetHome);
+    const untrustedNodeMarker = join(targetHome, "untrusted-node-executed");
+    const untrustedNode = join(targetHome, "untrusted-node");
+    await writeFile(untrustedNode, `#!/bin/sh\ntouch ${JSON.stringify(untrustedNodeMarker)}\nprintf 'v%s\\n' ${JSON.stringify(process.versions.node)}\n`, { mode: 0o755 });
+    const source = await artifact(targetHome, "0.1.0", untrustedNode);
     const before = await seedCcmHooks(targetHome);
     const service = new FakeService();
     const options = {
@@ -224,9 +228,15 @@ describe("local installer", () => {
     expect((await lstat(paths.configPath)).mode & 0o777).toBe(0o600);
     expect((await lstat(paths.sidecarLauncher)).mode & 0o777).toBe(0o700);
     const cliLauncher = await readFile(paths.zhiloopLauncher, "utf8");
+    const sidecarLauncher = await readFile(paths.sidecarLauncher, "utf8");
     expect(cliLauncher).toContain('if [ "$1" = "ui" ]');
     expect(cliLauncher).toContain("apps/cli/dist/ui-main.js");
     expect(cliLauncher).toContain("apps/sidecar/dist/deploy-main.js");
+    expect(cliLauncher).toContain(process.execPath);
+    expect(sidecarLauncher).toContain(process.execPath);
+    expect(cliLauncher).not.toContain(untrustedNode);
+    expect(sidecarLauncher).not.toContain(untrustedNode);
+    await expect(access(untrustedNodeMarker)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(targetHome, ".ccm", "config.json"), "utf8")).toBe(before.ccmText);
     const installedHooks = JSON.parse(await readFile(paths.codexHooksPath, "utf8")) as typeof JSON;
     expect(JSON.stringify(installedHooks)).toContain("CCM_HOOK_PLATFORM=codex");

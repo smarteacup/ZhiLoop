@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 
 import {
   ActiveClosureRuntime,
@@ -358,17 +359,39 @@ export class P4ActiveSidecarRuntime {
   }
 
   async #handleUserPrompt(input: UserPromptSubmitInput): Promise<P4ActiveHookResult> {
+    const deadlineMs = this.#dependencies.userPromptDeadlineMs ?? 500;
+    const startedAt = performance.now();
     try {
-      await this.#dependencies.captureUserPrompt(input);
+      await withinRemainingDeadline(
+        async () => await this.#dependencies.captureUserPrompt(input),
+        deadlineMs - (performance.now() - startedAt),
+        "capture",
+      );
     } catch (error) {
-      return { hookEventName: "UserPromptSubmit", captureCompleted: false, status: "ERROR", diagnostic: `CAPTURE_FAILED:${safeError(error)}` };
+      const timedOut = error instanceof P4UserPromptDeadlineError;
+      return {
+        hookEventName: "UserPromptSubmit",
+        captureCompleted: false,
+        status: timedOut ? "TIMEOUT" : "ERROR",
+        diagnostic: `${timedOut ? "CAPTURE_TIMEOUT" : "CAPTURE_FAILED"}:${safeError(error)}`,
+      };
     }
     let authority: RolloutRequestScope;
     try {
-      authority = await this.#dependencies.authority.scopeForHook(input);
+      authority = await withinRemainingDeadline(
+        async () => await this.#dependencies.authority.scopeForHook(input),
+        deadlineMs - (performance.now() - startedAt),
+        "scope authority",
+      );
       if (authority.sessionId !== input.session_id || authority.turnId !== input.turn_id) throw new Error("authoritative Hook identity mismatch");
     } catch (error) {
-      return { hookEventName: "UserPromptSubmit", captureCompleted: true, status: "ERROR", diagnostic: `SCOPE_AUTHORITY_FAILED:${safeError(error)}` };
+      const timedOut = error instanceof P4UserPromptDeadlineError;
+      return {
+        hookEventName: "UserPromptSubmit",
+        captureCompleted: true,
+        status: timedOut ? "TIMEOUT" : "ERROR",
+        diagnostic: `${timedOut ? "SCOPE_AUTHORITY_TIMEOUT" : "SCOPE_AUTHORITY_FAILED"}:${safeError(error)}`,
+      };
     }
     let decision;
     try { decision = this.#dependencies.rollout.decision(authority); }
@@ -406,7 +429,7 @@ export class P4ActiveSidecarRuntime {
       eligibility: this.#eligibility,
       feedback: this.#feedback,
       now: this.#now,
-      deadlineMs: this.#dependencies.userPromptDeadlineMs ?? 500,
+      deadlineMs: Math.max(1, Math.min(deadlineMs, Math.floor(deadlineMs - (performance.now() - startedAt)))),
     });
     const result = await runtime.handle(input);
     const terminalStatus = result.status === "PENDING" ? "ERROR" : result.status;
@@ -488,6 +511,28 @@ function shadowController(revision: number): InjectionRolloutController {
   const controller = new InjectionRolloutController();
   controller.activate(Math.max(1, revision), "SHADOW");
   return controller;
+}
+
+class P4UserPromptDeadlineError extends Error {
+  override readonly name = "P4UserPromptDeadlineError";
+}
+
+async function withinRemainingDeadline<T>(operation: () => T | Promise<T>, remainingMs: number, label: string): Promise<T> {
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    throw new P4UserPromptDeadlineError(`${label} started after the UserPrompt deadline`);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new P4UserPromptDeadlineError(`${label} exceeded the UserPrompt deadline`)), remainingMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function boundedLoad(port: P4ClosureEvidencePort, input: StopHookInput, timeoutMs: number): Promise<P4ExplicitClosureEvidence> {

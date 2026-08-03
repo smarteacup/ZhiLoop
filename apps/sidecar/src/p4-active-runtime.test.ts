@@ -159,6 +159,29 @@ describe("P4ActiveSidecarRuntime", () => {
     runtime = await P4ActiveSidecarRuntime.create(unsupported.dependencies); result = await runtime.handleHook(hook()); expect(result).toMatchObject({ status: "NO_CONTEXT" }); expect(result).not.toHaveProperty("hookOutput"); runtime.close(); unsupported.projection.close();
   });
 
+  it("bounds capture and scope authority inside the same UserPrompt deadline", async () => {
+    const slowCapture = await resources({
+      userPromptDeadlineMs: 5,
+      captureUserPrompt: async () => await new Promise((resolve) => setTimeout(resolve, 30)),
+    });
+    let runtime = await P4ActiveSidecarRuntime.create(slowCapture.dependencies);
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "TIMEOUT", captureCompleted: false });
+    runtime.close(); slowCapture.projection.close();
+
+    const slowAuthority = await resources({
+      userPromptDeadlineMs: 5,
+      authority: {
+        scopeForHook: async () => await new Promise((resolve) => setTimeout(() => resolve({
+          sessionId: "session-1", turnId: "turn-1", projectId: "project-a", taskId: "turn-1",
+        }), 30)),
+        authorizeMcp: () => query("authoritative MCP query"),
+      },
+    });
+    runtime = await P4ActiveSidecarRuntime.create(slowAuthority.dependencies);
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "TIMEOUT", captureCompleted: true });
+    runtime.close(); slowAuthority.projection.close();
+  });
+
   it("binds MCP to authoritative context and labels prompt-like knowledge as untrusted data", async () => {
     const values = await resources(); const runtime = await P4ActiveSidecarRuntime.create(values.dependencies);
     expect(await runtime.handleHook(hook())).toMatchObject({ status: "SHADOWED" });

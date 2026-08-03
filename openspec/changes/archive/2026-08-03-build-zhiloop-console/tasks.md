@@ -150,4 +150,4 @@
 
 - [x] 14.1 [Integration Owner] Verify every OpenSpec scenario has direct automated evidence or an explicitly documented real-environment acceptance
 - [x] 14.2 [Integration Owner] Perform final code review for correctness, concurrency, performance, privacy, security and module boundaries with no unresolved high-risk finding
-- [ ] 14.3 [Integration Owner] Commit and push completed tasks with a clean worktree, then archive `build-zhiloop-console` only after all required capabilities are implemented and deployed
+- [x] 14.3 [Integration Owner] Commit and push completed tasks with a clean worktree, then archive `build-zhiloop-console` only after all required capabilities are implemented and deployed

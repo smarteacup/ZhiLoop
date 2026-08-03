@@ -1,6 +1,6 @@
 {
   "name": "@zhiloop/sidecar",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "bin": {
@@ -18,12 +18,18 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@zhiloop/active-knowledge-runtime": "0.0.0",
+    "@zhiloop/active-rollout-service": "0.0.0",
     "@zhiloop/automatic-ingestion": "0.0.0",
+    "@zhiloop/closure-verifier": "0.0.0",
+    "@zhiloop/codex-context-injection": "0.0.0",
     "@zhiloop/codex-session-capture": "0.0.0",
     "@zhiloop/control-api": "0.0.0",
     "@zhiloop/config": "0.0.0",
     "@zhiloop/configuration-service": "0.0.0",
     "@zhiloop/conversation-ledger": "0.0.0",
+    "@zhiloop/context-orchestrator": "0.0.0",
+    "@zhiloop/confirmation-writeback": "0.0.0",
     "@zhiloop/daemon": "0.0.0",
     "@zhiloop/hook-runtime": "0.0.0",
     "@zhiloop/domain": "0.0.0",
@@ -33,6 +39,7 @@
     "@zhiloop/knowledge-compiler": "0.0.0",
     "@zhiloop/knowledge-governance-service": "0.0.0",
     "@zhiloop/knowledge-indexer": "0.0.0",
+    "@zhiloop/knowledge-mcp": "0.0.0",
     "@zhiloop/knowledge-registry": "0.0.0",
     "@zhiloop/markdown-repository": "0.0.0",
     "@zhiloop/model-codex-exec": "0.0.0",
@@ -40,9 +47,17 @@
     "@zhiloop/operational-read-model": "0.0.0",
     "@zhiloop/observability": "0.0.0",
     "@zhiloop/p3-console-runtime": "0.0.0",
+    "@zhiloop/p4-console-runtime": "0.0.0",
     "@zhiloop/plugin-runtime": "0.0.0",
+    "@zhiloop/project-identity": "0.0.0",
+    "@zhiloop/query-context": "0.0.0",
     "@zhiloop/retrieval-query-service": "0.0.0",
+    "@zhiloop/retrieval-engine": "0.0.0",
+    "@zhiloop/knowledge-reranker": "0.0.0",
+    "@zhiloop/feedback-engine": "0.0.0",
+    "@zhiloop/runtime-audit-store": "0.0.0",
     "@zhiloop/session-catalog": "0.0.0",
-    "@zhiloop/session-extraction": "0.0.0"
+    "@zhiloop/session-extraction": "0.0.0",
+    "@zhiloop/stop-continuation": "0.0.0"
   }
 }

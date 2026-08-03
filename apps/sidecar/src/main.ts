@@ -2,9 +2,14 @@
 import { isAbsolute, resolve } from "node:path";
 import process from "node:process";
 
+import type { McpExpansionResult } from "@zhiloop/active-knowledge-runtime";
+import { resolveProjectIdentity } from "@zhiloop/project-identity";
+import { resolveQueryContext } from "@zhiloop/query-context";
+
 import { SidecarApplication } from "./application.js";
 import { loadSidecarConfig, type SidecarConfig } from "./config.js";
 import { runHookCommand } from "./hook-command.js";
+import { runMcpCommand } from "./mcp-command.js";
 import { requestSidecar, startSidecarServer, stopSidecarServer } from "./transport.js";
 
 function configurationPath(args: readonly string[]): string {
@@ -38,8 +43,8 @@ async function serve(config: SidecarConfig): Promise<number> {
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   const command = args[0];
-  if (command !== "serve" && command !== "hook" && command !== "health" && command !== "worker") {
-    process.stderr.write("usage: zhiloop-sidecar <serve|hook|health|worker> --config <absolute-path>\n");
+  if (command !== "serve" && command !== "hook" && command !== "mcp" && command !== "health" && command !== "worker") {
+    process.stderr.write("usage: zhiloop-sidecar <serve|hook|mcp|health|worker> --config <absolute-path>\n");
     return 64;
   }
   let config: SidecarConfig;
@@ -51,6 +56,17 @@ async function main(): Promise<number> {
   }
   if (command === "serve") return serve(config);
   if (command === "hook") return runHookCommand(process.stdin, process.stdout, config);
+  if (command === "mcp") return await runMcpCommand(process.stdin, process.stdout, {
+    authority: async (cwd) => {
+      const project = (await resolveProjectIdentity(cwd)).context;
+      return resolveQueryContext({ prompt: "ZhiLoop local MCP knowledge request", cwd, project });
+    },
+    handle: async (request) => await requestSidecar(
+      config.socketPath,
+      { type: "mcp", request },
+      2_000,
+    ) as McpExpansionResult,
+  });
   const result = command === "health"
     ? await requestSidecar(config.socketPath, { type: "health" }, 1_000)
     : await requestSidecar(config.socketPath, { type: "worker" }, 10_000);

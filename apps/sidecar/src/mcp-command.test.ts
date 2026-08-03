@@ -7,7 +7,7 @@ import type {
 import { resolveQueryContext, type QueryContext } from "@zhiloop/query-context";
 import { describe, expect, it, vi } from "vitest";
 
-import { runMcpCommand, type McpCommandDependencies } from "./mcp-command.js";
+import { McpStdioCommandAdapter, runMcpCommand, type McpCommandDependencies } from "./mcp-command.js";
 
 class CaptureWritable extends Writable {
   readonly chunks: Buffer[] = [];
@@ -224,5 +224,74 @@ describe("runMcpCommand", () => {
     );
     expect(observedSignal?.aborted).toBe(true);
     expect(responses).toEqual([{ jsonrpc: "2.0", id: "stdin-close", error: { code: -32800, message: "Request cancelled" } }]);
+  });
+
+  it("validates all transport limits and accepts fragmented CRLF frames and custom server identity", async () => {
+    for (const invalid of [
+      { maxLineBytes: 63 }, { maxLineBytes: 1_048_577 }, { maxLineBytes: 128, maxFrameBytes: 129 },
+      { maxResultBytes: 255 }, { maxResultBytes: 4_194_305 }, { maxInFlight: 0 }, { maxInFlight: 129 }, { maxInFlight: 1.5 },
+    ]) expect(() => new McpStdioCommandAdapter(dependencies(invalid))).toThrow("must be within");
+    const source = Readable.from([frame("initialize", "init", {}).slice(0, 10), `${frame("initialize", "init", {}).slice(10, -1)}\r\n`, "\n", frame("unknown/notification")]);
+    const responses = await execute(source, dependencies({ serverName: "custom-zhiloop", serverVersion: "9.9.9" }));
+    expect(responseById(responses, "init")["result"]).toMatchObject({ serverInfo: { name: "custom-zhiloop", version: "9.9.9" } });
+  });
+
+  it("covers strict optional inputs and rejects every malformed tool argument family", async () => {
+    const calls: VersionedMcpRequest[] = [];
+    const valid = [
+      frame("tools/call", "search-known", { name: "ckl.search", arguments: { query: "RuntimeBeacon", limit: 100, knownItems: [{ id: "knowledge-1", version: 1, detailLevel: "L3_EVIDENCED" }] }, _meta: {} }),
+      frame("tools/call", "related-known", { name: "ckl.related", arguments: { seedAssetIds: ["knowledge-1"], knownItems: [], limit: 1 } }),
+      frame("tools/call", "check-no-version", { name: "ckl.check", arguments: { items: [{ id: "knowledge-1" }] } }),
+    ];
+    const invalidArguments = [
+      null,
+      { name: "ckl.search", arguments: [] },
+      { name: "ckl.search", arguments: { query: "" } },
+      { name: "ckl.search", arguments: { query: "x", limit: 0 } },
+      { name: "ckl.search", arguments: { query: "x", knownItems: [{ id: "bad id", version: 1, detailLevel: "L1_POINTER" }] } },
+      { name: "ckl.get", arguments: { id: "bad id", version: 0, fromDetailLevel: "L4_EPISODE" } },
+      { name: "ckl.get", arguments: { id: "knowledge-1", version: 1, fromDetailLevel: "L1_POINTER", targetDetailLevel: "L3_EVIDENCED", attemptId: "bad id" } },
+      { name: "ckl.related", arguments: { seedAssetIds: [] } },
+      { name: "ckl.related", arguments: { seedAssetIds: ["bad id"] } },
+      { name: "ckl.check", arguments: { items: [] } },
+      { name: "ckl.check", arguments: { items: [{ id: "knowledge-1", version: 0 }] } },
+      { name: "ckl.check", arguments: { items: [["not-record"]] } },
+    ];
+    const responses = await execute([...valid, ...invalidArguments.map((params, index) => frame("tools/call", `invalid-${index}`, params))].join(""), dependencies({ handle: async (request) => { calls.push(request); return resultFor(request); } }));
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toMatchObject({ input: { knownItems: [{ detailLevel: "L3_EVIDENCED" }] } });
+    expect(calls[2]).toMatchObject({ input: { items: [{ id: "knowledge-1" }] } });
+    for (let index = 0; index < invalidArguments.length; index += 1) expect(responseById(responses, `invalid-${index}`)["error"]).toMatchObject({ code: -32602 });
+  });
+
+  it("rejects malformed JSON-RPC identities, invalid authority and concurrent overload safely", async () => {
+    const malformed = await execute([
+      `${JSON.stringify([])}\n`,
+      `${JSON.stringify({ jsonrpc: "1.0", id: 1, method: "ping" })}\n`,
+      `${JSON.stringify({ jsonrpc: "2.0", id: "", method: "ping" })}\n`,
+      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "" })}\n`,
+      frame("notifications/cancelled", undefined, { requestId: [], reason: "invalid" }),
+      frame("notifications/cancelled", undefined, { unexpected: true }),
+    ].join(""));
+    expect(malformed).toHaveLength(4);
+    expect(malformed.every((response) => (response["error"] as { code: number }).code === -32600)).toBe(true);
+
+    for (const deps of [
+      dependencies({ cwd: () => "" }),
+      dependencies({ authority: () => { throw new Error("authority failed"); } }),
+      dependencies({ handle: async () => { throw new Error("handler failed"); } }),
+    ]) {
+      const responses = await execute(frame("tools/call", "failed", { name: "ckl.search", arguments: { query: "x" } }), deps);
+      expect(responseById(responses, "failed")["error"]).toMatchObject({ code: -32603, message: "Internal error" });
+    }
+
+    const overloaded = Readable.from((async function* () {
+      yield frame("tools/call", "first", { name: "ckl.search", arguments: { query: "slow" } });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      yield frame("tools/call", "second", { name: "ckl.search", arguments: { query: "busy" } });
+    })());
+    const busy = await execute(overloaded, dependencies({ maxInFlight: 1, handle: async () => await new Promise<McpExpansionResult>(() => undefined) }));
+    expect(responseById(busy, "second")["error"]).toMatchObject({ code: -32000, message: "Server busy" });
+    expect(responseById(busy, "first")["error"]).toMatchObject({ code: -32800 });
   });
 });

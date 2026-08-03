@@ -6,7 +6,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.2.1";
+const VERSION = "0.3.1";
 const EXTERNALS = [
   ["packages/schemas/node_modules/ajv", "ajv"],
   ["node_modules/ajv-formats", "ajv-formats"],

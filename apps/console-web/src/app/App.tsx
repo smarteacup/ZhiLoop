@@ -1,4 +1,5 @@
 import type { ConsoleApi } from "../api/client.js";
+import type { P4ConsoleApi } from "../api/p4.js";
 import { browserConsoleApi } from "../api/client.js";
 import { DisabledState } from "../components/AsyncState.js";
 import { DeploymentPage } from "../features/deployment/DeploymentPage.js";
@@ -7,6 +8,7 @@ import { ConfigurationPage } from "../features/p1/configuration/ConfigurationPag
 import { P1OperationsPage } from "../features/p1/jobs/P1OperationsPage.js";
 import { KnowledgePage } from "../features/p2/knowledge/KnowledgePage.js";
 import { RetrievalPage } from "../features/p3/RetrievalPage.js";
+import { P4ConsolePage } from "../features/p4/P4ConsolePage.js";
 import { SessionDetailPage } from "../features/sessions/SessionDetailPage.js";
 import { SessionsPage } from "../features/sessions/SessionsPage.js";
 import { useRoute, type RouteName } from "./routes.js";
@@ -34,8 +36,24 @@ function CurrentPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
   if (route.name === "deployment") return <DeploymentPage api={api} />;
   if (route.name === "knowledge") return route.knowledgeId === undefined ? <KnowledgePage api={api} /> : <KnowledgePage api={api} knowledgeId={route.knowledgeId} />;
   if (route.name === "retrieval") return <RetrievalPage api={api} />;
-  if (route.name === "closure") return <DisabledState title="闭环验证尚未接通" reason="STOP_VERIFIER_NOT_COMPOSED · P4 实现后启用" />;
+  if (route.name === "closure") {
+    const p4 = p4ConsoleApi(api);
+    if (p4 === undefined) return <DisabledState title="闭环验证尚未接通" reason="P4_CONSOLE_ADAPTER_NOT_COMPOSED" />;
+    if (route.sessionId === undefined) return <DisabledState title="请选择会话查看 P4 闭环" reason="SESSION_SCOPE_REQUIRED · 可从会话详情进入" />;
+    return <P4ConsolePage api={p4} sessionId={route.sessionId} />;
+  }
   return <DisabledState title="未知页面" reason="INVALID_ROUTE" />;
+}
+
+function p4ConsoleApi(api: ConsoleApi): P4ConsoleApi | undefined {
+  if (api.sessionInjections === undefined || api.closureRuns === undefined || api.closureRun === undefined
+    || api.feedbackTargets === undefined || api.recordFeedback === undefined || api.rollout === undefined
+    || api.highRiskGovernance === undefined || api.previewHighRisk === undefined || api.commitHighRisk === undefined) return undefined;
+  return {
+    sessionInjections: api.sessionInjections, closureRuns: api.closureRuns, closureRun: api.closureRun,
+    feedbackTargets: api.feedbackTargets, recordFeedback: api.recordFeedback, rollout: api.rollout,
+    highRiskGovernance: api.highRiskGovernance, previewHighRisk: api.previewHighRisk, commitHighRisk: api.commitHighRisk,
+  };
 }
 
 export function App({ api = browserConsoleApi }: { readonly api?: ConsoleApi }): React.JSX.Element {

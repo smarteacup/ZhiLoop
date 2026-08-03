@@ -6,10 +6,12 @@
   "zhiloop": {
     "allowedWorkspaceDependencies": [
       "@zhiloop/control-api",
-      "@zhiloop/p3-console-runtime"
+      "@zhiloop/p3-console-runtime",
+      "@zhiloop/p4-console-runtime"
     ],
     "allowedExternalDependencies": [
-      "node:*"
+      "node:*",
+      "zod"
     ],
     "requireDirectTests": true
   },
@@ -25,6 +27,8 @@
   },
   "dependencies": {
     "@zhiloop/control-api": "0.0.0",
-    "@zhiloop/p3-console-runtime": "0.0.0"
+    "@zhiloop/p3-console-runtime": "0.0.0",
+    "@zhiloop/p4-console-runtime": "0.0.0",
+    "zod": "^4.4.3"
   }
 }

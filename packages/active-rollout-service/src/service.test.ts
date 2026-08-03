@@ -25,14 +25,18 @@ import { FileHighRiskGovernanceStateStore } from "./high-risk-store.js";
 import { ScopedInjectionCoordinator } from "./injection-coordinator.js";
 import { ActiveRolloutService } from "./rollout-service.js";
 import { FileRolloutStateStore, MemoryRolloutStateStore } from "./store.js";
+import { fingerprint } from "./validation.js";
 import type {
   BlastRadius,
   HighRiskAuthorizationPort,
+  HighRiskGovernanceCommitRecord,
   HighRiskGovernanceCommand,
   HighRiskGovernancePolicy,
   HighRiskGovernancePort,
   HighRiskGovernanceStateStore,
+  HighRiskOperationKind,
   HighRiskPermission,
+  HighRiskPreview,
   PersistedRolloutState,
   RolloutStateStore,
   ShadowEligibilityEvidence,
@@ -740,6 +744,80 @@ describe("high-risk governance enforcement", () => {
       tampered.stateRevision += 1;
       writeFileSync(path, JSON.stringify(tampered), { encoding: "utf8", mode: 0o600 });
       expect(() => new FileHighRiskGovernanceStateStore(path).getPreview(preview.previewId)).toThrow("checksum");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for malformed high-risk file records and semantic ID reuse", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "zhiloop-high-risk-invalid-"));
+    try {
+      const path = join(directory, "high-risk.json");
+      const store = new FileHighRiskGovernanceStateStore(path);
+      const service = new HighRiskGovernanceService(
+        { preview: async () => blast, execute: async (_command, identity) => ({
+          operationId: identity.operationId,
+          requestFingerprint: identity.requestFingerprint,
+          outcome: "COMMITTED",
+          committedAt: later,
+        }) },
+        store,
+        authorize({ "operator-a": ["CHANGE_RULE"] }),
+        policy(),
+      );
+      const preview = await service.preview(command("RULE_CHANGE"), now);
+      await service.commit({
+        preview,
+        expectedPolicyRevision: 1,
+        actor: "operator-a",
+        confirmationFingerprint: confirmationFingerprint(preview, "operator-a"),
+        now: later,
+      });
+      const persisted = JSON.parse(readFileSync(path, "utf8")) as {
+        schemaVersion: number;
+        stateRevision: number;
+        previews: HighRiskPreview[];
+        commits: HighRiskGovernanceCommitRecord[];
+      };
+      const original = {
+        schemaVersion: persisted.schemaVersion,
+        stateRevision: persisted.stateRevision,
+        previews: persisted.previews,
+        commits: persisted.commits,
+      };
+      const persist = (mutate: (core: typeof original) => void): void => {
+        const core = structuredClone(original);
+        mutate(core);
+        writeFileSync(path, `${JSON.stringify({ ...core, checksum: fingerprint(core) })}\n`, { mode: 0o600 });
+      };
+      const malformed: Array<(core: typeof original) => void> = [
+        (core) => { core.schemaVersion = 2; },
+        (core) => { core.stateRevision = -1; },
+        (core) => { core.previews[0] = { ...core.previews[0]!, command: { ...core.previews[0]!.command, kind: "UNKNOWN" as HighRiskOperationKind } }; },
+        (core) => { core.previews[0] = { ...core.previews[0]!, policyRevision: 0 }; },
+        (core) => { core.previews[0] = { ...core.previews[0]!, createdAt: "not-an-iso-date" }; },
+        (core) => { core.previews[0] = { ...core.previews[0]!, expiresAt: core.previews[0]!.createdAt }; },
+        (core) => { core.previews[0] = { ...core.previews[0]!, command: { ...core.previews[0]!.command, assetIds: ["asset-a", "asset-a"] } }; },
+        (core) => { core.previews.push(structuredClone(core.previews[0]!)); },
+        (core) => { core.commits[0] = { ...core.commits[0]!, result: { ...core.commits[0]!.result, actor: "bad\\actor" } }; },
+        (core) => { core.commits[0] = { ...core.commits[0]!, result: { ...core.commits[0]!.result, kind: "GLOBAL_PROMOTION" } }; },
+        (core) => { core.commits.push(structuredClone(core.commits[0]!)); },
+      ];
+      for (const mutate of malformed) {
+        persist(mutate);
+        expect(() => new FileHighRiskGovernanceStateStore(path).getPreview(preview.previewId)).toThrow();
+      }
+
+      persist(() => undefined);
+      const reopened = new FileHighRiskGovernanceStateStore(path);
+      expect(() => reopened.putPreview({ ...preview, expiresAt: "2026-08-04T01:30:00.000Z" }))
+        .toThrow("semantic conflict");
+      const commit = reopened.getCommit(preview.previewId)!;
+      expect(() => reopened.putCommit({ ...commit, requestFingerprint: fingerprint("different") }))
+        .toThrow("semantic conflict");
+      chmodSync(path, 0o644);
+      expect(() => reopened.getPreview(preview.previewId)).toThrow("unsafe");
+      expect(() => new FileHighRiskGovernanceStateStore("bad\0path")).toThrow("path");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -162,4 +162,131 @@ describe("ConfigurationPage", () => {
     view.unmount();
     expect(signal?.aborted).toBe(true);
   });
+
+  it("derives fail-closed models for absent, invalid and restart-required drafts", () => {
+    const noDraft = configurationViewModel(state({
+      drafts: [],
+      history: [{
+        revision: 2, baseRevision: 1, status: "EFFECTIVE", hash: "a".repeat(64), scope: "GLOBAL",
+        changedPaths: [], requiresRestart: false, createdAt: timestamp, reasonCode: "COMPONENT_READY",
+      }],
+    }), unusedApi());
+    expect(noDraft).toMatchObject({
+      validationStatus: "NOT_VERIFIED",
+      validationReasonCode: "VALIDATED_DRAFT_NOT_AVAILABLE",
+      activate: { allowed: false, blockedReason: "没有已验证草稿" },
+    });
+    expect(noDraft.fields.some((field) => field.source === "DEFAULT" && field.sourceDetail.includes("DEFAULT"))).toBe(true);
+    expect(noDraft.history[0]?.rollback).toMatchObject({ allowed: false, blockedReason: "该 revision 已是当前 effective" });
+
+    const current = state();
+    const draftConfiguration = structuredClone(current.view.effective);
+    draftConfiguration.runtime.alerts.notify = true;
+    draftConfiguration.future.injectionMaxTokens = 1_200;
+    const failed = configurationViewModel(state({
+      drafts: [{
+        draftRevision: 4,
+        baseRevision: 2,
+        scope: "PROJECT",
+        projectId: "project-1",
+        configuration: draftConfiguration,
+        changedPaths: ["runtime.alerts.notify", "future.injectionMaxTokens", "missing.path"],
+        requiresRestart: true,
+        activatable: false,
+        diagnostics: [
+          { code: "INVALID_CONFIGURATION", path: "runtime.alerts.notify", retryable: true },
+          { code: "CONFLICT", retryable: false },
+        ],
+      }, current.drafts[0]!],
+      history: [
+        { revision: 5, baseRevision: 4, status: "REJECTED", hash: "c".repeat(64), scope: "GLOBAL", changedPaths: [], requiresRestart: false, createdAt: timestamp, reasonCode: "INVALID_INPUT" },
+        { revision: 1, baseRevision: 0, status: "EFFECTIVE", hash: "b".repeat(64), scope: "GLOBAL", changedPaths: [], requiresRestart: false, createdAt: timestamp, reasonCode: "COMPONENT_READY" },
+      ],
+    }), unusedApi({ validateConfiguration: async () => ({ ok: false, diagnostics: [] }), activateConfiguration: async () => ({ ok: false, diagnostic: { code: "CONFLICT", retryable: false } }), rollbackConfiguration: async () => ({ ok: false, diagnostic: { code: "CONFLICT", retryable: false } }) }));
+    expect(failed).toMatchObject({
+      draftRevision: 4,
+      validationStatus: "FAILED",
+      validationReasonCode: "INVALID_CONFIGURATION",
+      activate: { allowed: false, blockedReason: "草稿未通过 capability-aware 校验" },
+    });
+    expect(failed.diagnostics).toEqual([
+      expect.objectContaining({ path: "runtime.alerts.notify", message: expect.stringContaining("重试") }),
+      expect.objectContaining({ code: "CONFLICT", message: expect.stringContaining("解决") }),
+    ]);
+    expect(failed.diff.map((item) => [item.path, item.affectedComponents[0], item.restartImpact])).toEqual([
+      ["runtime.alerts.notify", "observability", "RESTART_REQUIRED"],
+      ["future.injectionMaxTokens", "future-consumer", "RESTART_REQUIRED"],
+    ]);
+    expect(failed.history[0]?.rollback).toMatchObject({ allowed: false, blockedReason: "REJECTED revision 不能作为回滚目标" });
+    expect(failed.history[1]?.rollback).toMatchObject({ allowed: true });
+
+    const unverified = configurationViewModel(state({
+      drafts: [{ ...current.drafts[0]!, activatable: false, diagnostics: [] }],
+    }), unusedApi({ validateConfiguration: async () => ({ ok: false, diagnostics: [] }) }));
+    expect(unverified).toMatchObject({
+      validationStatus: "NOT_VERIFIED",
+      validationReasonCode: "CONFIGURATION_DRAFT_NOT_ACTIVATABLE",
+    });
+  });
+
+  it("surfaces validation, activation and rollback failures with stable error categories", async () => {
+    const user = userEvent.setup();
+    const current = state();
+    const validateConfiguration = vi.fn(async () => ({
+      ok: false as const,
+      diagnostics: [{ code: "CONFLICT" as const, retryable: true }],
+    }));
+    const activateConfiguration = vi.fn(async () => ({
+      ok: false as const,
+      diagnostic: { code: "STALE_REVISION" as const, retryable: false },
+    }));
+    const rollbackConfiguration = vi.fn(async () => ({
+      ok: false as const,
+      diagnostic: { code: "INVALID_CONFIGURATION" as const, retryable: false },
+    }));
+    render(<ConfigurationPage api={unusedApi({
+      configuration: async () => current,
+      validateConfiguration,
+      activateConfiguration,
+      rollbackConfiguration,
+    })} />);
+
+    const input = await screen.findByRole("spinbutton", { name: "runtime.sessionScanIntervalMs Draft" });
+    await user.clear(input);
+    await user.type(input, "80000");
+    await user.click(screen.getByRole("button", { name: "保存 runtime.sessionScanIntervalMs 草稿字段" }));
+    expect((await screen.findByRole("status")).textContent).toContain("CONFLICT");
+
+    await user.click(screen.getByRole("button", { name: "校验并原子激活" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("STALE_REVISION"));
+
+    await user.click(screen.getByRole("button", { name: "回滚到 revision 1" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("INVALID_CONFIGURATION"));
+    expect(validateConfiguration).toHaveBeenCalledOnce();
+    expect(activateConfiguration).toHaveBeenCalledOnce();
+    expect(rollbackConfiguration).toHaveBeenCalledOnce();
+  });
+
+  it("creates the first GLOBAL draft from the effective revision and handles empty diagnostics", async () => {
+    const user = userEvent.setup();
+    const current = state();
+    const { projectId, ...globalView } = current.view;
+    expect(projectId).toBe("project-1");
+    const globalState: ConfigurationState = { view: globalView, drafts: [], history: [] };
+    const validateConfiguration = vi.fn(async () => ({ ok: false as const, diagnostics: [] }));
+    render(<ConfigurationPage api={unusedApi({
+      configuration: async () => globalState,
+      validateConfiguration,
+    })} />);
+    const input = await screen.findByRole("spinbutton", { name: "runtime.followDebounceMs Draft" });
+    await user.clear(input);
+    await user.type(input, "1500");
+    await user.click(screen.getByRole("button", { name: "保存 runtime.followDebounceMs 草稿字段" }));
+    expect((await screen.findByRole("status")).textContent).toContain("INVALID_CONFIGURATION");
+    expect(validateConfiguration).toHaveBeenCalledWith({
+      baseRevision: 2,
+      scope: "GLOBAL",
+      draft: expect.objectContaining({ runtime: expect.objectContaining({ followDebounceMs: 1_500 }) }),
+    }, expect.any(AbortSignal));
+  });
 });

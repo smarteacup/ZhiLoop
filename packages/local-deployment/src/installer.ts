@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import process from "node:process";
 
 import {
   evaluateSidecarCompatibility,
@@ -46,6 +47,7 @@ export interface LocalInstallOptions {
   readonly clock?: () => Date;
   readonly randomId?: () => string;
   readonly hookTrustControl?: CodexHookTrustControlPort;
+  readonly codexExecutable?: string;
 }
 
 export interface LocalInstallResult extends DeploymentTransactionResult {
@@ -58,8 +60,8 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function launcher(nodePath: string, entrypoint: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(entrypoint)} "$@"\n`;
+function launcher(nodePath: string, entrypoint: string, configPath: string): string {
+  return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(entrypoint)} "$@" --config ${shellQuote(configPath)}\n`;
 }
 
 export function renderZhiLoopLauncher(nodePath: string, deploymentEntrypoint: string, uiEntrypoint: string): string {
@@ -82,7 +84,20 @@ export function managedHookConfiguration(sidecarLauncher: string, configPath: st
   return parseHookConfiguration(cloned);
 }
 
-function configuration(paths: ReturnType<typeof resolveDeploymentPaths>): string {
+async function validateCodexExecutable(value: string | undefined): Promise<string | undefined> {
+  if (value === undefined) return undefined;
+  if (!isAbsolute(value) || value.includes("\0") || /[\r\n]/u.test(value)) {
+    throw new Error("Codex executable must be an absolute safe path");
+  }
+  const normalized = resolve(value);
+  const stat = await lstat(normalized);
+  if (!stat.isFile() || stat.isSymbolicLink() || (process.platform !== "win32" && (stat.mode & 0o111) === 0)) {
+    throw new Error("Codex executable must be a regular executable file");
+  }
+  return normalized;
+}
+
+function configuration(paths: ReturnType<typeof resolveDeploymentPaths>, codexExecutable?: string): string {
   return `${JSON.stringify({
     schemaVersion: 1,
     rolloutMode: "SHADOW",
@@ -95,6 +110,9 @@ function configuration(paths: ReturnType<typeof resolveDeploymentPaths>): string
     hookTimeoutMs: 750,
     logMaxBytes: 5_242_880,
     logRetainFiles: 3,
+    ...(codexExecutable === undefined ? {} : {
+      codexQuery: { enabled: true, executable: codexExecutable, userConfiguration: "ALLOW" },
+    }),
   }, null, 2)}\n`;
 }
 
@@ -313,6 +331,7 @@ function serviceStep(options: LocalInstallOptions, launchAgentPath: string, expe
 
 export async function planLocalInstall(options: LocalInstallOptions): Promise<DeploymentPlan> {
   const verified = await verifyCompatibleLocalReleaseArtifact(resolve(options.artifactDirectory), options.compatibility);
+  await validateCodexExecutable(options.codexExecutable);
   const paths = resolveDeploymentPaths(options.home, verified.metadata.version);
   return buildPlan(paths, verified.metadata, await pathExists(paths.releaseDirectory));
 }
@@ -320,6 +339,7 @@ export async function planLocalInstall(options: LocalInstallOptions): Promise<De
 export async function installLocalRelease(options: LocalInstallOptions): Promise<LocalInstallResult> {
   const artifact = resolve(options.artifactDirectory);
   const verified = await verifyCompatibleLocalReleaseArtifact(artifact, options.compatibility);
+  const codexExecutable = await validateCodexExecutable(options.codexExecutable);
   const paths = resolveDeploymentPaths(options.home, verified.metadata.version);
   const previous = await readDeploymentManifest(paths.manifestPath);
   await validateExistingOwnership(paths, previous);
@@ -351,10 +371,10 @@ export async function installLocalRelease(options: LocalInstallOptions): Promise
   const hookInstallState: HookInstallState = { inserted: Object.freeze([]) };
   const steps: DeploymentStep[] = [
     await stageReleaseStep("stage-release", artifact, paths.releaseDirectory),
-    await replaceFileStep("write-config", paths.configPath, configuration(paths), 0o600),
+    await replaceFileStep("write-config", paths.configPath, configuration(paths, codexExecutable), 0o600),
     await replaceFileStep("write-launch-agent", paths.launchAgentPath, renderLaunchAgent(paths), 0o600),
     await replaceSymlinkStep("switch-current", paths.currentLink, paths.releaseDirectory),
-    await replaceFileStep("write-sidecar-launcher", paths.sidecarLauncher, launcher(process.execPath, sidecarEntrypoint), 0o700),
+    await replaceFileStep("write-sidecar-launcher", paths.sidecarLauncher, launcher(process.execPath, sidecarEntrypoint, paths.configPath), 0o700),
     await replaceFileStep(
       "write-cli-launcher",
       paths.zhiloopLauncher,

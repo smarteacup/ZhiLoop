@@ -30,7 +30,7 @@ const envelopeItemSchema = z.strictObject({
   knowledgeId: safeId,
   version: revision,
   detailLevel: z.enum(["L1_POINTER", "L2_COMPACT", "L3_EVIDENCED"]),
-  estimatedTokens: count,
+  estimatedTokens: count.optional(),
 });
 const contextEnvelopeViewSchema = z.strictObject({
   mode: z.enum(["SHADOW", "ACTUAL"]),
@@ -39,6 +39,7 @@ const contextEnvelopeViewSchema = z.strictObject({
   estimatedTokens: count,
   items: z.array(envelopeItemSchema).max(100).readonly(),
   omitted: z.array(z.strictObject({ knowledgeId: safeId, version: revision, reasonCode: safeText(120) })).max(1_000).readonly(),
+  omittedCount: count.optional(),
   reasonCodes: z.array(safeText(120)).max(100).readonly(),
 }).superRefine((envelope, context) => {
   if (envelope.estimatedTokens > envelope.maxTokens) context.addIssue({ code: "custom", path: ["estimatedTokens"], message: "envelope exceeds token budget" });
@@ -65,7 +66,7 @@ export const injectionAttemptViewSchema = z.strictObject({
   turnId: safeId,
   runId: safeId,
   retrievalTraceId: safeId,
-  rolloutRevision: revision,
+  rolloutRevision: count,
   status: injectionDeliveryStatusSchema,
   reasonCode: safeText(120),
   envelope: contextEnvelopeViewSchema,
@@ -111,7 +112,7 @@ export const closureRunViewSchema = z.strictObject({
   decision: z.enum(["PASS", "RETRY_WITH_CONTEXT", "RETRY_WITH_CORRECTION", "ASK_USER"]),
   correctionDelta: z.string().max(20_000).optional(),
   continuationCount: count,
-  continuationLimit: count,
+  continuationLimit: count.optional(),
   recursiveStopRejected: z.boolean(),
   interaction: z.strictObject({
     required: z.boolean(),
@@ -121,7 +122,7 @@ export const closureRunViewSchema = z.strictObject({
     confirmationStatus: z.enum(["NOT_REQUIRED", "PENDING", "CONFIRMED", "DEFAULTED", "REJECTED"]),
   }).optional(),
 }).superRefine((run, context) => {
-  if (run.continuationCount > run.continuationLimit) context.addIssue({ code: "custom", path: ["continuationCount"], message: "continuation count exceeds limit" });
+  if (run.continuationLimit !== undefined && run.continuationCount > run.continuationLimit) context.addIssue({ code: "custom", path: ["continuationCount"], message: "continuation count exceeds limit" });
 });
 export const closureRunListViewSchema = z.strictObject({
   capabilityStatus: p4CapabilityStatusSchema,
@@ -138,6 +139,9 @@ export const feedbackTargetViewSchema = z.strictObject({
   eligible: z.boolean(),
   eligibilityReasonCodes: z.array(safeText(120)).max(100).readonly(),
   mcpUsed: z.boolean(),
+  scopeKey: safeText(1_000),
+  traceId: safeId,
+  expansionId: safeId.optional(),
   actions: z.record(feedbackKindSchema, p4ActionGateSchema),
 });
 export const feedbackReceiptSchema = z.strictObject({
@@ -197,7 +201,7 @@ export const highRiskKindSchema = z.enum(["GLOBAL_PROMOTION", "RULE_CHANGE", "BI
 export const highRiskGovernanceViewSchema = z.strictObject({
   policyRevision: revision,
   activeStageEnabled: z.boolean(),
-  actor: safeId,
+  actor: safeId.optional(),
   actions: z.record(highRiskKindSchema, p4ActionGateSchema),
 }).superRefine((view, context) => {
   if (!view.activeStageEnabled && Object.values(view.actions).some((gate) => gate.enabled)) {
@@ -209,7 +213,7 @@ export const highRiskPreviewViewSchema = z.strictObject({
   policyRevision: revision,
   kind: highRiskKindSchema,
   expiresAt: timestamp,
-  actor: safeId,
+  actor: safeId.optional(),
   confirmationPhrase: safeText(500),
   blastRadius: z.strictObject({
     affectedAssets: count,
@@ -248,9 +252,14 @@ export interface FeedbackCommand {
   readonly kind: FeedbackKind;
   readonly expectedRevision: number;
   readonly idempotencyKey: string;
+  readonly scopeKey: string;
+  readonly traceId: string;
+  readonly expansionId?: string;
 }
 
 export interface HighRiskPreviewCommand {
+  readonly expectedPolicyRevision: number;
+  readonly idempotencyKey: string;
   readonly kind: HighRiskKind;
   readonly assetIds: readonly string[];
   readonly projectIds: readonly string[];
@@ -261,6 +270,7 @@ export interface HighRiskPreviewCommand {
 export interface HighRiskCommitCommand {
   readonly previewId: string;
   readonly expectedPolicyRevision: number;
+  readonly idempotencyKey: string;
   /** Exact operator-entered phrase. The server derives actor and confirmation fingerprint. */
   readonly confirmationPhrase: string;
 }
@@ -269,7 +279,7 @@ export interface HighRiskCommitCommand {
 export interface P4ConsoleApi {
   sessionInjections(sessionId: string, signal?: AbortSignal): Promise<SessionInjectionView>;
   closureRuns(sessionId?: string, signal?: AbortSignal): Promise<ClosureRunListView>;
-  closureRun(closureRunId: string, signal?: AbortSignal): Promise<ClosureRunView>;
+  closureRun(sessionId: string, closureRunId: string, signal?: AbortSignal): Promise<ClosureRunView>;
   feedbackTargets(sessionId: string, signal?: AbortSignal): Promise<readonly FeedbackTargetView[]>;
   recordFeedback(command: FeedbackCommand, signal?: AbortSignal): Promise<FeedbackReceipt>;
   rollout(signal?: AbortSignal): Promise<RolloutView>;

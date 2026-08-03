@@ -63,10 +63,27 @@ import {
   hasTrustedRequestBoundary,
 } from "./security.js";
 import { StaticAssetStore } from "./static-assets.js";
+import {
+  p4CapabilityListSchema,
+  p4ClosurePageSchema,
+  p4FeedbackBodySchema,
+  p4FeedbackResponseSchema,
+  p4FeedbackTargetsSchema,
+  p4HighRiskCommitBodySchema,
+  p4HighRiskCommitResponseSchema,
+  p4HighRiskGovernanceSchema,
+  p4HighRiskPreviewBodySchema,
+  p4HighRiskPreviewResponseSchema,
+  p4InjectionPageSchema,
+  p4McpExpansionPageSchema,
+  p4RolloutResponseSchema,
+} from "./p4-contracts.js";
+import { closureRunSchema, injectionAttemptSchema } from "@zhiloop/p4-console-runtime";
 
 const MAX_BOOTSTRAP_BODY_BYTES = 8_192;
 const MAX_COMMAND_BODY_BYTES = 16_384;
 const MAX_RETRIEVAL_BODY_BYTES = 512 * 1_024;
+const MAX_P4_COMMAND_BODY_BYTES = 1_048_576;
 const MAX_JSON_RESPONSE_BYTES = 1_048_576;
 const MAX_SSE_CONNECTIONS = 64;
 const MAX_SSE_PENDING_BYTES = 2 * 1_048_576;
@@ -186,6 +203,18 @@ function parsePage(searchParams: URLSearchParams): PageQuery | undefined {
   const limit = rawLimit === null ? 50 : Number(rawLimit);
   const parsed = pageRequestSchema.safeParse({
     limit,
+    ...(rawCursor === null ? {} : { cursor: rawCursor }),
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parseP4Page(searchParams: URLSearchParams): PageQuery | undefined {
+  if ([...searchParams.keys()].some((key) => key !== "limit" && key !== "cursor")
+    || searchParams.getAll("limit").length > 1 || searchParams.getAll("cursor").length > 1) return undefined;
+  const rawLimit = searchParams.get("limit");
+  const rawCursor = searchParams.get("cursor");
+  const parsed = pageRequestSchema.safeParse({
+    limit: rawLimit === null ? 50 : Number(rawLimit),
     ...(rawCursor === null ? {} : { cursor: rawCursor }),
   });
   return parsed.success ? parsed.data : undefined;
@@ -564,6 +593,133 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
             ? "config.rollback"
             : undefined;
       const extractionMatch = /^\/api\/v1\/sessions\/([^/]+)\/extraction(?:\/(preview|commit))?$/u.exec(url.pathname);
+      if (url.pathname === "/api/v1/p4/capabilities") {
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 capability facts require GET"); return; }
+        if (url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "P4 capability facts do not accept a query"); return; }
+        if (options.queryPort.listP4Capabilities === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 capability facts are unavailable"); return; }
+        await executeView(response, p4CapabilityListSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          async (queryOptions) => ({ items: await options.queryPort.listP4Capabilities!(queryOptions) }));
+        return;
+      }
+      const p4InjectionMatch = /^\/api\/v1\/p4\/sessions\/([^/]+)\/injections(?:\/([^/]+)(?:\/(mcp-expansions))?)?$/u.exec(url.pathname);
+      if (p4InjectionMatch !== null) {
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 audit views require GET"); return; }
+        const sessionId = decodePathSegment(p4InjectionMatch[1]);
+        const attemptId = decodePathSegment(p4InjectionMatch[2]);
+        if (sessionId === undefined || !SAFE_KNOWLEDGE_ID.test(sessionId)
+          || (attemptId !== undefined && !SAFE_KNOWLEDGE_ID.test(attemptId))) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid P4 injection Scope"); return;
+        }
+        if (attemptId === undefined) {
+          const page = parseP4Page(url.searchParams);
+          if (page === undefined) { safeError(response, 400, "INVALID_REQUEST", "Invalid P4 audit cursor"); return; }
+          if (options.queryPort.listP4Injections === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 injection audit is unavailable"); return; }
+          await executeView(response, p4InjectionPageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.listP4Injections!(sessionId, page, queryOptions));
+        } else if (p4InjectionMatch[3] === "mcp-expansions") {
+          const page = parseP4Page(url.searchParams);
+          if (page === undefined) { safeError(response, 400, "INVALID_REQUEST", "Invalid P4 MCP cursor"); return; }
+          if (options.queryPort.listP4McpExpansions === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 MCP audit is unavailable"); return; }
+          await executeView(response, p4McpExpansionPageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.listP4McpExpansions!(sessionId, attemptId, page, queryOptions));
+        } else {
+          if (url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "P4 injection detail does not accept a query"); return; }
+          if (options.queryPort.getP4Injection === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 injection detail is unavailable"); return; }
+          await executeView(response, injectionAttemptSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.getP4Injection!(sessionId, attemptId, queryOptions));
+        }
+        return;
+      }
+      const p4ClosureMatch = /^\/api\/v1\/p4\/sessions\/([^/]+)\/closures(?:\/([^/]+))?$/u.exec(url.pathname);
+      if (p4ClosureMatch !== null) {
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 closure views require GET"); return; }
+        const sessionId = decodePathSegment(p4ClosureMatch[1]);
+        const closureRunId = decodePathSegment(p4ClosureMatch[2]);
+        if (sessionId === undefined || !SAFE_KNOWLEDGE_ID.test(sessionId)
+          || (closureRunId !== undefined && !SAFE_KNOWLEDGE_ID.test(closureRunId))) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid P4 closure Scope"); return;
+        }
+        if (closureRunId === undefined) {
+          const page = parseP4Page(url.searchParams);
+          if (page === undefined) { safeError(response, 400, "INVALID_REQUEST", "Invalid P4 closure cursor"); return; }
+          if (options.queryPort.listP4Closures === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 closure audit is unavailable"); return; }
+          await executeView(response, p4ClosurePageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.listP4Closures!(sessionId, page, queryOptions));
+        } else {
+          if (url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "P4 closure detail does not accept a query"); return; }
+          if (options.queryPort.getP4Closure === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 closure detail is unavailable"); return; }
+          await executeView(response, closureRunSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.getP4Closure!(sessionId, closureRunId, queryOptions));
+        }
+        return;
+      }
+      const p4FeedbackTargetsMatch = /^\/api\/v1\/p4\/sessions\/([^/]+)\/feedback-targets$/u.exec(url.pathname);
+      if (p4FeedbackTargetsMatch !== null) {
+        const sessionId = decodePathSegment(p4FeedbackTargetsMatch[1]);
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 feedback targets require GET"); return; }
+        if (url.searchParams.size !== 0 || sessionId === undefined || !SAFE_KNOWLEDGE_ID.test(sessionId)) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid P4 feedback target request"); return;
+        }
+        if (options.queryPort.listP4FeedbackTargets === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 feedback facts are unavailable"); return; }
+        await executeView(response, p4FeedbackTargetsSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.listP4FeedbackTargets!(sessionId, queryOptions));
+        return;
+      }
+      if (url.pathname === "/api/v1/p4/rollout") {
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 rollout facts require GET"); return; }
+        if (url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "P4 rollout facts do not accept a query"); return; }
+        if (options.queryPort.getP4Rollout === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 rollout facts are unavailable"); return; }
+        await executeView(response, p4RolloutResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.getP4Rollout!(queryOptions));
+        return;
+      }
+      if (url.pathname === "/api/v1/p4/high-risk/governance") {
+        if (request.method !== "GET") { safeError(response, 405, "INVALID_REQUEST", "P4 high-risk governance facts require GET"); return; }
+        if (url.searchParams.size !== 0) { safeError(response, 400, "INVALID_REQUEST", "P4 high-risk governance facts do not accept a query"); return; }
+        if (options.queryPort.getP4HighRiskGovernance === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 high-risk governance facts are unavailable"); return; }
+        await executeView(response, p4HighRiskGovernanceSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.getP4HighRiskGovernance!(queryOptions));
+        return;
+      }
+      const p4Command = url.pathname === "/api/v1/p4/feedback" ? "feedback"
+        : url.pathname === "/api/v1/p4/high-risk/preview" ? "preview"
+          : url.pathname === "/api/v1/p4/high-risk/commit" ? "commit" : undefined;
+      if (p4Command !== undefined) {
+        if (request.method !== "POST" || url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "INVALID_REQUEST", "P4 command requires application/json POST"); return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_P4_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (p4Command === "feedback") {
+            const parsed = p4FeedbackBodySchema.safeParse(body);
+            if (!parsed.success || options.commandPort?.recordP4Feedback === undefined) { safeError(response, parsed.success ? 503 : 400, parsed.success ? "CAPABILITY_UNAVAILABLE" : "INVALID_REQUEST", "P4 feedback command is unavailable or invalid"); return; }
+            await executeCommand(response, p4FeedbackResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.commandPort!.recordP4Feedback!({
+                action: parsed.data.kind === "MCP_USED" ? "MCP_USE" : parsed.data.kind,
+                assetId: parsed.data.knowledgeId,
+                expectedKnowledgeVersion: parsed.data.expectedRevision,
+                scopeKey: parsed.data.scopeKey,
+                traceId: parsed.data.traceId,
+                ...(parsed.data.kind === "MCP_USED" ? { expansionId: parsed.data.expansionId } : {}),
+                idempotencyKey: parsed.data.idempotencyKey,
+              }, queryOptions));
+          } else if (p4Command === "preview") {
+            const parsed = p4HighRiskPreviewBodySchema.safeParse(body);
+            if (!parsed.success || options.commandPort?.previewP4HighRisk === undefined) { safeError(response, parsed.success ? 503 : 400, parsed.success ? "CAPABILITY_UNAVAILABLE" : "INVALID_REQUEST", "P4 high-risk preview is unavailable or invalid"); return; }
+            await executeCommand(response, p4HighRiskPreviewResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.commandPort!.previewP4HighRisk!(parsed.data, queryOptions));
+          } else {
+            const parsed = p4HighRiskCommitBodySchema.safeParse(body);
+            if (!parsed.success || options.commandPort?.commitP4HighRisk === undefined) { safeError(response, parsed.success ? 503 : 400, parsed.success ? "CAPABILITY_UNAVAILABLE" : "INVALID_REQUEST", "P4 high-risk commit is unavailable or invalid"); return; }
+            await executeCommand(response, p4HighRiskCommitResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => options.commandPort!.commitP4HighRisk!(parsed.data, queryOptions));
+          }
+        } catch (error) {
+          if (!response.headersSent) safeError(response, error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 400, "INVALID_REQUEST", "P4 command is invalid or too large");
+        }
+        return;
+      }
       const retrievalOperation = url.pathname === "/api/v1/retrieval/search"
         ? "search"
         : url.pathname === "/api/v1/retrieval/ask"

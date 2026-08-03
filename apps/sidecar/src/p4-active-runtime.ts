@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import {
   ActiveClosureRuntime,
   ActiveKnowledgeInjectionRuntime,
+  KnowledgeFeedbackRuntime,
   SqliteActiveClosureOperationStore,
   VersionedKnowledgeMcpRuntime,
   type ActiveClosureResult,
@@ -99,6 +100,8 @@ export type P4ActiveHookResult =
     readonly status: "DISABLED" | "SHADOWED" | "INJECTED" | "NO_CONTEXT" | "ROLLED_BACK" | "TIMEOUT" | "ERROR" | "INVALID_INPUT";
     /** Real persisted delivery-attempt identity; absent when retrieval never reached PENDING persistence. */
     readonly attemptId?: string;
+    /** True only when a prior Hook transport ACK is already durably present. */
+    readonly deliveryAcknowledged?: boolean;
     readonly hookOutput?: string;
     readonly diagnostic?: string;
   }
@@ -339,6 +342,29 @@ export class P4ActiveSidecarRuntime {
     return Object.freeze({ audits: this.#audits, feedback: this.#feedback, confirmations: this.#confirmations, rollout: this.#dependencies.rollout });
   }
 
+  feedbackRuntime(): KnowledgeFeedbackRuntime {
+    this.#assertOpen();
+    return new KnowledgeFeedbackRuntime({ store: this.#feedback, eligibility: this.#eligibility });
+  }
+
+  async inspectKnowledgeEligibility(request: {
+    readonly assetId: string;
+    readonly version: number;
+    readonly scopeKey: string;
+    readonly signal?: AbortSignal;
+  }): Promise<KnowledgeEligibilityInspection> {
+    this.#assertOpen();
+    const signal = request.signal ?? new AbortController().signal;
+    if (signal.aborted) throw signal.reason;
+    const result = this.#eligibility.inspect({
+      assetId: request.assetId,
+      version: request.version,
+      scopeKey: request.scopeKey,
+    });
+    if (signal.aborted) throw signal.reason;
+    return result;
+  }
+
   async handleHook(input: UserPromptSubmitInput | StopHookInput): Promise<P4ActiveHookResult> {
     this.#assertOpen();
     return input.hook_event_name === "UserPromptSubmit" ? await this.#handleUserPrompt(input) : await this.#handleStop(input);
@@ -347,6 +373,21 @@ export class P4ActiveSidecarRuntime {
   async handleMcp(request: VersionedMcpRequest, signal?: P4AbortSignal): Promise<McpExpansionResult> {
     this.#assertOpen();
     return await this.#mcp.handle(request, signal ?? new AbortController().signal);
+  }
+
+  acknowledgeDelivery(request: {
+    readonly attemptId: string;
+    readonly expectedRevision: number;
+    readonly deliveryEvidenceRef: string;
+    readonly deliveredAt: string;
+  }) {
+    this.#assertOpen();
+    return this.#audits.acknowledgeInjectionDelivery(
+      request.attemptId,
+      request.expectedRevision,
+      request.deliveryEvidenceRef,
+      request.deliveredAt,
+    );
   }
 
   close(): void {
@@ -450,6 +491,7 @@ export class P4ActiveSidecarRuntime {
       captureCompleted: true,
       status: terminalStatus,
       ...(result.attempt === undefined ? {} : { attemptId: result.attempt.attemptId }),
+      ...(result.attempt?.deliveryEvidenceRef === undefined ? {} : { deliveryAcknowledged: true }),
       ...(terminalStatus === "INJECTED" ? { hookOutput: result.hookOutput } : {}),
       ...(result.diagnostic === undefined ? {} : { diagnostic: result.diagnostic }),
     };

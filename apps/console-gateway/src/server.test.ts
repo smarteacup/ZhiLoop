@@ -453,6 +453,136 @@ describe("Console Gateway security boundary", () => {
     expect(queryPort.calls).toEqual([]);
   });
 
+  it("fails closed for optional P4 facts and strictly bounds high-risk browser input", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    expect((await fetch(`${address?.origin}/api/v1/p4/capabilities`, { headers: readHeaders })).status).toBe(503);
+    expect((await fetch(`${address?.origin}/api/v1/p4/sessions/session-1/injections?limit=100`, { headers: readHeaders })).status).toBe(503);
+
+    const commandHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const validCommit = {
+      expectedPolicyRevision: 3,
+      idempotencyKey: "p4.commit:preview-1",
+      previewId: `sha256:${"a".repeat(64)}`,
+      confirmationPhrase: "CONFIRM RULE CHANGE",
+    };
+    const unavailable = await fetch(`${address?.origin}/api/v1/p4/high-risk/commit`, {
+      method: "POST", headers: commandHeaders, body: JSON.stringify(validCommit),
+    });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.text()).toContain("CAPABILITY_UNAVAILABLE");
+
+    const browserForgedAuthority = await fetch(`${address?.origin}/api/v1/p4/high-risk/commit`, {
+      method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ ...validCommit, actor: "browser-forged", confirmationFingerprint: `sha256:${"b".repeat(64)}` }),
+    });
+    expect(browserForgedAuthority.status).toBe(400);
+    expect(await browserForgedAuthority.text()).toContain("INVALID_REQUEST");
+  });
+
+  it("serves every strict P4 audit, feedback, rollout and governance route", async () => {
+    const fingerprint = `sha256:${"a".repeat(64)}`;
+    const effective = { policyRevision: 1, mode: "SHADOW" as const, configFingerprint: fingerprint, versionFingerprint: fingerprint };
+    const injection = {
+      schemaVersion: 1 as const, attemptId: "attempt-1", sessionId: "session-1", turnId: "turn-1", traceId: "trace-1", runId: "run-1",
+      rolloutRevision: 1, status: "INJECTED" as const, revision: 2, reasonCode: "HOOK_CONTEXT_GENERATED", createdAt: NOW, completedAt: NOW,
+      deliveryEvidenceRef: "hook-client:receipt-1", deliveredAt: NOW,
+      envelope: {
+        schemaVersion: 1 as const, runId: "run-1",
+        complexity: { level: "L1_POINTER" as const, breadth: 1, depth: "POINTER" as const, authority: "VERIFIED_FACT" as const, evidence: "POINTER" as const, reasonCodes: ["POINTER_SELECTED"] },
+        budget: { maxTokens: 100, estimatedTokens: 20, truncated: false, disclosedItems: 1, omittedItems: 0 },
+        items: [{ id: "knowledge-1", version: 1, subjectKey: "delivery", kind: "IMPLEMENTATION" as const, status: "VERIFIED" as const, scope: { level: "PROJECT" as const, projectId: "project-1" }, authority: "VERIFIED_FACT" as const, detailLevel: "L1_POINTER" as const, title: "Delivery", summary: "Acknowledged delivery", retrievalRank: 1 }],
+      },
+      tokenBudget: { maxTokens: 100, estimatedTokens: 20, truncated: false, disclosedItems: 1, omittedItems: 0 }, omittedReasonCodes: [],
+    };
+    const injectionDetail = Object.fromEntries(Object.entries(injection).filter(([key]) => key !== "tokenBudget" && key !== "omittedReasonCodes"));
+    const expansion = { schemaVersion: 1 as const, expansionId: "expansion-1", attemptId: "attempt-1", traceId: "trace-1", tool: "ckl.get" as const, knowledgeId: "knowledge-1", knowledgeVersion: 1, fromDetailLevel: "L1_POINTER" as const, toDetailLevel: "L2_COMPACT" as const, latencyMs: 2, used: true, occurredAt: NOW };
+    const closure = { schemaVersion: 1 as const, closureRunId: "closure-1", sessionId: "session-1", turnId: "turn-1", taskContract: { contractId: "contract-1", objective: "finish", gates: [], boundaries: [] }, gates: [], decision: "PASS" as const, continuationCount: 0, recursiveStopRejected: false, createdAt: NOW };
+    const blastRadius = { affectedAssets: 1, affectedProjects: 1, affectedRules: 0, affectedBindings: 0, affectedTraces: 0, affectedInjections: 0, irreversible: false, reasonCodes: ["PROJECT_ONLY"] };
+    const disabledActions = Object.fromEntries(["GLOBAL_PROMOTION", "RULE_CHANGE", "BINDING_CHANGE", "PRIVACY_PURGE"].map((kind) => [kind, { enabled: false, capabilityStatus: "NOT_CONFIGURED", reasonCode: "HIGH_RISK_NOT_CONFIGURED" }]));
+    Object.assign(queryPort, {
+      listP4Capabilities: async () => ["INJECTION_AUDIT", "MCP_AUDIT", "CLOSURE_AUDIT", "FEEDBACK", "ROLLOUT", "HIGH_RISK_GOVERNANCE"].map((capability) => ({ capability, state: capability === "HIGH_RISK_GOVERNANCE" ? "NOT_CONFIGURED" : "READY", reasonCode: capability === "HIGH_RISK_GOVERNANCE" ? "HIGH_RISK_NOT_CONFIGURED" : "COMPONENT_READY", evidenceRefs: [] })),
+      listP4Injections: async (sessionId: string, page: PageQuery) => { queryPort.calls.push(`p4:injections:${sessionId}:${page.limit}`); return { items: [injection] }; },
+      getP4Injection: async (sessionId: string, attemptId: string) => { queryPort.calls.push(`p4:injection:${sessionId}:${attemptId}`); return injectionDetail; },
+      listP4McpExpansions: async (sessionId: string, attemptId: string, page: PageQuery) => { queryPort.calls.push(`p4:mcp:${sessionId}:${attemptId}:${page.limit}`); return { items: [expansion] }; },
+      listP4Closures: async (sessionId: string, page: PageQuery) => { queryPort.calls.push(`p4:closures:${sessionId}:${page.limit}`); return { items: [closure] }; },
+      getP4Closure: async (sessionId: string, closureRunId: string) => { queryPort.calls.push(`p4:closure:${sessionId}:${closureRunId}`); return closure; },
+      getP4Rollout: async () => ({ state: { schemaVersion: 1 as const, stateRevision: 1, effective, lastKnownGood: effective, evidence: [], audit: [{ eventId: fingerprint, kind: "BOOTSTRAP" as const, stateRevision: 1, effectivePolicyRevision: 1, reasonCodes: ["BOOTSTRAP_SHADOW"], occurredAt: NOW }] }, downgradeHistory: [], rollbackTarget: effective }),
+      listP4FeedbackTargets: async () => ({ items: [{ knowledgeId: "knowledge-1", version: 1, title: "Delivery", eligible: true, eligibilityReasonCodes: ["ELIGIBLE"], mcpUsed: true, scopeKey: "PROJECT:project-1", traceId: "trace-1", expansionId: "expansion-1", actions: Object.fromEntries(["RELEVANT", "IRRELEVANT", "PIN", "SUPPRESS", "MCP_USED"].map((kind) => [kind, { enabled: true, capabilityStatus: "READY", reasonCode: "ACTION_READY", expectedRevision: 1, idempotencyKey: `feedback:${kind}:knowledge-1:1` }])) }] }),
+      getP4HighRiskGovernance: async () => ({ policyRevision: 1, activeStageEnabled: false, actor: "local-console", actions: disabledActions }),
+    });
+    Object.assign(commandPort, {
+      recordP4Feedback: async () => ({ outcome: "RECORDED" as const, eligibleAfterWrite: true }),
+      previewP4HighRisk: async (command: { expectedPolicyRevision: number; command: { kind: "GLOBAL_PROMOTION" } }) => ({ preview: { previewId: fingerprint, policyRevision: command.expectedPolicyRevision, commandFingerprint: fingerprint, command: { ...command.command, assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint }, blastRadius, createdAt: NOW, expiresAt: "2099-08-03T12:00:00.000Z" }, blastRadius, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" }),
+      commitP4HighRisk: async () => ({ result: { operationId: fingerprint, previewId: fingerprint, kind: "GLOBAL_PROMOTION" as const, actor: "local-console", policyRevision: 1, blastRadius, committedAt: NOW } }),
+    });
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    const reads = [
+      "/api/v1/p4/capabilities",
+      "/api/v1/p4/sessions/session-1/injections?limit=10",
+      "/api/v1/p4/sessions/session-1/injections/attempt-1",
+      "/api/v1/p4/sessions/session-1/injections/attempt-1/mcp-expansions?limit=10",
+      "/api/v1/p4/sessions/session-1/closures?limit=10",
+      "/api/v1/p4/sessions/session-1/closures/closure-1",
+      "/api/v1/p4/sessions/session-1/feedback-targets",
+      "/api/v1/p4/rollout",
+      "/api/v1/p4/high-risk/governance",
+    ];
+    for (const route of reads) expect((await fetch(`${address?.origin}${route}`, { headers: readHeaders })).status, route).toBe(200);
+    const commandHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const commands = [
+      ["/api/v1/p4/feedback", { kind: "MCP_USED", knowledgeId: "knowledge-1", version: 1, expectedRevision: 1, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1", expansionId: "expansion-1" }],
+      ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint } }],
+      ["/api/v1/p4/high-risk/commit", { expectedPolicyRevision: 1, idempotencyKey: "commit-1", previewId: fingerprint, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" }],
+    ] as const;
+    for (const [route, body] of commands) expect((await fetch(`${address?.origin}${route}`, { method: "POST", headers: commandHeaders, body: JSON.stringify(body) })).status, route).toBe(200);
+    expect(queryPort.calls).toEqual(expect.arrayContaining(["p4:injections:session-1:10", "p4:mcp:session-1:attempt-1:10", "p4:closure:session-1:closure-1"]));
+  });
+
+  it("rejects malformed P4 routes and reports each uncomposed optional capability", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    const invalidReads: ReadonlyArray<readonly [string, RequestInit, number]> = [
+      ["/api/v1/p4/capabilities", { method: "POST", headers: { ...readHeaders, origin: address?.origin ?? "" } }, 405],
+      ["/api/v1/p4/capabilities?extra=1", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/bad%20id/injections", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/session-1/injections?limit=0", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/session-1/injections/attempt-1", { headers: readHeaders }, 503],
+      ["/api/v1/p4/sessions/session-1/injections/attempt-1?extra=1", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/session-1/injections/attempt-1/mcp-expansions?limit=10", { headers: readHeaders }, 503],
+      ["/api/v1/p4/sessions/session-1/injections/attempt-1/mcp-expansions?limit=0", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/session-1/closures?limit=10", { headers: readHeaders }, 503],
+      ["/api/v1/p4/sessions/session-1/closures/closure-1", { headers: readHeaders }, 503],
+      ["/api/v1/p4/sessions/session-1/closures/closure-1?extra=1", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/bad%20id/closures", { headers: readHeaders }, 400],
+      ["/api/v1/p4/sessions/session-1/feedback-targets", { headers: readHeaders }, 503],
+      ["/api/v1/p4/sessions/session-1/feedback-targets?extra=1", { headers: readHeaders }, 400],
+      ["/api/v1/p4/rollout", { headers: readHeaders }, 503],
+      ["/api/v1/p4/rollout?extra=1", { headers: readHeaders }, 400],
+      ["/api/v1/p4/high-risk/governance", { headers: readHeaders }, 503],
+      ["/api/v1/p4/high-risk/governance?extra=1", { headers: readHeaders }, 400],
+    ];
+    for (const [route, init, status] of invalidReads) expect((await fetch(`${address?.origin}${route}`, init)).status, route).toBe(status);
+
+    const headers = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const fingerprint = `sha256:${"a".repeat(64)}`;
+    const commands: ReadonlyArray<readonly [string, unknown, number]> = [
+      ["/api/v1/p4/feedback", { kind: "PIN", knowledgeId: "knowledge-1", version: 1, expectedRevision: 1, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1" }, 503],
+      ["/api/v1/p4/feedback", { kind: "PIN", knowledgeId: "knowledge-1", version: 1, expectedRevision: 2, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1" }, 400],
+      ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "RULE_CHANGE", assetIds: ["knowledge-1"], projectIds: [], reason: "reviewed", payloadFingerprint: fingerprint } }, 503],
+      ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 0 }, 400],
+    ];
+    for (const [route, body, status] of commands) expect((await fetch(`${address?.origin}${route}`, { method: "POST", headers, body: JSON.stringify(body) })).status, route).toBe(status);
+    expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "GET", headers })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "POST", headers: { ...readHeaders, origin: address?.origin ?? "" }, body: "{}" })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "POST", headers, body: "{" })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "POST", headers, body: JSON.stringify({ padding: "x".repeat(1_100_000) }) })).status).toBe(413);
+  });
+
   it("refuses wildcard and non-loopback bind addresses", async () => {
     await expect(createConsoleGateway({ queryPort, staticRoot, host: "0.0.0.0" })).rejects.toThrow(/loopback/u);
     await expect(createConsoleGateway({ queryPort, staticRoot, host: "192.0.2.1" })).rejects.toThrow(/loopback/u);

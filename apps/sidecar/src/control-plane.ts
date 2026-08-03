@@ -519,6 +519,34 @@ export class SidecarControlPlane {
     });
   }
 
+  public setP4RuntimeState(state: {
+    readonly injection: { readonly status: "READY"; readonly mode: "SHADOW" | "ACTIVE"; readonly reasonCode: string };
+    readonly mcp: { readonly status: "READY"; readonly reasonCode: string };
+    readonly closure: { readonly status: "READY"; readonly reasonCode: string };
+    readonly feedback: { readonly status: "READY"; readonly reasonCode: string };
+  }, evidence: { readonly closureEvidenceVerified: boolean }): void {
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability(capability(
+      "context.injection",
+      state.injection.status,
+      "COMPONENT_READY",
+      observedAt,
+      false,
+      state.injection.mode === "SHADOW" ? "Accumulate SHADOW evidence before scoped ACTIVE" : undefined,
+    ));
+    this.#readModel.projectCapability(capability("knowledge.mcp", state.mcp.status, "COMPONENT_READY", observedAt));
+    this.#readModel.projectCapability(capability(
+      "closure.verification",
+      evidence.closureEvidenceVerified ? state.closure.status : "NOT_VERIFIED",
+      evidence.closureEvidenceVerified ? "COMPONENT_READY" : "CAPABILITY_NOT_VERIFIED",
+      observedAt,
+      false,
+      evidence.closureEvidenceVerified ? undefined : "Provide an explicit Task Contract, diff, tests and tool results",
+    ));
+    this.#readModel.projectCapability(capability("knowledge.feedback", state.feedback.status, "COMPONENT_READY", observedAt));
+    this.#readModel.projectCapability(capability("active.rollout", "READY", "COMPONENT_READY", observedAt));
+  }
+
   async #refreshSession(sessionId: string): Promise<SessionSummary | undefined> {
     const entry = await this.#catalog.get(sessionId);
     if (!entry) return undefined;

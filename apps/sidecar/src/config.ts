@@ -60,6 +60,9 @@ function codexQuery(value: unknown): SidecarConfig["codexQuery"] {
   if (!value["enabled"] && (executable !== undefined || model !== undefined)) {
     throw new Error("disabled codexQuery must not configure an executable or model");
   }
+  if (executable !== undefined && !isAbsolute(executable)) {
+    throw new Error("codexQuery.executable must be an absolute path");
+  }
   return Object.freeze({
     enabled: value["enabled"],
     ...(executable === undefined ? {} : { executable }),

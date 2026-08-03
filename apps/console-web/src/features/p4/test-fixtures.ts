@@ -21,7 +21,7 @@ const injection: SessionInjectionView = {
 };
 export const closure: ClosureRunView = { closureRunId: "closure-1", sessionId: "session-1", turnId: "turn-actual", createdAt: "2026-08-04T00:01:00.000Z", taskContract: { objective: "完成实现", boundaries: ["不修改凭证"], completionGates: ["测试通过"] }, gates: [{ gateId: "gate-1", label: "unit tests", status: "SATISFIED", evidenceRefs: ["test-run-1"], reasonCode: "TESTS_PASSED" }], decision: "PASS", continuationCount: 0, continuationLimit: 1, recursiveStopRejected: false, interaction: { required: false, confirmationStatus: "NOT_REQUIRED" } };
 const closures: ClosureRunListView = { capabilityStatus: "READY", capabilityReasonCode: "COMPONENT_READY", truncated: false, items: [closure] };
-export const feedbackTarget: FeedbackTargetView = { knowledgeId: "knowledge-1", version: 2, title: "安全边界", eligible: true, eligibilityReasonCodes: [], mcpUsed: true, actions: { RELEVANT: readyGate, IRRELEVANT: readyGate, PIN: readyGate, SUPPRESS: readyGate, MCP_USED: readyGate } };
+export const feedbackTarget: FeedbackTargetView = { knowledgeId: "knowledge-1", version: 2, title: "安全边界", eligible: true, eligibilityReasonCodes: [], mcpUsed: true, scopeKey: "PROJECT:project-1", traceId: "trace-2", expansionId: "expansion-1", actions: { RELEVANT: readyGate, IRRELEVANT: readyGate, PIN: readyGate, SUPPRESS: readyGate, MCP_USED: readyGate } };
 const FP = `sha256:${"a".repeat(64)}`;
 const OLD_FP = `sha256:${"b".repeat(64)}`;
 const DATASET_FP = `sha256:${"c".repeat(64)}`;

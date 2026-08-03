@@ -46,6 +46,11 @@ interface CommandResult {
   readonly stderr: string;
 }
 
+export interface MacOsLaunchctlDependencies {
+  readonly run?: (argumentsList: readonly string[]) => Promise<CommandResult>;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+}
+
 async function runLaunchctl(argumentsList: readonly string[]): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawn("/bin/launchctl", [...argumentsList], {
@@ -62,21 +67,25 @@ async function runLaunchctl(argumentsList: readonly string[]): Promise<CommandRe
 export class MacOsLaunchctlController implements ServiceController {
   readonly #domain: string;
   readonly #service: string;
+  readonly #run: (argumentsList: readonly string[]) => Promise<CommandResult>;
+  readonly #sleep: (milliseconds: number) => Promise<void>;
 
-  constructor(uid: number = process.getuid?.() ?? -1) {
+  constructor(uid: number = process.getuid?.() ?? -1, dependencies: MacOsLaunchctlDependencies = {}) {
     if (!Number.isSafeInteger(uid) || uid < 0) throw new Error("a valid user id is required for launchd");
     this.#domain = `gui/${uid}`;
     this.#service = `${this.#domain}/${LAUNCH_AGENT_LABEL}`;
+    this.#run = dependencies.run ?? runLaunchctl;
+    this.#sleep = dependencies.sleep ?? (async (milliseconds) => await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, milliseconds)));
   }
 
   async bootstrap(plistPath: string): Promise<void> {
     let last: CommandResult | undefined;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      const result = await runLaunchctl(["bootstrap", this.#domain, plistPath]);
+      const result = await this.#run(["bootstrap", this.#domain, plistPath]);
       if (result.code === 0 || await this.status() === "RUNNING") return;
       last = result;
       if (result.code !== 5 && !/input.?output error/iu.test(result.stderr)) break;
-      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 100 * (attempt + 1)));
+      await this.#sleep(100 * (attempt + 1));
     }
     throw new Error(`launchctl bootstrap failed: ${last?.stderr || last?.code || "unknown"}`);
   }
@@ -85,29 +94,29 @@ export class MacOsLaunchctlController implements ServiceController {
     if (await this.status() === "RUNNING") return;
     let last: CommandResult | undefined;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      const result = await runLaunchctl(["kickstart", "-k", this.#service]);
+      const result = await this.#run(["kickstart", "-k", this.#service]);
       if (result.code === 0 || await this.status() === "RUNNING") return;
       last = result;
       if (result.code !== 5 && result.code !== 37 && !/input.?output error|operation.*progress/iu.test(result.stderr)) break;
-      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 100 * (attempt + 1)));
+      await this.#sleep(100 * (attempt + 1));
     }
     throw new Error(`launchctl kickstart failed: ${last?.stderr || last?.code || "unknown"}`);
   }
 
   async bootout(): Promise<void> {
-    const result = await runLaunchctl(["bootout", this.#service]);
+    const result = await this.#run(["bootout", this.#service]);
     if (result.code !== 0 && !/could not find service|no such process|not found/iu.test(result.stderr)) {
       throw new Error(`launchctl bootout failed: ${result.stderr || result.code}`);
     }
     for (let attempt = 0; attempt < 10; attempt += 1) {
       if (await this.status() === "STOPPED") return;
-      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 100 * (attempt + 1)));
+      await this.#sleep(100 * (attempt + 1));
     }
     throw new Error("launchctl bootout did not reach STOPPED state");
   }
 
   async status(): Promise<"RUNNING" | "STOPPED" | "UNKNOWN"> {
-    const result = await runLaunchctl(["print", this.#service]);
+    const result = await this.#run(["print", this.#service]);
     if (result.code === 0) return "RUNNING";
     return /could not find service|no such process|not found/iu.test(result.stderr) ? "STOPPED" : "UNKNOWN";
   }

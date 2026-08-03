@@ -33,6 +33,30 @@ import {
   type P3ConsoleQueryBody,
 } from "@zhiloop/p3-console-runtime";
 import { retrievalTraceSchema } from "@zhiloop/control-api";
+import {
+  closureDetailRequestSchema,
+  closureListRequestSchema,
+  closureRunSchema,
+  feedbackCommandSchema,
+  highRiskCommitRequestSchema,
+  highRiskPreviewRequestSchema,
+  injectionDetailRequestSchema,
+  injectionListRequestSchema,
+  mcpExpansionListRequestSchema,
+} from "@zhiloop/p4-console-runtime";
+import {
+  p4CapabilityArraySchema,
+  p4ClosurePageSchema,
+  p4FeedbackResponseSchema,
+  p4FeedbackTargetsSchema,
+  p4HighRiskCommitResponseSchema,
+  p4HighRiskGovernanceSchema,
+  p4HighRiskPreviewResponseSchema,
+  p4InjectionPageSchema,
+  p4RuntimeInjectionViewSchema,
+  p4McpExpansionPageSchema,
+  p4RolloutResponseSchema,
+} from "./p4-contracts.js";
 
 import type {
   CaptureCommitCommand,
@@ -43,6 +67,9 @@ import type {
   ControlQueryPort,
   PageQuery,
   JobOperatorCommand,
+  P4FeedbackCommand,
+  P4HighRiskCommitCommand,
+  P4HighRiskPreviewCommand,
   QueryOptions,
 } from "./ports.js";
 
@@ -209,6 +236,83 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
 
   public getRetrievalTrace(command: { readonly requestId: string; readonly traceId: string; readonly projectId?: string; readonly taskId?: string }, options: QueryOptions) {
     return this.execute(this.p3Request("p3.retrieval.trace", command), retrievalTraceSchema, options);
+  }
+
+  public listP4Capabilities(options: QueryOptions) {
+    return this.execute(this.p4Request("p4.capabilities", {}), p4CapabilityArraySchema, options);
+  }
+
+  public listP4Injections(sessionId: string, page: PageQuery, options: QueryOptions) {
+    const logical = injectionListRequestSchema.parse({ schemaVersion: 1, type: "p4.injections.list", sessionId, ...page });
+    return this.execute(this.p4Request(logical.type, logical), p4InjectionPageSchema, options);
+  }
+
+  public getP4Injection(sessionId: string, attemptId: string, options: QueryOptions) {
+    const logical = injectionDetailRequestSchema.parse({ schemaVersion: 1, type: "p4.injections.get", sessionId, attemptId });
+    return this.execute(this.p4Request(logical.type, logical), p4RuntimeInjectionViewSchema, options);
+  }
+
+  public listP4McpExpansions(sessionId: string, attemptId: string, page: PageQuery, options: QueryOptions) {
+    const logical = mcpExpansionListRequestSchema.parse({ schemaVersion: 1, type: "p4.mcp-expansions.list", sessionId, attemptId, ...page });
+    return this.execute(this.p4Request(logical.type, logical), p4McpExpansionPageSchema, options);
+  }
+
+  public listP4Closures(sessionId: string, page: PageQuery, options: QueryOptions) {
+    const logical = closureListRequestSchema.parse({ schemaVersion: 1, type: "p4.closures.list", sessionId, ...page });
+    return this.execute(this.p4Request(logical.type, logical), p4ClosurePageSchema, options);
+  }
+
+  public getP4Closure(sessionId: string, closureRunId: string, options: QueryOptions) {
+    const logical = closureDetailRequestSchema.parse({ schemaVersion: 1, type: "p4.closures.get", sessionId, closureRunId });
+    return this.execute(this.p4Request(logical.type, logical), closureRunSchema, options);
+  }
+
+  public getP4Rollout(options: QueryOptions) {
+    return this.execute(this.p4Request("p4.rollout.get", {}), p4RolloutResponseSchema, options);
+  }
+
+  public listP4FeedbackTargets(sessionId: string, options: QueryOptions) {
+    return this.execute(this.p4Request("p4.feedback-targets.list", { sessionId }), p4FeedbackTargetsSchema, options);
+  }
+
+  public getP4HighRiskGovernance(options: QueryOptions) {
+    return this.execute(this.p4Request("p4.high-risk.governance", {}), p4HighRiskGovernanceSchema, options);
+  }
+
+  public recordP4Feedback(command: P4FeedbackCommand, options: QueryOptions) {
+    const common = {
+      schemaVersion: 1 as const,
+      type: "p4.feedback.record" as const,
+      idempotencyKey: command.idempotencyKey,
+      occurredAt: new Date().toISOString(),
+      action: command.action,
+      assetId: command.assetId,
+      expectedKnowledgeVersion: command.expectedKnowledgeVersion,
+      scopeKey: command.scopeKey,
+      traceId: command.traceId,
+    };
+    const logical = feedbackCommandSchema.parse(command.action === "MCP_USE"
+      ? { ...common, action: "MCP_USE", expansionId: command.expansionId }
+      : { ...common, actor: "local-console" });
+    return this.execute(this.p4Request(logical.type, logical), p4FeedbackResponseSchema, options);
+  }
+
+  public previewP4HighRisk(command: P4HighRiskPreviewCommand, options: QueryOptions) {
+    const logical = highRiskPreviewRequestSchema.parse({
+      schemaVersion: 1, type: "p4.high-risk.preview", occurredAt: new Date().toISOString(), ...command,
+    });
+    return this.execute(this.p4Request(logical.type, logical), p4HighRiskPreviewResponseSchema, options);
+  }
+
+  public commitP4HighRisk(command: P4HighRiskCommitCommand, options: QueryOptions) {
+    const logical = highRiskCommitRequestSchema.parse({
+      schemaVersion: 1, type: "p4.high-risk.commit", occurredAt: new Date().toISOString(), ...command,
+    });
+    return this.execute(this.p4Request(logical.type, logical), p4HighRiskCommitResponseSchema, options);
+  }
+
+  private p4Request(type: string, fields: object) {
+    return { schemaVersion: CONTROL_API_SCHEMA_VERSION, requestId: randomUUID(), ...fields, type };
   }
 
   private p3Request(type: string, fields: { readonly requestId: string }) {

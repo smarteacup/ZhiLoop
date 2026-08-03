@@ -13,15 +13,25 @@ import {
   p3ConsoleTransportRequestSchema,
   type P3ConsoleTransportRequest,
 } from "@zhiloop/p3-console-runtime";
+import type { VersionedMcpRequest } from "@zhiloop/active-knowledge-runtime";
 
 import type { SidecarApplication } from "./application.js";
 import { parseP2ConsoleRequest, type P2ConsoleRequest } from "./p2-console.js";
+import { parseP4ConsoleRequest, type P4ConsoleTransportRequest } from "./p4-console.js";
 
 const MAX_TRANSPORT_BYTES = 5_500_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 
 export type SidecarRequest =
   | { readonly type: "hook"; readonly input: unknown }
+  | { readonly type: "mcp"; readonly request: VersionedMcpRequest }
+  | {
+    readonly type: "injection-delivery.ack";
+    readonly attemptId: string;
+    readonly expectedRevision: number;
+    readonly deliveryEvidenceRef: string;
+    readonly deliveredAt: string;
+  }
   | { readonly type: "health" }
   | { readonly type: "worker" }
   | { readonly type: "capture-session"; readonly sessionId: string; readonly dryRun: boolean }
@@ -29,7 +39,8 @@ export type SidecarRequest =
   | ControlRequest
   | P2ControlRequest
   | P2ConsoleRequest
-  | P3ConsoleTransportRequest;
+  | P3ConsoleTransportRequest
+  | P4ConsoleTransportRequest;
 
 interface SidecarResponse {
   readonly ok: boolean;
@@ -64,6 +75,27 @@ function parseRequest(value: unknown): SidecarRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid request");
   const type = (value as { type?: unknown }).type;
   if (type === "hook") return { type, input: (value as { input?: unknown }).input };
+  if (type === "mcp") {
+    if (Object.keys(value).some((key) => key !== "type" && key !== "request") || !("request" in value)) {
+      throw Object.assign(new Error("invalid MCP transport request"), { code: "INVALID_REQUEST" });
+    }
+    return { type, request: value.request as VersionedMcpRequest };
+  }
+  if (type === "injection-delivery.ack") {
+    const allowed = new Set(["type", "attemptId", "expectedRevision", "deliveryEvidenceRef", "deliveredAt"]);
+    const attemptId = (value as Record<string, unknown>)["attemptId"];
+    const expectedRevision = (value as Record<string, unknown>)["expectedRevision"];
+    const deliveryEvidenceRef = (value as Record<string, unknown>)["deliveryEvidenceRef"];
+    const deliveredAt = (value as Record<string, unknown>)["deliveredAt"];
+    if (Object.keys(value).some((key) => !allowed.has(key))
+      || typeof attemptId !== "string" || typeof deliveryEvidenceRef !== "string"
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision !== 1
+      || typeof deliveredAt !== "string" || !Number.isFinite(Date.parse(deliveredAt))
+      || new Date(Date.parse(deliveredAt)).toISOString() !== deliveredAt) {
+      throw Object.assign(new Error("invalid injection delivery acknowledgement"), { code: "INVALID_REQUEST" });
+    }
+    return { type, attemptId, expectedRevision: 1, deliveryEvidenceRef, deliveredAt };
+  }
   if (type === "health" || type === "worker") return { type };
   if (type === "capture-session") {
     const sessionId = (value as { sessionId?: unknown }).sessionId;
@@ -98,6 +130,7 @@ function parseRequest(value: unknown): SidecarRequest {
     }
     return parsed.data;
   }
+  if (typeof type === "string" && type.startsWith("p4.")) return parseP4ConsoleRequest(value);
   if (typeof type === "string" && type.startsWith("extraction.")) {
     const parsed = parseP2ContractText(serialized, p2ControlRequestSchema);
     if (!parsed.ok) {
@@ -166,7 +199,11 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
   try {
     const request = parseRequest(await readOne(socket, MAX_TRANSPORT_BYTES));
     const result = request.type === "hook"
-      ? await application.handleHook(request.input)
+      ? await application.handleHookForTransport(request.input).then((hook) => hook.delivery === undefined ? hook.hookOutput : hook)
+      : request.type === "mcp"
+        ? await application.handleMcp(request.request, controller.signal)
+        : request.type === "injection-delivery.ack"
+          ? application.acknowledgeInjectionDelivery(request)
       : request.type === "health"
         ? await application.health()
         : request.type === "worker"
@@ -177,6 +214,8 @@ async function handle(socket: Socket, application: SidecarApplication): Promise<
               ? await application.verifyRealCodexIngestion({ sessionId: request.sessionId, taskCreatedAt: request.taskCreatedAt })
             : request.type.startsWith("p3.")
               ? await application.handleP3Console(request as P3ConsoleTransportRequest, controller.signal)
+            : request.type.startsWith("p4.")
+              ? await application.handleP4Console(request as P4ConsoleTransportRequest, controller.signal)
             : request.type.startsWith("p2.")
               ? await application.handleP2Console(request as P2ConsoleRequest)
             : await application.handleControl(request as ControlRequest | P2ControlRequest);

@@ -8,6 +8,7 @@ import { SqliteRealCodexAcceptanceEvidenceStore } from "@zhiloop/automatic-inges
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import { CONTROL_API_SCHEMA_VERSION, type CapabilitySnapshot, type ControlRequest, type ControlResponse } from "@zhiloop/control-api";
 import { resolveDeploymentPaths } from "@zhiloop/local-deployment";
+import { resolveQueryContext } from "@zhiloop/query-context";
 import { snapshotIdempotencyKey } from "@zhiloop/session-extraction";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -134,10 +135,12 @@ describe("sidecar configuration", () => {
 
   it("strictly validates optional Codex query composition", async () => {
     const { config } = await temporaryConfig();
-    expect(parseSidecarConfig({ ...config, codexQuery: { enabled: true, executable: "codex", model: "gpt-test", userConfiguration: "IGNORE" } }))
-      .toMatchObject({ codexQuery: { enabled: true, executable: "codex", model: "gpt-test", userConfiguration: "IGNORE" } });
+    expect(parseSidecarConfig({ ...config, codexQuery: { enabled: true, executable: "/usr/local/bin/codex", model: "gpt-test", userConfiguration: "IGNORE" } }))
+      .toMatchObject({ codexQuery: { enabled: true, executable: "/usr/local/bin/codex", model: "gpt-test", userConfiguration: "IGNORE" } });
     expect(() => parseSidecarConfig({ ...config, codexQuery: { enabled: false, executable: "codex", userConfiguration: "ALLOW" } }))
       .toThrow("disabled codexQuery");
+    expect(() => parseSidecarConfig({ ...config, codexQuery: { enabled: true, executable: "codex", userConfiguration: "ALLOW" } }))
+      .toThrow("absolute path");
     expect(() => parseSidecarConfig({ ...config, codexQuery: { enabled: true, userConfiguration: "FORGED" } }))
       .toThrow("userConfiguration");
     expect(() => parseSidecarConfig({ ...config, unknownPermission: "cross-project" })).toThrow("unknown fields");
@@ -197,7 +200,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.2.1",
+      sidecarVersion: "0.3.1",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });
@@ -440,6 +443,60 @@ describe("sidecar service", () => {
     expect(log).not.toContain("secret-content");
   });
 
+  it("acknowledges an injection only after the Hook output is accepted", async () => {
+    const { config } = await temporaryConfig({ hookTimeoutMs: 500 });
+    const requests: Array<Record<string, unknown>> = [];
+    const server = createServer((socket) => {
+      let buffered = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        buffered += chunk;
+        const newline = buffered.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(buffered.slice(0, newline)) as Record<string, unknown>;
+        requests.push(request);
+        const result = request["type"] === "hook"
+          ? { schemaVersion: 1, hookOutput: "injected context", delivery: { attemptId: "attempt-ack", expectedRevision: 1, alreadyAcknowledged: false } }
+          : { attemptId: "attempt-ack", status: "INJECTED", revision: 2 };
+        socket.end(`${JSON.stringify({ ok: true, result })}\n`);
+      });
+    });
+    await mkdir(dirname(config.socketPath), { recursive: true });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(config.socketPath, resolve);
+    });
+    try {
+      const sink = outputSink();
+      await expect(runHookCommand(
+        Readable.from([JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "session-ack", turn_id: "turn-ack" })]),
+        sink.output,
+        config,
+      )).resolves.toBe(0);
+      expect(sink.text()).toBe("injected context");
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toMatchObject({
+        type: "injection-delivery.ack",
+        attemptId: "attempt-ack",
+        expectedRevision: 1,
+        deliveryEvidenceRef: expect.stringMatching(/^hook-client:[a-f0-9]{64}$/u),
+        deliveredAt: expect.any(String),
+      });
+      requests.splice(0);
+      const rejectedOutput = new Writable({ write(_chunk, _encoding, callback) { callback(new Error("consumer rejected output")); } });
+      rejectedOutput.on("error", () => undefined);
+      await expect(runHookCommand(
+        Readable.from([JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "session-ack", turn_id: "turn-rejected" })]),
+        rejectedOutput,
+        config,
+      )).resolves.toBe(0);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ type: "hook" });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
   it("fails open when the socket is unavailable and bounds request timeouts", async () => {
     const { config } = await temporaryConfig({ hookTimeoutMs: 20 });
     const sink = outputSink();
@@ -498,7 +555,7 @@ describe("sidecar service", () => {
     await application.close();
   });
 
-  it("serves strict bounded Control API views with composed P2 and disabled automatic injection", async () => {
+  it("serves strict bounded Control API views with composed P2 and SHADOW-ready P4", async () => {
     const { config } = await temporaryConfig();
     await writeRollout(config, "session-control-view");
     const application = await SidecarApplication.create(config);
@@ -515,8 +572,9 @@ describe("sidecar service", () => {
         expect.objectContaining({ capabilityId: "knowledge.provenance", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "knowledge.compile", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "knowledge.automatic-compile", status: "DISABLED", reasonCode: "CAPABILITY_DISABLED" }),
-        expect.objectContaining({ capabilityId: "context.injection", status: "DISABLED" }),
-        expect.objectContaining({ capabilityId: "knowledge.mcp", status: "DISABLED", reasonCode: "MCP_TRANSPORT_NOT_ENABLED" }),
+        expect.objectContaining({ capabilityId: "context.injection", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "knowledge.mcp", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "closure.verification", status: "NOT_VERIFIED", reasonCode: "CAPABILITY_NOT_VERIFIED" }),
       ]));
 
       const sessions = controlResult(await requestSidecar(config.socketPath, {
@@ -548,6 +606,40 @@ describe("sidecar service", () => {
         requestId: "diagnostics-request",
         type: "diagnostics.get",
       }, 1_000))).toMatchObject({ ledgerSequence: 0, spoolDepth: 0 });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
+  it("composes the P4 Hook, MCP, delivery and Console paths through the real Sidecar boundary", async () => {
+    const { root, config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      expect(await requestSidecar(config.socketPath, { schemaVersion: 1, requestId: "p4-capabilities", type: "p4.capabilities" }, 1_000)).toMatchObject({
+        ok: true,
+        result: expect.arrayContaining([expect.objectContaining({ capability: "INJECTION_AUDIT", state: "READY" })]),
+      });
+      expect(await requestSidecar(config.socketPath, { schemaVersion: 1, requestId: "p4-rollout", type: "p4.rollout.get" }, 1_000)).toMatchObject({ ok: true, result: { state: { effective: { mode: "SHADOW" } } } });
+      expect(await requestSidecar(config.socketPath, { schemaVersion: 1, requestId: "p4-governance", type: "p4.high-risk.governance" }, 1_000)).toMatchObject({ ok: true, result: { activeStageEnabled: false } });
+
+      const hookResult = await requestSidecar(config.socketPath, {
+        type: "hook",
+        input: { hook_event_name: "UserPromptSubmit", session_id: "p4-session", turn_id: "p4-turn", cwd: root, prompt: "What knowledge applies?" },
+      }, 1_000);
+      expect(hookResult).toBe("");
+      expect(await requestSidecar(config.socketPath, { schemaVersion: 1, requestId: "p4-injections", type: "p4.injections.list", sessionId: "p4-session", limit: 10 }, 1_000)).toMatchObject({ ok: true, result: { items: expect.any(Array) } });
+      expect(await requestSidecar(config.socketPath, { schemaVersion: 1, requestId: "p4-targets", type: "p4.feedback-targets.list", sessionId: "p4-session" }, 1_000)).toMatchObject({ ok: true, result: { items: [] } });
+
+      const context = resolveQueryContext({ prompt: "forged model scope", cwd: root });
+      expect(await requestSidecar(config.socketPath, { type: "mcp", request: { schemaVersion: 1, requestId: "p4-mcp", tool: "ckl.search", context, input: { query: "knowledge", limit: 5 } } }, 1_000)).toMatchObject({
+        response: { tool: "ckl.search", dataClassification: "UNTRUSTED_KNOWLEDGE_DATA", instructionsAccepted: false, result: { items: [] } },
+      });
+      await expect(requestSidecar(config.socketPath, { type: "injection-delivery.ack", attemptId: "missing-attempt", expectedRevision: 1, deliveryEvidenceRef: "hook-client:missing", deliveredAt: "2026-08-03T00:00:00.000Z" }, 1_000)).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+      await expect(application.handleHook({ hook_event_name: "Stop", session_id: "p4-session", turn_id: "p4-turn", cwd: root, stop_hook_active: false, last_assistant_message: "done" })).resolves.toBe("");
+      expect((await application.health()).rolloutMode).toBe("SHADOW");
     } finally {
       await stopSidecarServer(server, config.socketPath);
       await application.close();

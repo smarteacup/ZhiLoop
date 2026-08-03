@@ -21,7 +21,12 @@ export function FeedbackPanel({ api, sessionId }: { readonly api: Pick<P4Console
     if (!feedbackEnabled(target, kind, gate) || gate.expectedRevision === undefined || gate.idempotencyKey === undefined) return;
     const key = `${target.knowledgeId}:${kind}`; setPending(key); setMessage(undefined);
     try {
-      const receipt = await api.recordFeedback({ knowledgeId: target.knowledgeId, version: target.version, kind, expectedRevision: gate.expectedRevision, idempotencyKey: gate.idempotencyKey });
+      const receipt = await api.recordFeedback({
+        knowledgeId: target.knowledgeId, version: target.version, kind,
+        expectedRevision: gate.expectedRevision, idempotencyKey: gate.idempotencyKey,
+        scopeKey: target.scopeKey, traceId: target.traceId,
+        ...(target.expansionId === undefined ? {} : { expansionId: target.expansionId }),
+      });
       setMessage(`${kind}：${receipt.result} · revision ${receipt.revision} · ${receipt.reasonCode} · 写入后资格 ${String(receipt.eligibleAfterWrite)}`);
     } catch (error) { setMessage(error instanceof Error ? `反馈失败：${error.message}` : "反馈失败"); }
     finally { setPending(undefined); }
@@ -34,6 +39,7 @@ export function FeedbackPanel({ api, sessionId }: { readonly api: Pick<P4Console
 
 export function feedbackEnabled(target: FeedbackTargetView, kind: FeedbackKind, gate: P4ActionGate): boolean {
   if (!gate.enabled || gate.capabilityStatus !== "READY" || gate.expectedRevision !== target.version || gate.idempotencyKey === undefined) return false;
+  if (target.scopeKey.length === 0 || target.traceId.length === 0 || (kind === "MCP_USED" && target.expansionId === undefined)) return false;
   if ((kind === "RELEVANT" || kind === "PIN" || kind === "MCP_USED") && !target.eligible) return false;
   return true;
 }

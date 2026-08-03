@@ -98,6 +98,62 @@ describe("UnixSocketControlClient", () => {
     expect(result.rolloutMode).toBe("SHADOW");
   });
 
+  it("keeps the Sidecar capability array contract separate from the HTTP page projection", async () => {
+    const socketPath = await serve((request) => ({
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      requestId: request.requestId,
+      observedAt: NOW,
+      ok: true,
+      result: ["INJECTION_AUDIT", "MCP_AUDIT", "CLOSURE_AUDIT", "FEEDBACK", "ROLLOUT", "HIGH_RISK_GOVERNANCE"].map((capability) => ({
+        capability, state: "NOT_CONFIGURED", reasonCode: "P4_COMPONENT_NOT_COMPOSED", evidenceRefs: [],
+      })),
+    }));
+    const client = new UnixSocketControlClient({ socketPath });
+    await expect(client.listP4Capabilities({ signal: new AbortController().signal })).resolves.toHaveLength(6);
+  });
+
+  it("maps every P4 query and command to a strict Sidecar envelope", async () => {
+    const fingerprint = `sha256:${"a".repeat(64)}`;
+    const effective = { policyRevision: 1, mode: "SHADOW", configFingerprint: fingerprint, versionFingerprint: fingerprint };
+    const injection = {
+      schemaVersion: 1, attemptId: "attempt-1", sessionId: "session-1", turnId: "turn-1", traceId: "trace-1", runId: "run-1",
+      rolloutRevision: 1, status: "SHADOWED", revision: 1, reasonCode: "SHADOW_MODE", createdAt: NOW, completedAt: NOW,
+      envelope: { schemaVersion: 1, runId: "run-1", complexity: { level: "L0_NONE", breadth: 0, depth: "NONE", authority: "NONE", evidence: "NONE", reasonCodes: ["SHADOW_MODE"] }, budget: { maxTokens: 100, estimatedTokens: 0, truncated: false, disclosedItems: 0, omittedItems: 0 }, items: [] },
+      tokenBudget: { maxTokens: 100, estimatedTokens: 0, truncated: false, disclosedItems: 0, omittedItems: 0 }, omittedReasonCodes: [],
+    };
+    const closure = { schemaVersion: 1, closureRunId: "closure-1", sessionId: "session-1", turnId: "turn-1", taskContract: { contractId: "contract-1", objective: "finish", gates: [], boundaries: [] }, gates: [], decision: "PASS", continuationCount: 0, recursiveStopRejected: false, createdAt: NOW };
+    const blastRadius = { affectedAssets: 1, affectedProjects: 1, affectedRules: 0, affectedBindings: 0, affectedTraces: 0, affectedInjections: 0, irreversible: false, reasonCodes: ["PROJECT_ONLY"] };
+    const socketPath = await serve((request) => {
+      const type = String(request.type);
+      let result: unknown;
+      if (type === "p4.injections.list") result = { items: [injection] };
+      else if (type === "p4.injections.get") result = injection;
+      else if (type === "p4.mcp-expansions.list") result = { items: [] };
+      else if (type === "p4.closures.list") result = { items: [closure] };
+      else if (type === "p4.closures.get") result = closure;
+      else if (type === "p4.rollout.get") result = { state: { schemaVersion: 1, stateRevision: 1, effective, lastKnownGood: effective, evidence: [], audit: [{ eventId: fingerprint, kind: "BOOTSTRAP", stateRevision: 1, effectivePolicyRevision: 1, reasonCodes: ["BOOTSTRAP_SHADOW"], occurredAt: NOW }] }, downgradeHistory: [], rollbackTarget: effective };
+      else if (type === "p4.feedback-targets.list") result = { items: [] };
+      else if (type === "p4.high-risk.governance") result = { policyRevision: 1, activeStageEnabled: false, actor: "local-console", actions: Object.fromEntries(["GLOBAL_PROMOTION", "RULE_CHANGE", "BINDING_CHANGE", "PRIVACY_PURGE"].map((kind) => [kind, { enabled: false, capabilityStatus: "NOT_CONFIGURED", reasonCode: "HIGH_RISK_NOT_CONFIGURED" }])) };
+      else if (type === "p4.feedback.record") result = { outcome: "RECORDED", eligibleAfterWrite: true };
+      else if (type === "p4.high-risk.preview") result = { preview: { previewId: fingerprint, policyRevision: 1, commandFingerprint: fingerprint, command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint }, blastRadius, createdAt: NOW, expiresAt: "2099-08-03T12:00:00.000Z" }, blastRadius, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" };
+      else result = { result: { operationId: fingerprint, previewId: fingerprint, kind: "GLOBAL_PROMOTION", actor: "local-console", policyRevision: 1, blastRadius, committedAt: NOW } };
+      return { schemaVersion: 1, requestId: request.requestId, observedAt: NOW, ok: true, result };
+    });
+    const client = new UnixSocketControlClient({ socketPath });
+    const options = { signal: new AbortController().signal };
+    await expect(client.listP4Injections("session-1", { limit: 10 }, options)).resolves.toMatchObject({ items: [{ attemptId: "attempt-1" }] });
+    await expect(client.getP4Injection("session-1", "attempt-1", options)).resolves.toMatchObject({ attemptId: "attempt-1" });
+    await expect(client.listP4McpExpansions("session-1", "attempt-1", { limit: 10 }, options)).resolves.toEqual({ items: [] });
+    await expect(client.listP4Closures("session-1", { limit: 10 }, options)).resolves.toMatchObject({ items: [{ closureRunId: "closure-1" }] });
+    await expect(client.getP4Closure("session-1", "closure-1", options)).resolves.toMatchObject({ closureRunId: "closure-1" });
+    await expect(client.getP4Rollout(options)).resolves.toMatchObject({ state: { stateRevision: 1 } });
+    await expect(client.listP4FeedbackTargets("session-1", options)).resolves.toEqual({ items: [] });
+    await expect(client.getP4HighRiskGovernance(options)).resolves.toMatchObject({ activeStageEnabled: false });
+    await expect(client.recordP4Feedback({ action: "PIN", assetId: "knowledge-1", expectedKnowledgeVersion: 1, scopeKey: "PROJECT:project-1", traceId: "trace-1", idempotencyKey: "feedback-1" }, options)).resolves.toMatchObject({ outcome: "RECORDED" });
+    await expect(client.previewP4HighRisk({ expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint } }, options)).resolves.toMatchObject({ preview: { previewId: fingerprint } });
+    await expect(client.commitP4HighRisk({ expectedPolicyRevision: 1, idempotencyKey: "commit-1", previewId: fingerprint, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" }, options)).resolves.toMatchObject({ result: { operationId: fingerprint } });
+  });
+
   it("maps every P0 query and capture command to the strict Control API contract", async () => {
     const socketPath = await serve((request) => {
       let result: unknown;

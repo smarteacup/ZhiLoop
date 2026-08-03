@@ -26,6 +26,20 @@ import type {
   P3SearchResponse,
   P3SimulationResponse,
 } from "@zhiloop/p3-console-runtime";
+import type {
+  P4FeedbackResponse,
+  P4HighRiskCommitResponse,
+  P4HighRiskPreviewResponse,
+} from "@zhiloop/p4-console-runtime";
+import type {
+  P4CapabilityArray,
+  P4ClosurePage,
+  P4FeedbackTargets,
+  P4HighRiskGovernance,
+  P4InjectionPage,
+  P4McpExpansionPage,
+  P4RolloutResponse,
+} from "./p4-contracts.js";
 
 export interface Page<T> {
   readonly items: T[];
@@ -62,6 +76,15 @@ export interface ControlQueryPort {
     readonly projectId?: string;
     readonly taskId?: string;
   }, options: QueryOptions): Promise<RetrievalTraceContract>;
+  listP4Capabilities?(options: QueryOptions): Promise<P4CapabilityArray>;
+  listP4Injections?(sessionId: string, page: PageQuery, options: QueryOptions): Promise<P4InjectionPage>;
+  getP4Injection?(sessionId: string, attemptId: string, options: QueryOptions): Promise<P4InjectionPage["items"][number]>;
+  listP4McpExpansions?(sessionId: string, attemptId: string, page: PageQuery, options: QueryOptions): Promise<P4McpExpansionPage>;
+  listP4Closures?(sessionId: string, page: PageQuery, options: QueryOptions): Promise<P4ClosurePage>;
+  getP4Closure?(sessionId: string, closureRunId: string, options: QueryOptions): Promise<P4ClosurePage["items"][number]>;
+  getP4Rollout?(options: QueryOptions): Promise<P4RolloutResponse>;
+  listP4FeedbackTargets?(sessionId: string, options: QueryOptions): Promise<P4FeedbackTargets>;
+  getP4HighRiskGovernance?(options: QueryOptions): Promise<P4HighRiskGovernance>;
 }
 
 export interface CaptureCommitCommand {
@@ -96,6 +119,35 @@ export interface JobOperatorCommand {
   readonly idempotencyKey: string;
 }
 
+export interface P4FeedbackCommand {
+  readonly action: "RELEVANT" | "IRRELEVANT" | "PIN" | "SUPPRESS" | "MCP_USE";
+  readonly assetId: string;
+  readonly expectedKnowledgeVersion: number;
+  readonly scopeKey: string;
+  readonly traceId: string;
+  readonly expansionId?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface P4HighRiskPreviewCommand {
+  readonly expectedPolicyRevision: number;
+  readonly idempotencyKey: string;
+  readonly command: {
+    readonly kind: "GLOBAL_PROMOTION" | "RULE_CHANGE" | "BINDING_CHANGE" | "PRIVACY_PURGE";
+    readonly assetIds: readonly string[];
+    readonly projectIds: readonly string[];
+    readonly reason: string;
+    readonly payloadFingerprint: string;
+  };
+}
+
+export interface P4HighRiskCommitCommand {
+  readonly expectedPolicyRevision: number;
+  readonly idempotencyKey: string;
+  readonly previewId: string;
+  readonly confirmationPhrase: string;
+}
+
 /** Commands remain behind the Sidecar boundary and are not exposed by P0 read-only routes. */
 export interface ControlCommandPort {
   previewCapture(sessionId: string, options: QueryOptions): Promise<CapturePreview>;
@@ -112,4 +164,7 @@ export interface ControlCommandPort {
   suppressKnowledge?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeDetailView>;
   restoreKnowledge?(command: Readonly<Record<string, unknown>>, options: QueryOptions): Promise<P2KnowledgeDetailView>;
   recoverKnowledgeIndex?(knowledgeId: string, options: QueryOptions): Promise<P2IndexRecoveryResult>;
+  recordP4Feedback?(command: P4FeedbackCommand, options: QueryOptions): Promise<P4FeedbackResponse>;
+  previewP4HighRisk?(command: P4HighRiskPreviewCommand, options: QueryOptions): Promise<P4HighRiskPreviewResponse>;
+  commitP4HighRisk?(command: P4HighRiskCommitCommand, options: QueryOptions): Promise<P4HighRiskCommitResponse>;
 }

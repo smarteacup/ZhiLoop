@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { chmod, link, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
@@ -22,6 +23,14 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalExistingPath(path: string): string {
+  try { return realpathSync(resolve(path)); } catch { return resolve(path); }
+}
+
+function sameFilePath(left: string, right: string): boolean {
+  return canonicalExistingPath(left) === canonicalExistingPath(right);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -283,12 +292,14 @@ export class CodexAppServerHookTrustControl implements CodexHookTrustControlPort
       const versions = new Set<string>();
       for (const origin of Object.values(configResult["origins"])) {
         if (!isRecord(origin) || !isRecord(origin["name"])) continue;
-        if (origin["name"]["file"] === configPath && typeof origin["version"] === "string" && SHA256.test(origin["version"])) versions.add(origin["version"]);
+        if (typeof origin["name"]["file"] === "string" && sameFilePath(origin["name"]["file"], configPath)
+          && typeof origin["version"] === "string" && SHA256.test(origin["version"])) versions.add(origin["version"]);
       }
       if (Array.isArray(configResult["layers"])) {
         for (const layer of configResult["layers"]) {
           if (!isRecord(layer) || !isRecord(layer["name"])) continue;
-          if (layer["name"]["type"] === "user" && layer["name"]["file"] === configPath
+          if (layer["name"]["type"] === "user" && typeof layer["name"]["file"] === "string"
+            && sameFilePath(layer["name"]["file"], configPath)
             && typeof layer["version"] === "string" && SHA256.test(layer["version"])) versions.add(layer["version"]);
         }
       }
@@ -323,9 +334,15 @@ export class CodexAppServerHookTrustControl implements CodexHookTrustControlPort
         expectedVersion: input.expectedVersion,
         reloadUserConfig: true,
       });
-      if (!isRecord(result) || result["status"] !== "ok" || result["filePath"] !== configPath
+      if (!isRecord(result) || (result["status"] !== "ok" && result["status"] !== "okOverridden")
+        || typeof result["filePath"] !== "string"
+        || !sameFilePath(result["filePath"], configPath)
         || typeof result["version"] !== "string" || !SHA256.test(result["version"])) {
-        throw new Error("Codex config/batchWrite returned an unsupported response");
+        const status = isRecord(result) && typeof result["status"] === "string" ? result["status"].slice(0, 50) : "missing";
+        const versionValid = isRecord(result) && typeof result["version"] === "string" && SHA256.test(result["version"]);
+        const filePathMatches = isRecord(result) && typeof result["filePath"] === "string"
+          && sameFilePath(result["filePath"], configPath);
+        throw new Error(`Codex config/batchWrite returned an unsupported response (status=${status}, versionValid=${String(versionValid)}, filePathMatches=${String(filePathMatches)})`);
       }
       return Object.freeze({ configVersion: result["version"] });
     } finally {
@@ -381,7 +398,7 @@ function receiptStateMatches(inspection: CodexHookTrustInspection, entries: read
 }
 
 function metadataMatches(entry: TrustedHookReceiptEntry, hook: CodexHookMetadata, targetPath: string): boolean {
-  return hook.key === entry.key && resolve(hook.sourcePath) === targetPath && hook.source === "user" && !hook.isManaged
+  return hook.key === entry.key && sameFilePath(hook.sourcePath, targetPath) && hook.source === "user" && !hook.isManaged
     && hook.enabled && hook.handlerType === "command" && hook.command === entry.command && eventIdentity(hook.eventName) === eventIdentity(entry.event)
     && hook.currentHash === entry.trustedHash;
 }
@@ -439,7 +456,7 @@ export class CodexHookTrustInstaller {
     const unsupportedEvents: string[] = [];
     const entries: TrustedHookReceiptEntry[] = [];
     for (const inserted of options.inserted) {
-      const matches = inspection.hooks.filter((hook) => resolve(hook.sourcePath) === targetPath && hook.source === "user" && !hook.isManaged
+      const matches = inspection.hooks.filter((hook) => sameFilePath(hook.sourcePath, targetPath) && hook.source === "user" && !hook.isManaged
         && hook.handlerType === "command" && hook.command === inserted.command && eventIdentity(hook.eventName) === eventIdentity(inserted.event));
       if (matches.length === 0 && optional.has(eventIdentity(inserted.event))) {
         unsupportedEvents.push(inserted.event);

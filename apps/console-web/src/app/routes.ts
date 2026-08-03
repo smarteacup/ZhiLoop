@@ -10,7 +10,7 @@ const routeNames = new Set<RouteName>([
 export function parseRoute(hash: string): ConsoleRoute {
   const value = hash.replace(/^#\/?/u, "");
   const [name, id] = value.split("/");
-  if (name === "sessions" && id !== undefined && id.length > 0) {
+  if ((name === "sessions" || name === "closure") && id !== undefined && id.length > 0) {
     try {
       return { name, sessionId: decodeURIComponent(id) };
     } catch {

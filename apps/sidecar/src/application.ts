@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -14,6 +15,7 @@ import {
   type CaptureSessionRequest,
   type TranscriptCursor,
 } from "@zhiloop/codex-session-capture";
+import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { CONTROL_API_SCHEMA_VERSION, type CapabilitySnapshot, type ControlRequest, type ControlResponse, type P2ControlRequest } from "@zhiloop/control-api";
 import { SqliteConfigurationService, type ConsoleConfiguration } from "@zhiloop/configuration-service";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
@@ -25,6 +27,9 @@ import {
   InMemoryCodexKnowledgeQueryDiagnosticStore,
 } from "@zhiloop/model-codex-exec";
 import type { P3ConsoleTransportRequest } from "@zhiloop/p3-console-runtime";
+import { ActiveRolloutService, FileRolloutStateStore } from "@zhiloop/active-rollout-service";
+import type { VersionedMcpRequest } from "@zhiloop/active-knowledge-runtime";
+import { ContextOrchestrator } from "@zhiloop/context-orchestrator";
 
 import type { SidecarConfig } from "./config.js";
 import { SidecarControlPlane, type CaptureExecutionPort } from "./control-plane.js";
@@ -35,10 +40,23 @@ import { P2SidecarRuntime } from "./p2-runtime.js";
 import { P2ProductionComposition } from "./p2-production.js";
 import { P2ConsoleRuntime, type P2ConsoleRequest } from "./p2-console.js";
 import { P3SidecarConsole } from "./p3-console.js";
+import { P4ActiveSidecarRuntime, type P4ActiveHookResult } from "./p4-active-runtime.js";
+import { P4SidecarConsole, type P4ConsoleTransportRequest } from "./p4-console.js";
+import { createP4RetrievalComposition } from "./p4-retrieval.js";
 
 export interface SidecarHealthReport extends DaemonHealthSnapshot {
-  readonly rolloutMode: "SHADOW";
+  readonly rolloutMode: "SHADOW" | "ACTIVE";
   readonly socketStatus: "READY";
+}
+
+export interface SidecarHookTransportResult {
+  readonly schemaVersion: 1;
+  readonly hookOutput: string;
+  readonly delivery?: {
+    readonly attemptId: string;
+    readonly expectedRevision: 1;
+    readonly alreadyAcknowledged: boolean;
+  };
 }
 
 const MAX_PENDING_ACCEPTANCE_EVIDENCE = 10_000;
@@ -72,6 +90,7 @@ export class SidecarApplication {
   readonly #runtime: ZhiLoopDaemonRuntime;
   readonly #ledger: SqliteEventLedger;
   readonly #capture: CodexSessionCaptureService;
+  readonly #hookHandler: CodexHookHandler;
   readonly #log: SafeDiagnosticLog;
   readonly #configuration: SqliteConfigurationService;
   readonly #acceptanceEvidence: SqliteRealCodexAcceptanceEvidenceStore;
@@ -82,6 +101,8 @@ export class SidecarApplication {
   #p2Production: P2ProductionComposition | undefined;
   #p2Console: P2ConsoleRuntime | undefined;
   #p3Console: P3SidecarConsole | undefined;
+  #p4Active: P4ActiveSidecarRuntime | undefined;
+  #p4Console: P4SidecarConsole | undefined;
   #closed = false;
   #captureTail: Promise<void> = Promise.resolve();
   #workerTail: Promise<void> = Promise.resolve();
@@ -131,7 +152,7 @@ export class SidecarApplication {
         await evidenceSpool.store(event, 0);
       },
     };
-    const handler = new CodexHookHandler({ sink: captureSink, spool: evidenceSpool });
+    this.#hookHandler = new CodexHookHandler({ sink: captureSink, spool: evidenceSpool });
     this.#runtime = new ZhiLoopDaemonRuntime({
       components: [{
         name: "conversation-ledger",
@@ -141,8 +162,7 @@ export class SidecarApplication {
       }],
       hook: {
         handle: async (input) => {
-          const capture = await handler.handle(input);
-          await log.write({ component: "hook", code: captureCode(capture), durationMs: capture.durationMs }).catch(() => undefined);
+          await this.#captureLegacyHook(input);
           return "";
         },
       },
@@ -223,11 +243,13 @@ export class SidecarApplication {
     let p2Production: P2ProductionComposition | undefined;
     let p3Console: P3SidecarConsole | undefined;
     let p3CodexModelComposed = false;
+    let p4Active: P4ActiveSidecarRuntime | undefined;
+    let p4Console: P4SidecarConsole | undefined;
     try {
       acceptanceEvidence = new SqliteRealCodexAcceptanceEvidenceStore(join(dirname(config.ledgerPath), "real-codex-acceptance.sqlite"));
       configuration = new SqliteConfigurationService(join(dirname(config.ledgerPath), "configuration.sqlite"), {
         capabilities: () => ({
-          "context.injection": "DISABLED",
+          "context.injection": p4Active === undefined ? "DISABLED" : "READY",
           "knowledge.retrieval": p3Console === undefined ? "DISABLED" : "READY",
           "knowledge.compile": p2Production === undefined ? "DISABLED" : "READY",
           "codex.query": p3CodexModelComposed ? "READY" : "NOT_CONFIGURED",
@@ -322,6 +344,9 @@ export class SidecarApplication {
         },
         compilerTimeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
         compilerBatchSize: configuration.get().effective.future.compilerBatchSize,
+        ...(config.codexQuery?.executable === undefined ? {} : { compilerExecutable: config.codexQuery.executable }),
+        ...(config.codexQuery?.model === undefined ? {} : { compilerModel: config.codexQuery.model }),
+        ...(config.codexQuery === undefined ? {} : { compilerIgnoreUserConfig: config.codexQuery.userConfiguration === "IGNORE" }),
       });
       p2Runtime = await P2SidecarRuntime.create({
         stateDirectory: dirname(config.ledgerPath),
@@ -453,8 +478,61 @@ export class SidecarApplication {
       });
       composedApplication.#p3Console = p3Console;
       composedApplication.#controlPlane.setP3RuntimeState(p3Console.capability);
+      const retrievalComposition = createP4RetrievalComposition({ projection: p2Production.registry });
+      const rolloutConfigFingerprint = `sha256:${configuration.get().hash}`;
+      const rolloutVersionFingerprint = `sha256:${createHash("sha256").update(SIDECAR_VERSION, "utf8").digest("hex")}`;
+      const rollout = new ActiveRolloutService(
+        new FileRolloutStateStore(join(stateDirectory, "p4-rollout-state.json")),
+        {
+          policyRevision: 1,
+          configFingerprint: rolloutConfigFingerprint,
+          versionFingerprint: rolloutVersionFingerprint,
+          now: new Date().toISOString(),
+        },
+      );
+      const persistedRollout = rollout.state.effective;
+      if (persistedRollout.mode === "ACTIVE"
+        && (persistedRollout.configFingerprint !== rolloutConfigFingerprint
+          || persistedRollout.versionFingerprint !== rolloutVersionFingerprint)) {
+        rollout.downgrade("COMPOSITION_FINGERPRINT_CHANGED", new Date().toISOString());
+      }
+      p4Active = await P4ActiveSidecarRuntime.create({
+        stateDirectory,
+        p2: p2Production,
+        retrieval: retrievalComposition.retrieval,
+        authority: retrievalComposition.authority,
+        orchestrator: new ContextOrchestrator(),
+        rollout,
+        captureUserPrompt: async (input) => { await composedApplication.#captureLegacyHook(input); },
+        closureEvidence: {
+          load: async () => ({
+            present: { taskContract: false, diff: false, tests: false, toolResults: false },
+            interaction: { turnOrdinal: 1, history: [] },
+          }),
+        },
+        contextDelta: { load: async () => ({ traceId: "trace-p4-no-explicit-delta", items: [] }) },
+        confirmationEffects: { apply: async () => { throw new Error("confirmation effects are not configured"); } },
+        injectionPolicy: () => ({
+          ...structuredClone(DEFAULT_CONFIGURATION.injection),
+          defaultMaxTokens: Math.min(4_000, configuration!.get().effective.future.injectionMaxTokens),
+        }),
+        userPromptDeadlineMs: 500,
+      });
+      composedApplication.#p4Active = p4Active;
+      p4Console = await P4SidecarConsole.create({
+        stateDirectory,
+        feedback: p4Active.feedbackRuntime(),
+        rollout,
+        inspectEligibility: async (request) => await p4Active!.inspectKnowledgeEligibility(request),
+      });
+      composedApplication.#p4Console = p4Console;
+      composedApplication.#controlPlane.setP4RuntimeState(p4Active.capabilities(), {
+        closureEvidenceVerified: false,
+      });
       return composedApplication;
     } catch (error) {
+      p4Console?.close();
+      p4Active?.close();
       p3Console?.close();
       await p2Runtime?.close().catch(() => undefined);
       p2Production?.close();
@@ -481,14 +559,66 @@ export class SidecarApplication {
   }
 
   async handleHook(input: unknown): Promise<string> {
-    const output = await this.#runtime.handleHook(input);
+    return (await this.handleHookForTransport(input)).hookOutput;
+  }
+
+  async handleHookForTransport(input: unknown): Promise<SidecarHookTransportResult> {
+    const eventName = typeof input === "object" && input !== null && !Array.isArray(input)
+      ? (input as { readonly hook_event_name?: unknown }).hook_event_name
+      : undefined;
+    let active: P4ActiveHookResult | undefined;
+    let output: string;
+    if (this.#p4Active !== undefined && (eventName === "UserPromptSubmit" || eventName === "Stop")) {
+      if (eventName === "Stop") await this.#runtime.handleHook(input);
+      active = await this.#p4Active.handleHook(input as Parameters<P4ActiveSidecarRuntime["handleHook"]>[0]);
+      output = active.hookOutput ?? "";
+    } else {
+      output = await this.#runtime.handleHook(input);
+    }
     // Start evidence persistence only after the Hook runtime has completed;
     // the returned Hook value never waits for SQLite acceptance writes.
     this.#flushAcceptanceEvidence();
+    this.#scheduleWorker();
+    const delivery = active?.hookEventName === "UserPromptSubmit" && active.status === "INJECTED"
+      && active.attemptId !== undefined && output.length > 0
+      ? {
+          attemptId: active.attemptId,
+          expectedRevision: 1 as const,
+          alreadyAcknowledged: active.deliveryAcknowledged === true,
+        }
+      : undefined;
+    return Object.freeze({
+      schemaVersion: 1 as const,
+      hookOutput: output,
+      ...(delivery === undefined ? {} : { delivery: Object.freeze(delivery) }),
+    });
+  }
+
+  #scheduleWorker(): void {
     this.#workerTail = this.#workerTail
       .then(async () => { await this.#runtime.runWorkerOnce(); })
       .catch(() => undefined);
-    return output;
+  }
+
+  async #captureLegacyHook(input: unknown): Promise<HookCaptureResult> {
+    const capture = await this.#hookHandler.handle(input);
+    await this.#log.write({ component: "hook", code: captureCode(capture), durationMs: capture.durationMs }).catch(() => undefined);
+    return capture;
+  }
+
+  async handleMcp(request: VersionedMcpRequest, signal?: AbortSignal) {
+    if (this.#p4Active === undefined) throw Object.assign(new Error("P4 MCP runtime is unavailable"), { code: "CAPABILITY_UNAVAILABLE" });
+    return await this.#p4Active.handleMcp(request, signal);
+  }
+
+  acknowledgeInjectionDelivery(request: {
+    readonly attemptId: string;
+    readonly expectedRevision: number;
+    readonly deliveryEvidenceRef: string;
+    readonly deliveredAt: string;
+  }) {
+    if (this.#p4Active === undefined) throw Object.assign(new Error("P4 injection runtime is unavailable"), { code: "CAPABILITY_UNAVAILABLE" });
+    return this.#p4Active.acknowledgeDelivery(request);
   }
 
   async runWorkerOnce(): Promise<DaemonWorkerCycle> {
@@ -593,6 +723,19 @@ export class SidecarApplication {
     }
   }
 
+  async handleP4Console(request: P4ConsoleTransportRequest, signal?: AbortSignal): Promise<ControlResponse> {
+    if (this.#p4Console === undefined) {
+      return {
+        schemaVersion: CONTROL_API_SCHEMA_VERSION,
+        requestId: request.requestId,
+        observedAt: new Date().toISOString(),
+        ok: false,
+        error: { code: "CAPABILITY_UNAVAILABLE", message: "P4 Console request failed", retryable: false },
+      };
+    }
+    return await this.#p4Console.handle(request, signal);
+  }
+
   async verifyRealCodexIngestion(request: RealCodexAcceptanceRequest): Promise<PersistedRealCodexAcceptance> {
     this.#flushAcceptanceEvidence();
     await this.#acceptanceTail;
@@ -603,7 +746,8 @@ export class SidecarApplication {
   }
 
   async health(): Promise<SidecarHealthReport> {
-    return Object.freeze({ ...(await this.#runtime.health()), rolloutMode: "SHADOW", socketStatus: "READY" });
+    const rolloutMode = this.#p4Active?.capabilities().injection.mode ?? "SHADOW";
+    return Object.freeze({ ...(await this.#runtime.health()), rolloutMode, socketStatus: "READY" });
   }
 
   async close(): Promise<void> {
@@ -612,6 +756,8 @@ export class SidecarApplication {
     await this.#workerTail;
     await this.#p1Runtime?.close();
     await this.#p2Runtime?.close();
+    this.#p4Console?.close();
+    this.#p4Active?.close();
     this.#p3Console?.close();
     this.#p2Production?.close();
     await this.#runtime.stop();

@@ -57,6 +57,41 @@ import {
   type RetrievalTraceView,
 } from "./p3.js";
 import { retrievalTraceSchema } from "@zhiloop/control-api";
+import {
+  closureRunListViewSchema,
+  closureRunViewSchema,
+  feedbackReceiptSchema,
+  feedbackTargetViewSchema,
+  highRiskGovernanceViewSchema,
+  highRiskPreviewViewSchema,
+  highRiskReceiptSchema,
+  rolloutViewSchema,
+  sessionInjectionViewSchema,
+  type ClosureRunView,
+  type FeedbackCommand,
+  type FeedbackReceipt,
+  type FeedbackTargetView,
+  type HighRiskCommitCommand,
+  type HighRiskGovernanceView,
+  type HighRiskPreviewCommand,
+  type HighRiskPreviewView,
+  type HighRiskReceipt,
+  type RolloutView,
+  type SessionInjectionView,
+} from "./p4.js";
+import {
+  p4WireCapabilityListSchema,
+  p4WireClosurePageSchema,
+  p4WireClosureSchema,
+  p4WireFeedbackResponseSchema,
+  p4WireHighRiskCommitSchema,
+  p4WireHighRiskPreviewSchema,
+  p4WireInjectionPageSchema,
+  p4WireMcpPageSchema,
+  p4WireRolloutSchema,
+  type P4WireClosure,
+  type P4WireInjection,
+} from "./p4-wire.js";
 
 export interface ConsoleApi {
   overview(signal?: AbortSignal): Promise<Overview>;
@@ -89,6 +124,15 @@ export interface ConsoleApi {
   askZhiLoop?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<KnowledgeAskView>;
   simulateRetrieval?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<RetrievalSimulationView>;
   retrievalTrace?(traceId: string, scope?: { readonly projectId?: string; readonly taskId?: string }, signal?: AbortSignal): Promise<RetrievalTraceView>;
+  sessionInjections?(sessionId: string, signal?: AbortSignal): Promise<SessionInjectionView>;
+  closureRuns?(sessionId?: string, signal?: AbortSignal): Promise<z.infer<typeof closureRunListViewSchema>>;
+  closureRun?(sessionId: string, closureRunId: string, signal?: AbortSignal): Promise<ClosureRunView>;
+  feedbackTargets?(sessionId: string, signal?: AbortSignal): Promise<readonly FeedbackTargetView[]>;
+  recordFeedback?(command: FeedbackCommand, signal?: AbortSignal): Promise<FeedbackReceipt>;
+  rollout?(signal?: AbortSignal): Promise<RolloutView>;
+  highRiskGovernance?(signal?: AbortSignal): Promise<HighRiskGovernanceView>;
+  previewHighRisk?(command: HighRiskPreviewCommand, signal?: AbortSignal): Promise<HighRiskPreviewView>;
+  commitHighRisk?(command: HighRiskCommitCommand, signal?: AbortSignal): Promise<HighRiskReceipt>;
 }
 
 export interface CaptureCommitCommand {
@@ -154,6 +198,7 @@ const invalidationPollResultSchema = z.strictObject({
   events: z.array(sseInvalidationEventSchema).max(200).readonly(),
   retryAfterMs: z.number().int().min(250).max(60_000),
 });
+const p4FeedbackTargetsResponseSchema = z.strictObject({ items: z.array(feedbackTargetViewSchema).max(500).readonly() });
 
 type ControlErrorCode = (typeof CONTROL_ERROR_CODES)[number];
 
@@ -412,7 +457,201 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
     const result = await request(`/retrieval/traces/${encodeURIComponent(traceId)}${query.size === 0 ? "" : `?${query.toString()}`}`, retrievalTraceSchema, { signal });
     return toRetrievalTraceView(result);
   },
+  sessionInjections: async (sessionId: string, signal?: AbortSignal) => {
+    const [capabilities, page] = await Promise.all([
+      p4Capabilities(signal),
+      request(`/p4/sessions/${encodeURIComponent(sessionId)}/injections?limit=100`, p4WireInjectionPageSchema, { signal }),
+    ]);
+    const injection = p4Capability(capabilities, "INJECTION_AUDIT");
+    const mcp = p4Capability(capabilities, "MCP_AUDIT");
+    const expansions = mcp.status === "READY"
+      ? await mapConcurrent(page.items, 8, async (attempt) => await request(
+        `/p4/sessions/${encodeURIComponent(sessionId)}/injections/${encodeURIComponent(attempt.attemptId)}/mcp-expansions?limit=100`,
+        p4WireMcpPageSchema, { signal },
+      ))
+      : page.items.map((): z.infer<typeof p4WireMcpPageSchema> => ({ items: [] }));
+    const capabilityStatus = injection.status === "READY" && mcp.status !== "READY" ? "DEGRADED" : injection.status;
+    const capabilityReasonCode = injection.status === "READY" && mcp.status !== "READY" ? mcp.reasonCode : injection.reasonCode;
+    return sessionInjectionViewSchema.parse({
+      observedAt: page.items[0]?.createdAt ?? new Date().toISOString(),
+      truncated: page.nextCursor !== undefined || expansions.some((value) => value.nextCursor !== undefined),
+      capabilityStatus,
+      capabilityReasonCode,
+      attempts: page.items.map((attempt, index) => p4InjectionView(attempt, expansions[index]?.items ?? [])),
+    });
+  },
+  closureRuns: async (sessionId?: string, signal?: AbortSignal) => {
+    if (sessionId === undefined) return closureRunListViewSchema.parse({
+      capabilityStatus: "NOT_CONFIGURED", capabilityReasonCode: "SESSION_SCOPE_REQUIRED", truncated: false, items: [],
+    });
+    const [capabilities, page] = await Promise.all([
+      p4Capabilities(signal),
+      request(`/p4/sessions/${encodeURIComponent(sessionId)}/closures?limit=100`, p4WireClosurePageSchema, { signal }),
+    ]);
+    const capability = p4Capability(capabilities, "CLOSURE_AUDIT");
+    return closureRunListViewSchema.parse({
+      capabilityStatus: capability.status, capabilityReasonCode: capability.reasonCode,
+      truncated: page.nextCursor !== undefined, items: page.items.map(p4ClosureView),
+    });
+  },
+  closureRun: async (sessionId: string, closureRunId: string, signal?: AbortSignal) => p4ClosureView(await request(
+    `/p4/sessions/${encodeURIComponent(sessionId)}/closures/${encodeURIComponent(closureRunId)}`, p4WireClosureSchema, { signal },
+  )),
+  feedbackTargets: async (sessionId: string, signal?: AbortSignal) => (await request(
+    `/p4/sessions/${encodeURIComponent(sessionId)}/feedback-targets`, p4FeedbackTargetsResponseSchema, { signal },
+  )).items,
+  recordFeedback: async (command: FeedbackCommand, signal?: AbortSignal) => {
+    const result = await request("/p4/feedback", p4WireFeedbackResponseSchema, {
+      signal,
+      body: {
+        kind: command.kind,
+        knowledgeId: command.knowledgeId,
+        version: command.version,
+        expectedRevision: command.expectedRevision,
+        idempotencyKey: command.idempotencyKey,
+        scopeKey: command.scopeKey,
+        traceId: command.traceId,
+        ...(command.kind === "MCP_USED" && command.expansionId !== undefined ? { expansionId: command.expansionId } : {}),
+      },
+    });
+    return feedbackReceiptSchema.parse({
+      result: result.outcome,
+      eligibleAfterWrite: result.eligibleAfterWrite,
+      revision: command.expectedRevision,
+      reasonCode: result.outcome === "RECORDED" ? "FEEDBACK_RECORDED" : "FEEDBACK_EXISTING",
+    });
+  },
+  rollout: async (signal?: AbortSignal) => {
+    const [capabilities, raw] = await Promise.all([p4Capabilities(signal), request("/p4/rollout", p4WireRolloutSchema, { signal })]);
+    const capability = p4Capability(capabilities, "ROLLOUT");
+    const lastTransition = raw.state.audit.at(-1);
+    return rolloutViewSchema.parse({
+      capabilityStatus: capability.status, capabilityReasonCode: capability.reasonCode,
+      stateRevision: raw.state.stateRevision, effective: raw.state.effective, lastKnownGood: raw.state.lastKnownGood,
+      eligibility: raw.state.evidence.map((item) => ({
+        evidenceId: item.evidenceId, datasetFingerprint: item.datasetFingerprint,
+        configFingerprint: item.configFingerprint, versionFingerprint: item.versionFingerprint,
+        traceCount: item.traceIds.length, eligible: item.eligible, checks: item.checks, createdAt: item.createdAt,
+      })),
+      ...(lastTransition === undefined ? {} : { lastTransition: { kind: lastTransition.kind, reasonCodes: lastTransition.reasonCodes, occurredAt: lastTransition.occurredAt } }),
+    });
+  },
+  highRiskGovernance: async (signal?: AbortSignal) => await request("/p4/high-risk/governance", highRiskGovernanceViewSchema, { signal }),
+  previewHighRisk: async (command: HighRiskPreviewCommand, signal?: AbortSignal) => {
+    const raw = await request("/p4/high-risk/preview", p4WireHighRiskPreviewSchema, {
+      signal,
+      body: {
+        expectedPolicyRevision: command.expectedPolicyRevision,
+        idempotencyKey: command.idempotencyKey,
+        command: {
+          kind: command.kind, assetIds: command.assetIds, projectIds: command.projectIds,
+          reason: command.reason, payloadFingerprint: command.payloadFingerprint,
+        },
+      },
+    });
+    return highRiskPreviewViewSchema.parse({
+      previewId: raw.preview.previewId, policyRevision: raw.preview.policyRevision, kind: raw.preview.command.kind,
+      expiresAt: raw.preview.expiresAt, confirmationPhrase: raw.confirmationPhrase, blastRadius: raw.blastRadius,
+    });
+  },
+  commitHighRisk: async (command: HighRiskCommitCommand, signal?: AbortSignal) => {
+    const raw = await request("/p4/high-risk/commit", p4WireHighRiskCommitSchema, {
+      signal,
+      body: {
+        previewId: command.previewId, confirmationPhrase: command.confirmationPhrase,
+        expectedPolicyRevision: command.expectedPolicyRevision, idempotencyKey: command.idempotencyKey,
+      },
+    });
+    return highRiskReceiptSchema.parse({
+      operationId: raw.result.operationId,
+      previewId: raw.result.previewId,
+      kind: raw.result.kind,
+      actor: raw.result.actor,
+      policyRevision: raw.result.policyRevision,
+      committedAt: raw.result.committedAt,
+    });
+  },
 });
+
+type P4CapabilityName = z.infer<typeof p4WireCapabilityListSchema>["items"][number]["capability"];
+
+async function p4Capabilities(signal?: AbortSignal): Promise<z.infer<typeof p4WireCapabilityListSchema> | undefined> {
+  try { return await request("/p4/capabilities", p4WireCapabilityListSchema, { signal }); }
+  catch (error) {
+    if (error instanceof ConsoleApiError && error.code === "CAPABILITY_UNAVAILABLE") return undefined;
+    throw error;
+  }
+}
+
+function p4Capability(capabilities: z.infer<typeof p4WireCapabilityListSchema> | undefined, name: P4CapabilityName): {
+  readonly status: "READY" | "DEGRADED" | "NOT_CONFIGURED" | "DISABLED";
+  readonly reasonCode: string;
+} {
+  const value = capabilities?.items.find((item) => item.capability === name);
+  return value === undefined
+    ? { status: "NOT_CONFIGURED", reasonCode: "P4_CAPABILITY_FACTS_UNAVAILABLE" }
+    : { status: value.state, reasonCode: value.reasonCode };
+}
+
+async function mapConcurrent<T, U>(items: readonly T[], concurrency: number, mapper: (item: T) => Promise<U>): Promise<U[]> {
+  const output = new Array<U>(items.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      output[index] = await mapper(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return output;
+}
+
+function p4InjectionView(raw: P4WireInjection, expansions: z.infer<typeof p4WireMcpPageSchema>["items"]): unknown {
+  const deliveryConfirmed = raw.status === "INJECTED" && raw.deliveryEvidenceRef !== undefined;
+  const automaticL4 = raw.envelope.complexity.level === "L4_EPISODE" || raw.envelope.items.some((item) => item.detailLevel === "L4_EPISODE");
+  const status = (raw.status === "INJECTED" && !deliveryConfirmed) || automaticL4 ? "ERROR" : raw.status;
+  const reason = automaticL4 ? "AUTOMATIC_L4_FORBIDDEN"
+    : raw.status === "INJECTED" && !deliveryConfirmed ? "DELIVERY_EVIDENCE_NOT_CONFIRMED" : raw.reasonCode;
+  const visibleItems = raw.envelope.items.filter((item) => item.detailLevel !== "L4_EPISODE");
+  return {
+    attemptId: raw.attemptId, sessionId: raw.sessionId, turnId: raw.turnId, runId: raw.runId,
+    retrievalTraceId: raw.traceId, rolloutRevision: raw.rolloutRevision, status, reasonCode: reason,
+    envelope: {
+      mode: deliveryConfirmed ? "ACTUAL" : "SHADOW",
+      detailLevel: automaticL4 ? "L3_EVIDENCED" : raw.envelope.complexity.level,
+      maxTokens: raw.envelope.budget.maxTokens, estimatedTokens: raw.envelope.budget.estimatedTokens,
+      items: visibleItems.map((item) => ({ knowledgeId: item.id, version: item.version, detailLevel: item.detailLevel })),
+      omitted: [], omittedCount: raw.envelope.budget.omittedItems + (raw.envelope.items.length - visibleItems.length),
+      reasonCodes: [...raw.envelope.complexity.reasonCodes, ...(reason === raw.reasonCode ? [] : [reason])],
+    },
+    ...(deliveryConfirmed ? { deliveryEvidenceRef: raw.deliveryEvidenceRef } : {}),
+    createdAt: raw.createdAt, ...(raw.completedAt === undefined ? {} : { completedAt: raw.completedAt }),
+    mcpExpansions: expansions.map((item) => ({
+      expansionId: item.expansionId, tool: item.tool, knowledgeId: item.knowledgeId, knowledgeVersion: item.knowledgeVersion,
+      fromDetailLevel: item.fromDetailLevel, toDetailLevel: item.toDetailLevel, latencyMs: item.latencyMs, used: item.used, occurredAt: item.occurredAt,
+    })),
+  };
+}
+
+function p4ClosureView(raw: P4WireClosure): ClosureRunView {
+  return closureRunViewSchema.parse({
+    closureRunId: raw.closureRunId, sessionId: raw.sessionId, turnId: raw.turnId, createdAt: raw.createdAt,
+    taskContract: { objective: raw.taskContract.objective, boundaries: raw.taskContract.boundaries, completionGates: raw.taskContract.gates },
+    gates: raw.gates.map((gate) => ({
+      gateId: gate.gateId, label: gate.gateId, status: gate.status, evidenceRefs: gate.evidenceRefs,
+      reasonCode: gate.reasonCodes[0] ?? "GATE_REASON_NOT_REPORTED",
+    })),
+    decision: raw.decision, ...(raw.correctionDelta === undefined ? {} : { correctionDelta: raw.correctionDelta }),
+    continuationCount: raw.continuationCount, recursiveStopRejected: raw.recursiveStopRejected,
+    ...(raw.interaction === undefined ? {} : { interaction: {
+      required: raw.interaction.required,
+      ...(raw.interaction.question === undefined ? {} : { question: raw.interaction.question }),
+      ...(raw.interaction.safeDefault === undefined ? {} : { safeDefault: raw.interaction.safeDefault }),
+      confirmationStatus: raw.interaction.required ? "PENDING" : "NOT_REQUIRED",
+    } }),
+  });
+}
 
 function retrievalQueryBody(command: KnowledgeSearchCommand): Readonly<Record<string, unknown>> {
   return Object.freeze({

@@ -207,4 +207,74 @@ describe("P4ActiveSidecarRuntime", () => {
     const recursive = await runtime.handleHook(stop(true)); expect(recursive).toMatchObject({ status: "HOOK_ALREADY_ACTIVE", decision: "ASK_USER" }); expect(recursive).not.toHaveProperty("hookOutput");
     expect(evidence).toHaveBeenCalledOnce(); runtime.close(); values.projection.close();
   });
+
+  it("validates deadlines, exposes ACTIVE capability facts and rejects use after close", async () => {
+    const values = await resources();
+    for (const userPromptDeadlineMs of [0, 501, 1.5]) {
+      await expect(P4ActiveSidecarRuntime.create({ ...values.dependencies, userPromptDeadlineMs })).rejects.toThrow("within 1..500ms");
+    }
+    const persisted = values.rollout.state;
+    vi.spyOn(values.rollout, "state", "get").mockReturnValue({ ...persisted, effective: { ...persisted.effective, mode: "ACTIVE" } });
+    const runtime = await P4ActiveSidecarRuntime.create(values.dependencies);
+    expect(runtime.capabilities()).toMatchObject({ injection: { mode: "ACTIVE", reasonCode: "SCOPED_ACTIVE_READY" } });
+    expect(runtime.feedbackRuntime()).toBeDefined();
+    runtime.close(); runtime.close();
+    expect(() => runtime.capabilities()).toThrow("closed");
+    expect(() => runtime.consoleDependencies()).toThrow("closed");
+    expect(() => runtime.feedbackRuntime()).toThrow("closed");
+    await expect(runtime.handleHook(hook())).rejects.toThrow("closed");
+    await expect(runtime.handleMcp({ schemaVersion: 1, requestId: "closed", tool: "ckl.search", context: query("closed"), input: { query: "closed" } })).rejects.toThrow("closed");
+    values.projection.close();
+  });
+
+  it("fails open for capture, authority and rollout errors without emitting context", async () => {
+    const capture = await resources({ captureUserPrompt: () => { throw new Error("capture\nsecret"); } });
+    let runtime = await P4ActiveSidecarRuntime.create(capture.dependencies);
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "ERROR", captureCompleted: false, diagnostic: "CAPTURE_FAILED:Error:capture secret" });
+    runtime.close(); capture.projection.close();
+
+    const authority = await resources({ authority: { scopeForHook: () => ({ sessionId: "other", turnId: "turn-1" }), authorizeMcp: () => query("mcp") } });
+    runtime = await P4ActiveSidecarRuntime.create(authority.dependencies);
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "ERROR", captureCompleted: true, diagnostic: expect.stringContaining("SCOPE_AUTHORITY_FAILED") });
+    runtime.close(); authority.projection.close();
+
+    const decision = await resources();
+    vi.spyOn(decision.rollout, "decision").mockImplementation(() => { throw new Error("rollout unavailable"); });
+    runtime = await P4ActiveSidecarRuntime.create(decision.dependencies);
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "ERROR", diagnostic: expect.stringContaining("ROLLOUT_DECISION_FAILED") });
+    runtime.close(); decision.projection.close();
+  });
+
+  it("acknowledges exact delivery, reuses the persisted receipt and gates eligibility", async () => {
+    const values = await resources();
+    forceDecision(values.rollout, { stateRevision: 2, policyRevision: 2, mode: "ACTIVE", reasonCode: "ACTIVE_CANARY_INCLUDED" });
+    const runtime = await P4ActiveSidecarRuntime.create(values.dependencies);
+    const first = await runtime.handleHook(hook());
+    if (first.hookEventName !== "UserPromptSubmit" || first.attemptId === undefined) throw new Error("expected a persisted UserPrompt attempt");
+    const attemptId = first.attemptId;
+    expect(runtime.acknowledgeDelivery({ attemptId, expectedRevision: 1, deliveryEvidenceRef: "hook-client:receipt-1", deliveredAt: now })).toMatchObject({ revision: 2, deliveryEvidenceRef: "hook-client:receipt-1" });
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "INJECTED", attemptId, deliveryAcknowledged: true });
+    await expect(runtime.inspectKnowledgeEligibility({ assetId: "knowledge-1", version: 1, scopeKey: JSON.stringify({ level: "PROJECT", projectId: "project-a" }) })).resolves.toMatchObject({ exists: true, current: true, scopeMatched: true, statusEligible: true, suppressed: false });
+    await expect(runtime.inspectKnowledgeEligibility({ assetId: "missing", version: 1, scopeKey: "not-json" })).resolves.toMatchObject({ exists: false, current: false, scopeMatched: false });
+    const controller = new AbortController(); controller.abort(new Error("cancelled"));
+    await expect(runtime.inspectKnowledgeEligibility({ assetId: "knowledge-1", version: 1, scopeKey: "not-json", signal: controller.signal })).rejects.toThrow("cancelled");
+    runtime.close(); values.projection.close();
+  });
+
+  it("fails closed to ASK_USER when closure evidence is unavailable or absent and passes complete evidence", async () => {
+    const unavailable = await resources({ closureEvidence: { load: async () => { throw new Error("evidence down"); } } });
+    let runtime = await P4ActiveSidecarRuntime.create(unavailable.dependencies);
+    await expect(runtime.handleHook(stop())).resolves.toMatchObject({ status: "UNKNOWN", decision: "ASK_USER", diagnostic: expect.stringContaining("EVIDENCE_UNAVAILABLE") });
+    runtime.close(); unavailable.projection.close();
+
+    const absent = await resources({ closureEvidence: { load: async () => ({ present: { taskContract: false, diff: false, tests: false, toolResults: false }, interaction: { turnOrdinal: 1, history: [] } }) } });
+    runtime = await P4ActiveSidecarRuntime.create(absent.dependencies);
+    await expect(runtime.handleHook(stop())).resolves.toMatchObject({ status: "UNKNOWN", decision: "ASK_USER", missingEvidence: ["TASK_CONTRACT", "DIFF", "TESTS", "TOOL_RESULTS"] });
+    runtime.close(); absent.projection.close();
+
+    const complete = await resources();
+    runtime = await P4ActiveSidecarRuntime.create(complete.dependencies);
+    await expect(runtime.handleHook(stop())).resolves.toMatchObject({ decision: "PASS", audit: { decision: "PASS" } });
+    runtime.close(); complete.projection.close();
+  });
 });

@@ -401,4 +401,75 @@ describe("ActiveKnowledgeInjectionRuntime", () => {
     expect(global).toMatchObject({ status: "SHADOWED", attempt: { envelope: { items: [{ scope: { level: "GLOBAL" } }] } } });
     globalValues.audits.close(); globalValues.feedback.close();
   });
+
+  it("explains every fail-closed eligibility dimension without leaking excluded assets", async () => {
+    const values = resources();
+    const scope = JSON.stringify({ level: "TASK", projectId: "project-a", taskId: "turn-1" });
+    values.feedback.record({
+      eventId: "feedback-matrix-suppress",
+      assetId: "knowledge-feedback-suppressed",
+      scopeKey: scope,
+      action: "SUPPRESS",
+      traceId: "trace-matrix",
+      actor: "operator",
+      occurredAt: fixedNow,
+    });
+    const ids = [
+      "knowledge-missing",
+      "knowledge-stale",
+      "knowledge-wrong-scope",
+      "knowledge-status-blocked",
+      "knowledge-store-suppressed",
+      "knowledge-feedback-suppressed",
+    ];
+    const candidates = ids.map((id, index) => ({
+      ...reranked(asset({
+        id,
+        subjectKey: `symbol:${id}`,
+        title: id,
+        contentHash: `sha256:${id}`,
+        symbols: [id],
+      })),
+      rank: index + 1,
+      rerank: { applied: false, originalRank: index + 1, reasonCodes: ["DETERMINISTIC_ORDER"] },
+    }));
+    const matrixRetrieval: ActiveKnowledgeRetrievalPort = {
+      retrieve: async (request) => ({
+        runId: "run-matrix",
+        traceId: "trace-matrix",
+        queryContext: query(request.prompt),
+        retrieval: {
+          items: candidates.map((candidate) => ({
+            asset: candidate.asset,
+            rank: candidate.rank,
+            score: 1,
+            scopeMatched: true,
+            contributions: candidate.contributions,
+          })),
+          diagnostics: [],
+        },
+        rerank: { items: candidates, diagnostics: [] },
+        candidates,
+      }),
+    };
+    const matrixEligibility: KnowledgeEligibilityPort = {
+      inspect: ({ assetId }) => ({
+        exists: assetId !== "knowledge-missing",
+        currentVersion: 3,
+        current: assetId !== "knowledge-stale",
+        scopeMatched: assetId !== "knowledge-wrong-scope",
+        statusEligible: assetId !== "knowledge-status-blocked",
+        suppressed: assetId === "knowledge-store-suppressed",
+      }),
+    };
+    const rollout = new InjectionRolloutController();
+    rollout.activate(1, "SHADOW");
+    const result = await runtime(
+      { retrieval: matrixRetrieval, rollout, ...values },
+      matrixEligibility,
+    ).handle(input());
+    expect(result).toMatchObject({ status: "NO_CONTEXT", attempt: { envelope: { items: [] } } });
+    expect(JSON.stringify(result)).not.toContain("knowledge-missing");
+    values.audits.close(); values.feedback.close();
+  });
 });

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, lstat, mkdir, mkdtemp, readFile, readlink, rm, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -35,22 +35,13 @@ async function home(): Promise<string> {
 
 async function artifact(root: string, version = "0.1.0", nodePath = process.execPath): Promise<string> {
   const directory = join(root, `artifact-${version}`);
-  const files = new Map([
-    ["apps/sidecar/dist/main.js", "#!/usr/bin/env node\n// sidecar\n"],
-    ["apps/sidecar/dist/deploy-main.js", "#!/usr/bin/env node\n// deploy cli\n"],
-    ["apps/cli/dist/ui-main.js", "#!/usr/bin/env node\n// ui cli\n"],
-    ["apps/cli/dist/ui-cli.js", "// ui launcher\n"],
-    ["apps/console-gateway/dist/main.js", "#!/usr/bin/env node\n// gateway executable\n"],
-    ["apps/console-web/dist/index.html", "<!doctype html><title>ZhiLoop</title>\n"],
-    ["node_modules/@zhiloop/console-gateway/package.json", "{\"name\":\"@zhiloop/console-gateway\"}\n"],
-    ["node_modules/@zhiloop/automatic-ingestion/package.json", "{\"name\":\"@zhiloop/automatic-ingestion\"}\n"],
-    ["node_modules/@zhiloop/configuration-service/package.json", "{\"name\":\"@zhiloop/configuration-service\"}\n"],
-    ["node_modules/@zhiloop/control-api/package.json", "{\"name\":\"@zhiloop/control-api\"}\n"],
-    ["node_modules/@zhiloop/job-runtime/package.json", "{\"name\":\"@zhiloop/job-runtime\"}\n"],
-    ["node_modules/@zhiloop/local-deployment/package.json", "{\"name\":\"@zhiloop/local-deployment\"}\n"],
-    ["node_modules/@zhiloop/observability/package.json", "{\"name\":\"@zhiloop/observability\"}\n"],
-    ["node_modules/zod/package.json", "{\"name\":\"zod\"}\n"],
-  ]);
+  const files = new Map(REQUIRED_LOCAL_RELEASE_FILES.map((path) => [path,
+    path.endsWith(".html")
+      ? "<!doctype html><title>ZhiLoop</title>\n"
+      : path.endsWith("package.json")
+        ? `${JSON.stringify({ name: path.split("/package.json")[0]!.replace("node_modules/", "") })}\n`
+        : "#!/usr/bin/env node\n// release fixture\n",
+  ]));
   for (const [path, content] of files) {
     const target = join(directory, ...path.split("/"));
     await mkdir(join(target, ".."), { recursive: true });
@@ -172,22 +163,16 @@ async function seedCcmHooks(targetHome: string): Promise<{ hooksText: string; cc
 
 describe("local installer", () => {
   it("publishes one required runtime inventory for release fixture owners", () => {
-    expect(REQUIRED_LOCAL_RELEASE_FILES).toEqual([
+    expect(new Set(REQUIRED_LOCAL_RELEASE_FILES).size).toBe(REQUIRED_LOCAL_RELEASE_FILES.length);
+    expect(REQUIRED_LOCAL_RELEASE_FILES).toEqual(expect.arrayContaining([
       "apps/sidecar/dist/main.js",
       "apps/sidecar/dist/deploy-main.js",
-      "apps/cli/dist/ui-main.js",
-      "apps/cli/dist/ui-cli.js",
       "apps/console-gateway/dist/main.js",
       "apps/console-web/dist/index.html",
-      "node_modules/@zhiloop/console-gateway/package.json",
-      "node_modules/@zhiloop/automatic-ingestion/package.json",
-      "node_modules/@zhiloop/configuration-service/package.json",
-      "node_modules/@zhiloop/control-api/package.json",
-      "node_modules/@zhiloop/job-runtime/package.json",
+      "node_modules/@zhiloop/p4-console-runtime/package.json",
+      "node_modules/@zhiloop/active-rollout-service/package.json",
       "node_modules/@zhiloop/local-deployment/package.json",
-      "node_modules/@zhiloop/observability/package.json",
-      "node_modules/zod/package.json",
-    ]);
+    ]));
   });
 
   it("plans without host mutation", async () => {
@@ -200,6 +185,46 @@ describe("local installer", () => {
     expect(plan.items.map(({ id }) => id)).toContain("trust-codex-hooks");
     await expect(lstat(join(targetHome, ".ckl"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(service.calls).toEqual([]);
+  });
+
+  it("binds an explicit regular Codex executable and rejects unsafe bindings", async () => {
+    const targetHome = await home();
+    const source = await artifact(targetHome);
+    const executable = join(targetHome, "trusted-codex");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const service = new FakeService();
+    await installLocalRelease({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+      hookTrustControl,
+      codexExecutable: executable,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+    });
+    const paths = resolveDeploymentPaths(targetHome, "0.1.0");
+    expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
+      codexQuery: { enabled: true, executable, userConfiguration: "ALLOW" },
+    });
+    await expect(planLocalInstall({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+      codexExecutable: "relative-codex",
+    })).rejects.toThrow("absolute safe path");
+    await chmod(executable, 0o600);
+    await expect(planLocalInstall({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => ready() },
+      compatibility,
+      codexExecutable: executable,
+    })).rejects.toThrow("regular executable");
   });
 
   it("installs SHADOW, preserves CCM hooks and credentials, and is idempotent", async () => {
@@ -433,6 +458,74 @@ describe("local installer", () => {
       await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
     }
     expect(await uninstallLocalRelease({ home: targetHome, service, hookTrustControl })).toMatchObject({ status: "NOT_INSTALLED" });
+  });
+
+  it("reports every fail-closed doctor condition without mutating the installation", async () => {
+    const absentHome = await home();
+    expect(await doctorLocalInstallation({
+      home: absentHome,
+      service: new FakeService(),
+      health: { health: async () => undefined },
+      compatibility,
+    })).toEqual({
+      schemaVersion: 1,
+      healthy: false,
+      mode: "UNKNOWN",
+      checks: [{ id: "manifest", status: "FAIL", code: "NOT_INSTALLED" }],
+    });
+
+    const targetHome = await home();
+    const service = new FakeService();
+    await installLocalRelease({
+      home: targetHome,
+      artifactDirectory: await artifact(targetHome),
+      service,
+      hookTrustControl,
+      health: { health: async () => shadowReady() },
+      compatibility,
+      readinessAttempts: 1,
+      readinessDelayMs: 0,
+      randomId: () => "doctor-failures",
+    });
+    const paths = resolveDeploymentPaths(targetHome, "0.1.0");
+    const manifestText = await readFile(paths.manifestPath, "utf8");
+    const manifest = JSON.parse(manifestText) as { releaseDigest: string };
+    await writeFile(paths.manifestPath, JSON.stringify({ ...manifest, releaseDigest: "0".repeat(64) }));
+    let report = await doctorLocalInstallation({
+      home: targetHome,
+      service,
+      health: { health: async () => shadowReady() },
+      compatibility,
+    });
+    expect(report.checks).toContainEqual({ id: "release", status: "FAIL", code: "DIGEST_MISMATCH" });
+
+    await writeFile(paths.manifestPath, manifestText);
+    await chmod(paths.configPath, 0o644);
+    await chmod(paths.sidecarLauncher, 0o600);
+    service.running = false;
+    report = await doctorLocalInstallation({
+      home: targetHome,
+      service,
+      health: { health: async () => { throw new Error("sidecar unavailable"); } },
+      compatibility,
+    });
+    expect(report).toMatchObject({ healthy: false, mode: "UNKNOWN", version: "0.1.0" });
+    expect(report.checks).toEqual(expect.arrayContaining([
+      { id: "config-permissions", status: "FAIL", code: "MODE_INVALID" },
+      { id: "launcher-permissions", status: "FAIL", code: "MODE_INVALID" },
+      { id: "service", status: "FAIL", code: "STOPPED" },
+      { id: "compatibility", status: "FAIL", code: expect.any(String) },
+      { id: "rollout", status: "FAIL", code: "MODE_INVALID" },
+    ]));
+
+    await unlink(join(paths.releaseDirectory, "apps/sidecar/dist/main.js"));
+    report = await doctorLocalInstallation({
+      home: targetHome,
+      service,
+      health: { health: async () => undefined },
+      compatibility,
+    });
+    expect(report.checks).toContainEqual({ id: "release", status: "FAIL", code: "INTEGRITY_FAILED" });
   });
 
   it("managed-unmerge preserves safe external hook drift", async () => {

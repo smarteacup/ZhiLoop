@@ -10,6 +10,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/control-api" },
-    { "path": "../../packages/p3-console-runtime" }
+    { "path": "../../packages/p3-console-runtime" },
+    { "path": "../../packages/p4-console-runtime" }
   ]
 }

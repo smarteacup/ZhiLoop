@@ -200,6 +200,9 @@ export interface P2ProductionCompositionOptions {
   readonly compilerTimeoutMs: number;
   readonly compilerBatchSize: number;
   readonly compiler?: KnowledgeExtractionPort;
+  readonly compilerExecutable?: string;
+  readonly compilerModel?: string;
+  readonly compilerIgnoreUserConfig?: boolean;
 }
 
 /** Owns the P2 Markdown/Registry/index boundary shared by compile and governance. */
@@ -227,10 +230,16 @@ export class P2ProductionComposition {
         if (snapshot === undefined || snapshot.sessionId !== request.sessionId || snapshot.identityHash !== request.sourceVersion) {
           throw Object.assign(new Error("snapshot identity is unavailable"), { retryable: false, code: "SNAPSHOT_IDENTITY_MISMATCH" });
         }
-        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_SNAPSHOT_RECORDS) {
+        // The worker requests max+1 as an overflow sentinel so this adapter can
+        // distinguish an exact-boundary snapshot from a truncated oversized one.
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_SNAPSHOT_RECORDS + 1) {
           throw Object.assign(new Error("knowledge worker snapshot limit is invalid"), { retryable: false, code: "SNAPSHOT_LIMIT_INVALID" });
         }
-        const boundedRecords = readP2SnapshotRecords(options.ledger, snapshot, limit + 1);
+        const boundedRecords = readP2SnapshotRecords(
+          options.ledger,
+          snapshot,
+          limit === MAX_SNAPSHOT_RECORDS + 1 ? limit : limit + 1,
+        );
         if (boundedRecords.length > limit) {
           throw Object.assign(new Error("snapshot exceeds the bounded knowledge worker input"), {
             retryable: false,
@@ -293,6 +302,9 @@ export class P2ProductionComposition {
       cwd: options.stateDirectory,
       timeoutMs: options.compilerTimeoutMs,
       maxDiagnosticRuns: 100,
+      ...(options.compilerExecutable === undefined ? {} : { executable: options.compilerExecutable }),
+      ...(options.compilerModel === undefined ? {} : { model: options.compilerModel }),
+      ...(options.compilerIgnoreUserConfig === undefined ? {} : { ignoreUserConfig: options.compilerIgnoreUserConfig }),
     });
     return new P2ProductionComposition(options, new MvpKnowledgeCompiler({ model }));
   }

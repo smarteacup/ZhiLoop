@@ -31,7 +31,7 @@ function ready() {
     schemaVersion: 1,
     status: "READY",
     pluginVersion: "0.1.0",
-    sidecarVersion: "0.2.1",
+    sidecarVersion: "0.3.1",
     protocolVersion: 1,
     hookSchemaVersion: "codex-hooks-v1",
     appServerSchemaVersion: "codex-app-server-v2",
@@ -108,6 +108,7 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
   try {
     await mkdir(path.join(home, ".codex"), { recursive: true });
     await mkdir(path.join(home, ".ccm"), { recursive: true });
+    await writeFile(path.join(home, ".codex", "config.toml"), "[features]\nhooks = true\ncodex_hooks = true\n");
     const originalHooks = `${JSON.stringify({ hooks: {
       Stop: [{ hooks: [{ type: "command", command: "/node ~/.ccm/codex-hook-handler.js" }] }],
       UserPromptSubmit: [{ hooks: [{ type: "command", command: "env CCM_HOOK_PLATFORM=codex /node ~/.ccm/prompt-security-hook.js" }] }],
@@ -237,8 +238,8 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     assert.equal(commitResponse.status, 200);
     const committed = (await commitResponse.json()).result;
     assert.equal(committed.appendedEvents, 3);
-    assert.equal(committed.knowledgeCompileStage.status, "DISABLED");
-    assert.equal(committed.knowledgeCompileStage.reasonCode, "KNOWLEDGE_WORKER_NOT_COMPOSED");
+    assert.equal(committed.knowledgeCompileStage.status, "PENDING");
+    assert.equal(committed.knowledgeCompileStage.reasonCode, "NOT_APPLICABLE");
     assert.deepEqual(await readFile(transcriptPath), transcriptBefore);
     consoleProcess.kill("SIGTERM");
     await new Promise((resolve) => consoleProcess.once("close", resolve));

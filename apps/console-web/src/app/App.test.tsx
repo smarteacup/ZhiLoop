@@ -4,6 +4,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ConsoleApi } from "../api/client.js";
+import { p4Api } from "../features/p4/test-fixtures.js";
 import { App } from "./App.js";
 
 const timestamp = "2026-08-03T12:00:00.000Z";
@@ -136,5 +137,13 @@ describe("Console application shell", () => {
     expect(await screen.findByRole("heading", { name: "召回知识" })).toBeTruthy();
     expect(screen.getByText(/P3 结果始终是 SHADOW/u)).toBeTruthy();
     expect(screen.queryByText(/P3 实现后启用/u)).toBeNull();
+  });
+
+  it("routes a session-scoped P4 console with the real injection panel", async () => {
+    window.location.hash = "#/closure/session-1";
+    render(<App api={{ ...api, ...p4Api() }} />);
+    expect(await screen.findByRole("heading", { name: "Context Envelope 与 MCP 展开" })).toBeTruthy();
+    expect(screen.getByText(/attempt-shadow/u)).toBeTruthy();
+    expect(screen.queryByText(/P4 实现后启用/u)).toBeNull();
   });
 });

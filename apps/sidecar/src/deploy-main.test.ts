@@ -93,7 +93,7 @@ describe("deployment CLI", () => {
     const maliciousNode = join(maliciousRoot, "node");
     await writeFile(maliciousNode, `#!/bin/sh\ntouch ${JSON.stringify(maliciousMarker)}\nexit 99\n`, { mode: 0o755 });
     const value = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       nodePath: maliciousNode,
       deployMain: "process.stdout.write(JSON.stringify({runtime:'artifact',args:process.argv.slice(2)}));\n",
     });
@@ -136,7 +136,7 @@ describe("deployment CLI", () => {
     expect(JSON.parse(sameOutput.value())).toMatchObject({ mode: "SHADOW", version: "0.2.1" });
 
     const artifactLocal = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       deployMain: "process.stdout.write('unexpected delegation');\n",
     });
     const localOutput = sink();
@@ -146,13 +146,13 @@ describe("deployment CLI", () => {
       currentVersion: "0.2.1",
       currentEntrypoint: join(artifactLocal.artifact, "apps", "sidecar", "dist", "deploy-main.js"),
     })).toBe(0);
-    expect(JSON.parse(localOutput.value())).toMatchObject({ mode: "SHADOW", version: "0.3.0" });
+    expect(JSON.parse(localOutput.value())).toMatchObject({ mode: "SHADOW", version: "0.3.1" });
   });
 
   it("never executes a tampered artifact", async () => {
     const marker = join(tmpdir(), `zhiloop-unverified-${process.pid}-${Date.now()}`);
     const value = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       deployMain: `import { writeFile } from 'node:fs/promises'; await writeFile(${JSON.stringify(marker)}, 'executed');\n`,
     });
     await appendFile(join(value.artifact, "apps", "sidecar", "dist", "deploy-main.js"), "// tampered\n");
@@ -164,7 +164,7 @@ describe("deployment CLI", () => {
 
     const incompatibleMarker = `${marker}-incompatible`;
     const incompatible = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       pluginVersion: "9.0.0",
       deployMain: `import { writeFile } from 'node:fs/promises'; await writeFile(${JSON.stringify(incompatibleMarker)}, 'executed');\n`,
     });
@@ -176,7 +176,7 @@ describe("deployment CLI", () => {
 
   it("preserves child exit codes and bounds delegated timeout and output", async () => {
     const failed = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       deployMain: "process.stdout.write('child-out'); process.stderr.write('child-err'); process.exitCode = 42;\n",
     });
     const failedStdout = sink();
@@ -188,7 +188,7 @@ describe("deployment CLI", () => {
     expect(failedStderr.value()).toBe("child-err");
 
     const noisy = await fixture({
-      version: "0.3.0",
+      version: "0.3.1",
       deployMain: "process.stdout.write('x'.repeat(10_000)); process.stderr.write('y'.repeat(10_000)); setInterval(() => {}, 1_000);\n",
     });
     const noisyStdout = sink();
@@ -204,7 +204,7 @@ describe("deployment CLI", () => {
     expect(Buffer.byteLength(noisyStderr.value())).toBeLessThanOrEqual(128);
     expect(noisyStderr.value()).toContain("DELEGATED_DEPLOYMENT_OUTPUT_LIMIT");
 
-    const hanging = await fixture({ version: "0.3.0", deployMain: "setInterval(() => {}, 1_000);\n" });
+    const hanging = await fixture({ version: "0.3.1", deployMain: "setInterval(() => {}, 1_000);\n" });
     const hangingStderr = sink();
     expect(await runDeploymentCli([
       "upgrade", "--home", hanging.home, "--artifact", hanging.artifact,

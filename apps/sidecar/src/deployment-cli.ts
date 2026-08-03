@@ -135,6 +135,7 @@ export async function runDeploymentCli(
     const artifact = option(args, "--artifact");
     if (artifact === undefined) throw new Error(`${command} requires --artifact <absolute-release-directory>`);
     const artifactDirectory = resolve(artifact);
+    const codexExecutable = option(args, "--codex-executable");
     if (command === "upgrade") {
       const delegation = await delegateUpgradeToVerifiedArtifact({
         artifactDirectory,
@@ -156,6 +157,7 @@ export async function runDeploymentCli(
       service,
       health: probe(home),
       compatibility: SIDECAR_COMPATIBILITY,
+      ...(codexExecutable === undefined ? {} : { codexExecutable }),
     };
     const plan = await planLocalInstall(options);
     if (!apply) {

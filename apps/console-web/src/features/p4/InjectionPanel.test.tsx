@@ -13,7 +13,7 @@ describe("InjectionPanel", () => {
     render(<InjectionPanel api={p4Api()} sessionId="session-1" />);
     expect(await screen.findByText("计划注入（未进入模型上下文）")).toBeTruthy();
     expect(screen.getByText("实际进入模型上下文")).toBeTruthy();
-    expect(screen.getAllByText("INJECTED")).toHaveLength(1);
+    expect(screen.getAllByText("已注入")).toHaveLength(1);
     expect(screen.getByText("delivery-evidence-1")).toBeTruthy();
   });
 

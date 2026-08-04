@@ -120,6 +120,8 @@ function event(sequence = 1, sessionId = "session-a"): EventMetadata {
     contentHash: HASH,
     redactionCount: 1,
     payloadPurged: false,
+    contentPreview: `脱敏内容 ${sequence}`,
+    contentTruncated: false,
   };
 }
 
@@ -184,7 +186,25 @@ describe("SqliteOperationalReadModel migrations", () => {
         rebuilt_at TEXT
       );
       INSERT INTO operational_read_model_meta(component, migration_version)
-      VALUES ('operational-read-model', 0);
+      VALUES ('operational-read-model', 2);
+      CREATE TABLE projected_event_metadata (
+        sequence INTEGER PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE,
+        event_type TEXT NOT NULL,
+        source TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        turn_id TEXT,
+        occurred_at TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        redaction_count INTEGER NOT NULL,
+        payload_purged INTEGER NOT NULL
+      );
+      INSERT INTO projected_event_metadata(
+        sequence, event_id, event_type, source, session_id, occurred_at,
+        correlation_id, content_hash, redaction_count, payload_purged
+      ) VALUES (1, 'old-event', 'user.prompted', 'codex', 'session-a',
+        '${NOW}', 'old-correlation', '${HASH}', 1, 0);
     `);
     seed.close();
 
@@ -196,7 +216,7 @@ describe("SqliteOperationalReadModel migrations", () => {
       "SELECT migration_version FROM operational_read_model_meta WHERE component = 'operational-read-model'",
     ).get() as { migration_version: number };
     const pragma = checked.prepare("PRAGMA user_version").get() as { user_version: number };
-    expect(version.migration_version).toBe(2);
+    expect(version.migration_version).toBe(3);
     expect(pragma.user_version).toBe(77);
     expect(checked.prepare(
       "SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='session_projections'",
@@ -204,6 +224,9 @@ describe("SqliteOperationalReadModel migrations", () => {
     expect(checked.prepare(
       "SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='capture_command_receipts'",
     ).get()).toEqual({ count: 1 });
+    expect((checked.prepare("PRAGMA table_info(projected_event_metadata)").all() as Array<{ name: string }>).map((column) => column.name))
+      .toEqual(expect.arrayContaining(["content_preview", "content_truncated"]));
+    expect(checked.prepare("SELECT count(*) AS count FROM projected_event_metadata").get()).toEqual({ count: 0 });
     checked.close();
   });
 

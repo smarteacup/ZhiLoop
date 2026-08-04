@@ -239,6 +239,8 @@ describe("UnixSocketControlClient", () => {
             projectedEvents: 0,
             ignoredRecords: 0,
             eventTypes: {},
+            items: [],
+            itemsTruncated: false,
             cursor: { byteOffset: 0, lineNumber: 0 },
             hasMore: false,
             expiresAt: NOW,
@@ -251,6 +253,9 @@ describe("UnixSocketControlClient", () => {
             previewRevision: request.previewRevision,
             appendedEvents: 0,
             duplicateEvents: 0,
+            appendedEventIds: [],
+            duplicateEventIds: [],
+            eventIdsTruncated: false,
             cursor: { byteOffset: 0, lineNumber: 0 },
             knowledgeCompileStage: {
               schemaVersion: 1,

@@ -1,6 +1,6 @@
 import type { SidecarCompatibilityPolicy } from "@zhiloop/plugin-runtime";
 
-export const SIDECAR_VERSION = "0.3.10";
+export const SIDECAR_VERSION = "0.3.11";
 
 export const SIDECAR_COMPATIBILITY: SidecarCompatibilityPolicy = Object.freeze({
   pluginVersion: "0.1.0",

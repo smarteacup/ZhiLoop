@@ -40,7 +40,7 @@ function unavailableTitle(error: unknown): string {
     : "Sidecar 暂时不可用";
 }
 
-function CommitResult({ result }: { readonly result: CaptureCommitResult }): React.JSX.Element {
+function CommitResult({ result, onViewLedger }: { readonly result: CaptureCommitResult; readonly onViewLedger?: () => void }): React.JSX.Element {
   const ledgerMessage = result.appendedEvents > 0
     ? `已向 Ledger 写入 ${result.appendedEvents} 条事件，跳过 ${result.duplicateEvents} 条重复事件。`
     : result.duplicateEvents > 0
@@ -59,6 +59,13 @@ function CommitResult({ result }: { readonly result: CaptureCommitResult }): Rea
     {result.knowledgeCompileStage.status === "DISABLED"
       ? <p className="muted">本次仅完成对话事件沉淀到 Ledger；生产知识提炼尚未执行。</p>
       : <p className="muted">知识阶段状态来自 Sidecar 的实际 StageSnapshot，不代表额外的隐式发布。</p>}
+    <details>
+      <summary>本次 Ledger 写入追踪</summary>
+      {result.appendedEventIds.length === 0 ? <p className="muted">没有新增事件 ID。</p> : <ul>{result.appendedEventIds.map((eventId) => <li key={eventId}><code>{eventId}</code> · 本次新增</li>)}</ul>}
+      {result.duplicateEventIds.length === 0 ? undefined : <ul>{result.duplicateEventIds.map((eventId) => <li key={eventId}><code>{eventId}</code> · 已存在</li>)}</ul>}
+      {result.eventIdsTruncated ? <p className="muted">事件 ID 列表已截断，可在 Ledger 内容页继续查看。</p> : undefined}
+    </details>
+    {onViewLedger === undefined ? undefined : <button type="button" className="secondary-button" onClick={onViewLedger}>查看 Ledger 已沉淀内容</button>}
   </div>;
 }
 
@@ -75,6 +82,16 @@ function PreviewDetails({ preview }: { readonly preview: CapturePreview }): Reac
     {eventTypes.length === 0 ? <p className="muted">没有识别到可采集事件类型。</p> : <ul className="capture-event-types" aria-label="预览事件类型">
       {eventTypes.map(([eventType, count]) => <li key={eventType}><span>{eventType}</span><strong>{count}</strong></li>)}
     </ul>}
+    {preview.items.length === 0 ? <p className="muted">本次没有待写入的事件内容。</p> : <section className="capture-content-list" aria-labelledby="capture-content-heading">
+      <h4 id="capture-content-heading">将写入 Ledger 的脱敏内容</h4>
+      {preview.items.map((item) => <article key={item.eventId} className="capture-content-item">
+        <div><strong>{item.eventType}</strong><time>{new Date(item.occurredAt).toLocaleString()}</time></div>
+        <small>{item.turnId ?? "无 Turn"} · {item.eventId}</small>
+        <pre>{item.contentPreview}</pre>
+        {item.contentTruncated ? <p className="muted">单条内容已截断。</p> : undefined}
+      </article>)}
+      {preview.itemsTruncated ? <p className="muted">预览最多展示 100 条事件；其余内容可在提交后的 Ledger 内容页查看。</p> : undefined}
+    </section>}
     <p className="muted">预览有效期至 {new Date(preview.expiresAt).toLocaleString()}。正式提交前不会修改 Ledger 或 Codex 会话。</p>
   </div>;
 }
@@ -83,10 +100,14 @@ export function CapturePanel({
   api,
   sessionId,
   sourceAvailable,
+  onCommitted,
+  onViewLedger,
 }: {
   readonly api: ConsoleApi;
   readonly sessionId: string;
   readonly sourceAvailable: boolean;
+  readonly onCommitted?: () => void;
+  readonly onViewLedger?: () => void;
 }): React.JSX.Element {
   const [state, setState] = useState<CaptureState>({ status: "idle" });
 
@@ -119,6 +140,7 @@ export function CapturePanel({
         idempotencyKey: commitKey(capturePreview),
       });
       setState({ status: "committed", preview: capturePreview, result });
+      onCommitted?.();
     } catch (error) {
       if (isStale(error)) {
         setState({ status: "stale", message: "预览后会话来源发生变化，旧预览未提交。请重新预览。" });
@@ -145,7 +167,7 @@ export function CapturePanel({
     {state.status === "idle" ? <p className="muted">先生成无副作用预览，核对新增、忽略和目标游标。</p> : undefined}
     {state.status === "previewing" ? <p role="status" aria-live="polite">正在生成采集预览…</p> : undefined}
     {activePreview !== undefined ? <PreviewDetails preview={activePreview} /> : undefined}
-    {state.status === "committed" ? <CommitResult result={state.result} /> : undefined}
+    {state.status === "committed" ? <CommitResult result={state.result} {...(onViewLedger === undefined ? {} : { onViewLedger })} /> : undefined}
     {state.status === "stale" ? <div className="inline-alert warning" role="alert"><strong>预览已失效</strong><p>{state.message}</p></div> : undefined}
     {state.status === "unavailable" ? <div className="inline-alert warning" role="alert"><strong>{state.title}</strong><p>{state.message}。没有写入任何未确认内容。</p></div> : undefined}
     {state.status === "error" ? <div className="inline-alert error" role="alert"><strong>采集操作失败</strong><p>{state.message}</p></div> : undefined}

@@ -65,8 +65,8 @@ describe("typed Console API client", () => {
   });
 
   it("uses the unified capture command endpoint and strict preview/commit schemas", async () => {
-    const preview = { schemaVersion: 1, sessionId: "session-1", previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 3, ignoredRecords: 1, eventTypes: { USER_PROMPT: 3 }, cursor: { byteOffset: 42, lineNumber: 4 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" };
-    const commit = { schemaVersion: 1, sessionId: "session-1", previewRevision: 7, appendedEvents: 3, duplicateEvents: 0, cursor: { byteOffset: 42, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: "session-1", stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } };
+    const preview = { schemaVersion: 1, sessionId: "session-1", previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 3, ignoredRecords: 1, eventTypes: { USER_PROMPT: 3 }, items: [{ eventId: "event-1", eventType: "USER_PROMPT", occurredAt: timestamp, contentPreview: "preview", contentTruncated: false }], itemsTruncated: false, cursor: { byteOffset: 42, lineNumber: 4 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" };
+    const commit = { schemaVersion: 1, sessionId: "session-1", previewRevision: 7, appendedEvents: 3, duplicateEvents: 0, appendedEventIds: ["event-1", "event-2", "event-3"], duplicateEventIds: [], eventIdsTruncated: false, cursor: { byteOffset: 42, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: "session-1", stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } };
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { dryRun: boolean };
       return envelope(body.dryRun ? preview : commit);

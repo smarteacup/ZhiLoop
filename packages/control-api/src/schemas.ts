@@ -520,6 +520,8 @@ export const eventMetadataSchema = z.strictObject({
   contentHash: sha256Schema,
   redactionCount: z.number().int().nonnegative(),
   payloadPurged: z.boolean(),
+  contentPreview: z.string().min(1).max(2_000).optional(),
+  contentTruncated: z.boolean().optional(),
 });
 
 export const sessionDetailSchema = z.strictObject({
@@ -606,6 +608,15 @@ export const diagnosticsSchema = z.strictObject({
   alerts: alertEvaluationSchema.optional(),
 });
 
+export const capturedEventContentSchema = z.strictObject({
+  eventId: safeId(),
+  eventType: z.string().min(1).max(120),
+  occurredAt: isoTimestampSchema,
+  turnId: turnIdSchema.optional(),
+  contentPreview: z.string().min(1).max(2_000),
+  contentTruncated: z.boolean(),
+});
+
 export const capturePreviewSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
   sessionId: sessionIdSchema,
@@ -614,6 +625,8 @@ export const capturePreviewSchema = z.strictObject({
   projectedEvents: z.number().int().nonnegative(),
   ignoredRecords: z.number().int().nonnegative(),
   eventTypes: z.record(z.string().min(1).max(120), z.number().int().nonnegative()),
+  items: z.array(capturedEventContentSchema).max(100),
+  itemsTruncated: z.boolean(),
   cursor: z.strictObject({
     byteOffset: z.number().int().nonnegative(),
     lineNumber: z.number().int().nonnegative(),
@@ -628,6 +641,9 @@ export const captureCommitResultSchema = z.strictObject({
   previewRevision: z.number().int().positive(),
   appendedEvents: z.number().int().nonnegative(),
   duplicateEvents: z.number().int().nonnegative(),
+  appendedEventIds: z.array(safeId()).max(100),
+  duplicateEventIds: z.array(safeId()).max(100),
+  eventIdsTruncated: z.boolean(),
   cursor: z.strictObject({
     byteOffset: z.number().int().nonnegative(),
     lineNumber: z.number().int().nonnegative(),

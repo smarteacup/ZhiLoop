@@ -50,6 +50,7 @@ import {
 } from "@zhiloop/session-extraction";
 
 import type { SidecarConfig } from "./config.js";
+import { boundedContentPreview } from "./capture-content.js";
 import type { SidecarHealthReport } from "./application.js";
 import { SIDECAR_VERSION } from "./metadata.js";
 
@@ -191,6 +192,7 @@ function eventMetadata(record: LedgerEventRecord): EventMetadata {
     contentHash,
     redactionCount: record.redactionCount,
     payloadPurged: record.payloadPurged,
+    ...(record.payloadPurged ? {} : boundedContentPreview(record.event.payload)),
   };
 }
 
@@ -744,6 +746,8 @@ export class SidecarControlPlane {
       projectedEvents: report.projectedEvents,
       ignoredRecords: report.ignoredRecords,
       eventTypes: { ...report.eventTypes },
+      items: report.sampledEvents.map((item) => ({ ...item })),
+      itemsTruncated: report.sampledEventsTruncated,
       cursor: { ...report.cursor },
       hasMore: report.hasMore,
       expiresAt: new Date(now + PREVIEW_TTL_MS).toISOString(),
@@ -816,6 +820,9 @@ export class SidecarControlPlane {
       previewRevision: request.previewRevision,
       appendedEvents: result.appendedEvents,
       duplicateEvents: result.duplicateEvents,
+      appendedEventIds: [...result.appendedEventIds],
+      duplicateEventIds: [...result.duplicateEventIds],
+      eventIdsTruncated: result.eventIdsTruncated,
       cursor: { ...result.cursor },
       knowledgeCompileStage: stage,
     };

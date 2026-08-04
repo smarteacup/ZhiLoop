@@ -118,7 +118,7 @@ describe("ConfigurationWorkspace", () => {
 
   it("does not synthesize validation success when the server reports NOT_VERIFIED", () => {
     render(<ConfigurationWorkspace viewModel={model({ validationStatus: "NOT_VERIFIED", validationReasonCode: "VALIDATION_EVIDENCE_MISSING" })} commands={commands().port} />);
-    expect(screen.getByText("NOT_VERIFIED")).toBeTruthy();
+    expect(screen.getByText("未验证")).toBeTruthy();
     expect(screen.getAllByText("VALIDATION_EVIDENCE_MISSING").length).toBeGreaterThan(0);
     expect((screen.getByRole("button", { name: "校验并原子激活" }) as HTMLButtonElement).disabled).toBe(true);
   });

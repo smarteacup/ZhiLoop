@@ -124,7 +124,16 @@ describe("Codex session capture service", () => {
     const sessionsRoot = await root();
     await transcript(sessionsRoot, "session-a");
     const ports = memoryPorts();
-    const service = new CodexSessionCaptureService(sessionsRoot, ports.sink, ports.cursors);
+    const service = new CodexSessionCaptureService(sessionsRoot, ports.sink, ports.cursors, {
+      projectEvent: (event) => ({
+        eventId: event.eventId,
+        eventType: event.eventType,
+        occurredAt: event.occurredAt,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        contentPreview: JSON.stringify(event.payload),
+        contentTruncated: false,
+      }),
+    });
 
     const preview = await service.capture({ sessionId: "session-a", dryRun: true });
     expect(preview).toMatchObject({
@@ -135,11 +144,14 @@ describe("Codex session capture service", () => {
       eventTypes: { "session.started": 1, "user.prompted": 1, "turn.stopped": 1 },
       knowledgeCompiled: false,
     });
+    expect(preview.sampledEvents.map((event) => event.eventType)).toEqual(["session.started", "user.prompted", "turn.stopped"]);
+    expect(preview.appendedEventIds).toEqual([]);
     expect(ports.events.size).toBe(0);
     expect(ports.cursorMap.size).toBe(0);
 
     const first = await service.capture({ sessionId: "session-a" });
-    expect(first).toMatchObject({ status: "CAPTURED", appendedEvents: 3, duplicateEvents: 0 });
+    expect(first).toMatchObject({ status: "CAPTURED", appendedEvents: 3, duplicateEvents: 0, eventIdsTruncated: false });
+    expect(first.appendedEventIds).toEqual(first.sampledEvents.map((event) => event.eventId));
     expect(ports.events.size).toBe(3);
     const second = await service.capture({ sessionId: "session-a" });
     expect(second).toMatchObject({ appendedEvents: 0, duplicateEvents: 0, projectedEvents: 0 });

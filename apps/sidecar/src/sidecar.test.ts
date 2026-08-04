@@ -61,7 +61,7 @@ async function writeRollout(config: SidecarConfig, sessionId: string): Promise<v
   await writeFile(join(directory, `rollout-${sessionId}.jsonl`), [
     rolloutRecord("session_meta", "2026-08-03T00:00:00.000Z", { id: sessionId, session_id: sessionId, cli_version: "0.145.0" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:01.000Z", { type: "task_started", turn_id: "turn-1" }),
-    rolloutRecord("event_msg", "2026-08-03T00:00:02.000Z", { type: "user_message", message: "capture me" }),
+    rolloutRecord("event_msg", "2026-08-03T00:00:02.000Z", { type: "user_message", message: "capture me sk-abcdefghijklmnop" }),
     rolloutRecord("event_msg", "2026-08-03T00:00:03.000Z", { type: "task_complete", turn_id: "turn-1", last_agent_message: "captured" }),
   ].join(""));
 }
@@ -200,7 +200,7 @@ describe("sidecar service", () => {
 
     expect(await requestSidecar(config.socketPath, { type: "health" }, 100)).toMatchObject({
       status: "READY",
-      sidecarVersion: "0.3.10",
+      sidecarVersion: "0.3.11",
       rolloutMode: "SHADOW",
       socketStatus: "READY",
     });
@@ -801,8 +801,13 @@ describe("sidecar service", () => {
         previewRevision: number;
         transcriptIdentityHash: string;
         projectedEvents: number;
+        items: Array<{ eventId: string; eventType: string; contentPreview: string; contentTruncated: boolean }>;
       };
       expect(preview).toMatchObject({ previewRevision: 1, projectedEvents: 3 });
+      expect(preview.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventType: "user.prompted", contentPreview: "capture me [REDACTED]", contentTruncated: false }),
+        expect.objectContaining({ eventType: "turn.stopped", contentPreview: "captured", contentTruncated: false }),
+      ]));
       expect(controlResult(await requestSidecar(config.socketPath, {
         schemaVersion: 1,
         requestId: "diagnostics-after-preview",
@@ -840,6 +845,9 @@ describe("sidecar service", () => {
       expect(first).toMatchObject({
         appendedEvents: 3,
         duplicateEvents: 0,
+        appendedEventIds: expect.arrayContaining(preview.items.map((item) => item.eventId)),
+        duplicateEventIds: [],
+        eventIdsTruncated: false,
         knowledgeCompileStage: { status: "PENDING", reasonCode: "NOT_APPLICABLE" },
       });
       const replay = controlResult(await requestSidecar(config.socketPath, { ...commit, requestId: "commit-request-retry" }, 1_000));
@@ -874,9 +882,12 @@ describe("sidecar service", () => {
         type: "session.events.list",
         sessionId: "session-controlled-capture",
         page: { limit: 10 },
-      }, 1_000)) as { items: unknown[] };
+      }, 1_000)) as { items: Array<{ eventId: string; contentPreview?: string; contentTruncated?: boolean }> };
       expect(events.items).toHaveLength(3);
-      expect(JSON.stringify(events)).not.toContain("capture me");
+      expect(events.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ contentPreview: "capture me [REDACTED]", contentTruncated: false }),
+        expect.objectContaining({ contentPreview: "captured", contentTruncated: false }),
+      ]));
     } finally {
       await stopSidecarServer(server, config.socketPath);
       await application.close();

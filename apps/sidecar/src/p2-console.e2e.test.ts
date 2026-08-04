@@ -102,7 +102,7 @@ describe("P2 Console real composition", () => {
     await runtime.createSnapshot({ ...legacyDraft, idempotencyKey: snapshotIdempotencyKey(legacyDraft) });
     const facade = new P2ConsoleRuntime({
       runtime, production, ledger, configurationHash: () => sha("configuration"),
-      inspectTranscriptSource: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: sha("transcript"), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 400, lineNumber: 4 }, hasMore: false, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+      inspectTranscriptSource: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: sha("transcript"), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, items: [], itemsTruncated: false, cursor: { byteOffset: 400, lineNumber: 4 }, hasMore: false, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
     });
     try {
       const revision = ledger.count();

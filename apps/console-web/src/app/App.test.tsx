@@ -56,8 +56,8 @@ const api: ConsoleApi = {
   jobs: async () => ({ items: [] }),
   diagnostics: async () => ({ schemaVersion: 1, observedAt: timestamp, ledgerSequence: 0, spoolDepth: 0, consumerLags: [], worker: { healthy: true, consumed: 0, produced: 0, retryableFailures: 0 }, storage: { healthy: true, databaseBytes: 4096 } }),
   configuration: async () => ({ view: { schemaVersion: 1, revision: 1, hash: "a".repeat(64), effective: configuration, sources: {} }, drafts: [], history: [] }),
-  previewCapture: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: "a".repeat(64), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, cursor: { byteOffset: 0, lineNumber: 0 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" }),
-  commitCapture: async (command) => ({ schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 0, duplicateEvents: 0, cursor: { byteOffset: 0, lineNumber: 0 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } }),
+  previewCapture: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: "a".repeat(64), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, items: [], itemsTruncated: false, cursor: { byteOffset: 0, lineNumber: 0 }, hasMore: false, expiresAt: "2099-08-03T12:00:00.000Z" }),
+  commitCapture: async (command) => ({ schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 0, duplicateEvents: 0, appendedEventIds: [], duplicateEventIds: [], eventIdsTruncated: false, cursor: { byteOffset: 0, lineNumber: 0 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] } }),
 };
 
 afterEach(() => cleanup());
@@ -69,7 +69,7 @@ describe("Console application shell", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "运行总览" })).toBeTruthy();
     expect(screen.getByText("conversation.ledger")).toBeTruthy();
-    expect(screen.getByText("SHADOW")).toBeTruthy();
+    expect(screen.getByText("影子模式")).toBeTruthy();
   });
 
   it("supports keyboard navigation and shows honest disabled capability state", async () => {
@@ -83,13 +83,13 @@ describe("Console application shell", () => {
     expect(screen.getByText(/CAPABILITY_NOT_REPORTED/)).toBeTruthy();
   });
 
-  it("shows read-only event metadata without rendering raw payload", async () => {
+  it("shows redacted Ledger content without rendering the raw payload", async () => {
     const user = userEvent.setup();
     window.location.hash = "#/sessions/session-1";
-    render(<App api={{ ...api, events: async () => ({ items: [{ schemaVersion: 1, sequence: 1, eventId: "event-1", eventType: "USER_PROMPT", source: "CODEX", sessionId: "session-1", occurredAt: timestamp, correlationId: "corr-1", contentHash: "a".repeat(64), redactionCount: 1, payloadPurged: false }] }) }} />);
-    await user.click(await screen.findByRole("tab", { name: "事件元数据" }));
+    render(<App api={{ ...api, events: async () => ({ items: [{ schemaVersion: 1, sequence: 1, eventId: "event-1", eventType: "USER_PROMPT", source: "CODEX", sessionId: "session-1", occurredAt: timestamp, correlationId: "corr-1", contentHash: "a".repeat(64), redactionCount: 1, payloadPurged: false, contentPreview: "请使用 [REDACTED] 完成采集", contentTruncated: false }] }) }} />);
+    await user.click(await screen.findByRole("tab", { name: "Ledger 内容" }));
     expect(screen.getByText("#1 · USER_PROMPT")).toBeTruthy();
-    expect(screen.getByText("仅展示脱敏索引，不展示原始 Prompt")).toBeTruthy();
+    expect(screen.getByText("请使用 [REDACTED] 完成采集")).toBeTruthy();
     expect(document.body.textContent).not.toContain("raw payload");
   });
 

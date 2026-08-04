@@ -4,6 +4,7 @@ import { locateCodexTranscript } from "./locator.js";
 import {
   SessionCaptureError,
   type CaptureCursorStore,
+  type CaptureEventSample,
   type CaptureEventSink,
   type CaptureServiceOptions,
   type CaptureSessionReport,
@@ -12,6 +13,7 @@ import {
 
 const DEFAULT_MAX_BATCHES = 16;
 const DEFAULT_APPEND_BATCH_SIZE = 500;
+const MAX_REPORTED_EVENTS = 100;
 
 function positive(value: number | undefined, fallback: number, maximum: number): number {
   const selected = value ?? fallback;
@@ -46,6 +48,11 @@ export class CodexSessionCaptureService {
     let ignoredRecords = 0;
     let hasMore: boolean;
     const eventTypes: Record<string, number> = {};
+    const sampledEvents: CaptureEventSample[] = [];
+    const appendedEventIds: string[] = [];
+    const duplicateEventIds: string[] = [];
+    let sampledEventsTruncated = false;
+    let eventIdsTruncated = false;
 
     do {
       if (batches >= this.#maxBatches) {
@@ -66,13 +73,26 @@ export class CodexSessionCaptureService {
       batches += 1;
       projectedEvents += result.value.events.length;
       ignoredRecords += result.value.ignoredRecords;
-      for (const event of result.value.events) eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1;
+      for (const event of result.value.events) {
+        eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1;
+        if (this.options.projectEvent !== undefined) {
+          if (sampledEvents.length < MAX_REPORTED_EVENTS) sampledEvents.push(this.options.projectEvent(event));
+          else sampledEventsTruncated = true;
+        }
+      }
       if (request.dryRun !== true) {
         for (let offset = 0; offset < result.value.events.length; offset += this.#appendBatchSize) {
-          const outcomes = this.sink.appendBatch(result.value.events.slice(offset, offset + this.#appendBatchSize));
-          for (const outcome of outcomes) {
+          const batch = result.value.events.slice(offset, offset + this.#appendBatchSize);
+          const outcomes = this.sink.appendBatch(batch);
+          for (let index = 0; index < outcomes.length; index += 1) {
+            const outcome = outcomes[index];
+            const event = batch[index];
+            if (outcome === undefined || event === undefined) continue;
+            const target = outcome.status === "appended" ? appendedEventIds : duplicateEventIds;
             if (outcome.status === "appended") appendedEvents += 1;
             else duplicateEvents += 1;
+            if (target.length < MAX_REPORTED_EVENTS) target.push(event.eventId);
+            else eventIdsTruncated = true;
           }
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
@@ -95,6 +115,11 @@ export class CodexSessionCaptureService {
       duplicateEvents,
       ignoredRecords,
       eventTypes: Object.freeze({ ...eventTypes }),
+      sampledEvents: Object.freeze([...sampledEvents]),
+      sampledEventsTruncated,
+      appendedEventIds: Object.freeze([...appendedEventIds]),
+      duplicateEventIds: Object.freeze([...duplicateEventIds]),
+      eventIdsTruncated,
       cursor: Object.freeze({ byteOffset: cursor.byteOffset, lineNumber: cursor.lineNumber }),
       hasMore,
       knowledgeCompiled: false,

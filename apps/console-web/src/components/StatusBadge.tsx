@@ -1,7 +1,77 @@
 const good = new Set(["READY", "SUCCEEDED", "CAPTURED_CURRENT", "INJECTED"]);
 const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE"]);
 
+const labels: Readonly<Record<string, string>> = Object.freeze({
+  ACCEPTED: "已接受",
+  ACTIVE: "已启用",
+  ASK_USER: "需要人工确认",
+  BLOCKED: "已阻塞",
+  BOUNDED: "有界",
+  CANCELLED: "已取消",
+  CAPTURED_CURRENT: "已采集至最新",
+  CAPTURED_PARTIAL: "部分采集",
+  COMPLETE: "完整",
+  COMPLETE_SNAPSHOT: "完整快照",
+  CRITICAL: "严重",
+  DEGRADED: "降级",
+  DISABLED: "已禁用",
+  DISCOVERED_NOT_CAPTURED: "待采集",
+  EFFECTIVE: "已生效",
+  ELIGIBLE: "符合条件",
+  ERROR: "错误",
+  FAILED: "失败",
+  HEALTHY: "健康",
+  IMPLEMENTED: "已实现",
+  INELIGIBLE: "不符合条件",
+  INJECTED: "已注入",
+  INVALID_INPUT: "输入无效",
+  NO_CONTEXT: "无可用上下文",
+  NOT_APPLICABLE: "不适用",
+  NOT_CONFIGURED: "未配置",
+  NOT_IMPLEMENTED: "未实现",
+  NOT_VERIFIED: "未验证",
+  OFF: "关闭",
+  OFFLINE: "离线",
+  PARTIAL: "部分完成",
+  PARTIAL_SNAPSHOT: "部分快照",
+  PASS: "通过",
+  PENDING: "等待中",
+  PROPOSED: "待确认",
+  PROVIDER_ERROR: "提供方错误",
+  POLLING: "轮询中",
+  QUEUED: "排队中",
+  READY: "就绪",
+  REJECTED: "已拒绝",
+  RECONNECTING: "重新连接中",
+  RESYNC_REQUIRED: "需要重新同步",
+  RETRY_WAIT: "等待重试",
+  RETRY_WITH_CONTEXT: "补充上下文后重试",
+  RETRY_WITH_CORRECTION: "修正后重试",
+  ROLLED_BACK: "已回滚",
+  RUNNING: "运行中",
+  SATISFIED: "已满足",
+  SHADOW: "影子模式",
+  SHADOWED: "影子投递",
+  SKIPPED: "已跳过",
+  SOURCE_UNAVAILABLE: "来源不可用",
+  STALE: "已过期",
+  STARTING: "启动中",
+  SUCCEEDED: "成功",
+  SUPERSEDED: "已替代",
+  SUPPRESSED: "已抑制",
+  TIMEOUT: "超时",
+  UNKNOWN: "未知",
+  UNSATISFIED: "未满足",
+  UNSUPPORTED: "不支持",
+  VERIFIED: "已验证",
+  WARNING: "警告",
+});
+
+export function statusLabel(status: string): string {
+  return labels[status] ?? status;
+}
+
 export function StatusBadge({ status }: { readonly status: string }): React.JSX.Element {
   const tone = good.has(status) ? "good" : warning.has(status) ? "warning" : status === "FAILED" || status === "ERROR" ? "bad" : "neutral";
-  return <span className={`status-tag ${tone}`}>{status}</span>;
+  return <span className={`status-tag ${tone}`} title={status}>{statusLabel(status)}</span>;
 }

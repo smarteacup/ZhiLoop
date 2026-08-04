@@ -32,6 +32,7 @@ import type { VersionedMcpRequest } from "@zhiloop/active-knowledge-runtime";
 import { ContextOrchestrator } from "@zhiloop/context-orchestrator";
 
 import type { SidecarConfig } from "./config.js";
+import { projectCaptureEvent } from "./capture-content.js";
 import { SidecarControlPlane, type CaptureExecutionPort } from "./control-plane.js";
 import { SafeDiagnosticLog } from "./diagnostic-log.js";
 import { SIDECAR_COMPATIBILITY, SIDECAR_VERSION } from "./metadata.js";
@@ -128,6 +129,7 @@ export class SidecarApplication {
         load: (ingestionId) => ledger.loadIngestionCursor<TranscriptCursor>(ingestionId)?.cursor,
         commit: (ingestionId, cursor) => ledger.commitIngestionCursor(ingestionId, cursor),
       },
+      { projectEvent: projectCaptureEvent },
     );
     const ledgerSink: HookEventSink = {
       enqueue: async (event, signal) => {

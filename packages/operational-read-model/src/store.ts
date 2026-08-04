@@ -50,7 +50,7 @@ import {
 } from "./validation.js";
 
 const COMPONENT = "operational-read-model";
-const CURRENT_MIGRATION_VERSION = 2;
+const CURRENT_MIGRATION_VERSION = 3;
 const DEFAULT_PAGE_SIZE = 50;
 
 interface JsonRow {
@@ -89,6 +89,8 @@ interface EventRow {
   readonly content_hash: string;
   readonly redaction_count: number;
   readonly payload_purged: number;
+  readonly content_preview: string | null;
+  readonly content_truncated: number | null;
 }
 
 interface DiagnosticRow {
@@ -172,6 +174,10 @@ function eventFromRow(row: EventRow): EventMetadata {
     contentHash: row.content_hash,
     redactionCount: row.redaction_count,
     payloadPurged: row.payload_purged === 1,
+    ...(row.content_preview === null ? {} : {
+      contentPreview: row.content_preview,
+      contentTruncated: row.content_truncated === 1,
+    }),
   });
 }
 
@@ -304,7 +310,10 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
           correlation_id TEXT NOT NULL,
           content_hash TEXT NOT NULL,
           redaction_count INTEGER NOT NULL CHECK(redaction_count >= 0),
-          payload_purged INTEGER NOT NULL CHECK(payload_purged IN (0, 1))
+          payload_purged INTEGER NOT NULL CHECK(payload_purged IN (0, 1)),
+          content_preview TEXT CHECK(content_preview IS NULL OR (length(content_preview) >= 1 AND length(content_preview) <= 2000)),
+          content_truncated INTEGER CHECK(content_truncated IS NULL OR content_truncated IN (0, 1)),
+          CHECK((content_preview IS NULL AND content_truncated IS NULL) OR (content_preview IS NOT NULL AND content_truncated IS NOT NULL))
         );
         CREATE INDEX IF NOT EXISTS projected_event_session_sequence_idx
           ON projected_event_metadata(session_id, sequence DESC);
@@ -337,6 +346,14 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
           committed_at TEXT NOT NULL
         );
       `);
+      const eventColumns = new Set((this.#database.prepare("PRAGMA table_info(projected_event_metadata)").all() as Array<{ name: string }>).map((column) => column.name));
+      if (!eventColumns.has("content_preview")) this.#database.exec("ALTER TABLE projected_event_metadata ADD COLUMN content_preview TEXT");
+      if (!eventColumns.has("content_truncated")) this.#database.exec("ALTER TABLE projected_event_metadata ADD COLUMN content_truncated INTEGER");
+      // The event projection is disposable. Clearing a pre-v3 projection makes
+      // the sidecar replay the Ledger and backfill redacted content previews.
+      if (existing !== undefined && existing.migration_version < 3) {
+        this.#database.exec("DELETE FROM projected_event_metadata");
+      }
       this.#faultInjector?.("migration.after-schema");
       this.#database.prepare(`
         INSERT INTO operational_read_model_meta(component, migration_version)
@@ -453,16 +470,18 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
     this.#database.prepare(`
       INSERT INTO projected_event_metadata(
         sequence, event_id, event_type, source, session_id, turn_id, occurred_at, correlation_id,
-        content_hash, redaction_count, payload_purged
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_hash, redaction_count, payload_purged, content_preview, content_truncated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(sequence) DO UPDATE SET event_id=excluded.event_id, event_type=excluded.event_type,
         source=excluded.source, session_id=excluded.session_id, turn_id=excluded.turn_id,
         occurred_at=excluded.occurred_at, correlation_id=excluded.correlation_id,
         content_hash=excluded.content_hash, redaction_count=excluded.redaction_count,
-        payload_purged=excluded.payload_purged
+        payload_purged=excluded.payload_purged, content_preview=excluded.content_preview,
+        content_truncated=excluded.content_truncated
     `).run(
       value.sequence, value.eventId, value.eventType, value.source, value.sessionId, value.turnId ?? null,
       value.occurredAt, value.correlationId, value.contentHash, value.redactionCount, value.payloadPurged ? 1 : 0,
+      value.contentPreview ?? null, value.contentPreview === undefined ? null : value.contentTruncated === true ? 1 : 0,
     );
   }
 
@@ -682,7 +701,7 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
     }
     const rows = this.#database.prepare(`
       SELECT sequence, event_id, event_type, source, session_id, turn_id, occurred_at,
-             correlation_id, content_hash, redaction_count, payload_purged
+             correlation_id, content_hash, redaction_count, payload_purged, content_preview, content_truncated
       FROM projected_event_metadata
       WHERE session_id = ? AND (? IS NULL OR sequence < ?)
       ORDER BY sequence DESC LIMIT ?
@@ -821,7 +840,7 @@ export class SqliteOperationalReadModel implements OperationalQueryPort {
     ).all() as unknown as JsonRow[];
     const eventRows = this.#database.prepare(`
       SELECT sequence, event_id, event_type, source, session_id, turn_id, occurred_at,
-             correlation_id, content_hash, redaction_count, payload_purged
+             correlation_id, content_hash, redaction_count, payload_purged, content_preview, content_truncated
       FROM projected_event_metadata ORDER BY sequence ASC
     `).all() as unknown as EventRow[];
     const diagnosticRows = this.#database.prepare(`

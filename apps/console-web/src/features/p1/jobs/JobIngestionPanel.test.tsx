@@ -132,6 +132,6 @@ describe("JobIngestionPanel", () => {
     render(<JobIngestionPanel viewModel={viewModel([failed])} commands={port} />);
     await user.click(screen.getByRole("button", { name: "SESSION_FOLLOW 安全重试" }));
     expect(await screen.findByText("retry rejected by lease fence")).toBeTruthy();
-    expect(screen.getByText("FAILED")).toBeTruthy();
+    expect(screen.getByText("失败")).toBeTruthy();
   });
 });

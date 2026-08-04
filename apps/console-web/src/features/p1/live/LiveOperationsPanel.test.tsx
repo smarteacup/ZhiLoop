@@ -60,9 +60,9 @@ describe("LiveOperationsPanel", () => {
     render(<LiveOperationsPanel viewModel={model()} />);
     expect(screen.getByText(/5000ms 轮询/u)).toBeTruthy();
     expect(screen.getByText(/静默时段，但健康状态仍可见/u)).toBeTruthy();
-    expect(screen.getByText("FAILED")).toBeTruthy();
+    expect(screen.getByText("失败")).toBeTruthy();
     expect(screen.getByText("REAL_CODEX_TASK_NOT_VERIFIED", { exact: false })).toBeTruthy();
-    expect(screen.getByText("NOT_VERIFIED")).toBeTruthy();
+    expect(screen.getByText("未验证")).toBeTruthy();
   });
 
   it("refreshes only invalidated resources with matching revision and idempotency key", async () => {
@@ -104,7 +104,7 @@ describe("LiveOperationsPanel", () => {
     render(<LiveOperationsPanel viewModel={model()} commands={{ refresh: async () => { throw new Error("resync window expired"); } }} />);
     await user.click(screen.getByRole("button", { name: "刷新失效视图" }));
     expect(await screen.findByText("resync window expired")).toBeTruthy();
-    expect(screen.getByText("POLLING")).toBeTruthy();
+    expect(screen.getByText("轮询中")).toBeTruthy();
     expect(screen.getByText("REAL_CODEX_TASK_NOT_VERIFIED", { exact: false })).toBeTruthy();
   });
 });

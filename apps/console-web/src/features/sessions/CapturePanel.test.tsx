@@ -20,6 +20,11 @@ const preview: CapturePreview = {
   projectedEvents: 3,
   ignoredRecords: 1,
   eventTypes: { USER_PROMPT: 2, ASSISTANT_FINAL: 1 },
+  items: [
+    { eventId: "event-1", eventType: "USER_PROMPT", occurredAt: timestamp, turnId: "turn-1", contentPreview: "设计可追溯 Ledger", contentTruncated: false },
+    { eventId: "event-2", eventType: "ASSISTANT_FINAL", occurredAt: timestamp, turnId: "turn-1", contentPreview: "采用有界脱敏预览", contentTruncated: true },
+  ],
+  itemsTruncated: true,
   cursor: { byteOffset: 400, lineNumber: 8 },
   hasMore: false,
   expiresAt: "2099-08-03T12:00:00.000Z",
@@ -30,6 +35,9 @@ const result: CaptureCommitResult = {
   previewRevision: 7,
   appendedEvents: 3,
   duplicateEvents: 0,
+  appendedEventIds: ["event-1", "event-2", "event-3"],
+  duplicateEventIds: [],
+  eventIdsTruncated: false,
   cursor: { byteOffset: 400, lineNumber: 8 },
   knowledgeCompileStage: {
     schemaVersion: 1,
@@ -66,19 +74,28 @@ describe("CapturePanel", () => {
     const user = userEvent.setup();
     const previewCapture = vi.fn(async () => preview);
     const commitCapture = vi.fn(async () => result);
-    render(<CapturePanel api={apiWith({ previewCapture, commitCapture })} sessionId="session-1" sourceAvailable />);
+    const onCommitted = vi.fn();
+    const onViewLedger = vi.fn();
+    render(<CapturePanel api={apiWith({ previewCapture, commitCapture })} sessionId="session-1" sourceAvailable onCommitted={onCommitted} onViewLedger={onViewLedger} />);
 
     expect(screen.getByText(/只有确认提交后才写入/u)).toBeTruthy();
     expect(commitCapture).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "生成采集预览" }));
     expect(await screen.findByRole("heading", { name: "采集影响预览" })).toBeTruthy();
-    expect(screen.getByText("USER_PROMPT")).toBeTruthy();
+    expect(screen.getAllByText("USER_PROMPT")).toHaveLength(2);
+    expect(screen.getByText("设计可追溯 Ledger")).toBeTruthy();
+    expect(screen.getByText("单条内容已截断。")).toBeTruthy();
+    expect(screen.getByText(/最多展示 100 条事件/u)).toBeTruthy();
     expect(screen.getByText(/正式提交前不会修改/u)).toBeTruthy();
     expect(commitCapture).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "确认写入 Ledger" }));
     expect(await screen.findByText("采集提交完成")).toBeTruthy();
     expect(screen.getByText(/仅完成对话事件沉淀到 Ledger/u)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看 Ledger 已沉淀内容" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "查看 Ledger 已沉淀内容" }));
+    expect(onViewLedger).toHaveBeenCalledOnce();
+    expect(onCommitted).toHaveBeenCalledOnce();
     expect(screen.getByText("KNOWLEDGE_WORKER_NOT_COMPOSED")).toBeTruthy();
     expect(commitCapture).toHaveBeenCalledWith({
       sessionId: "session-1",
@@ -109,6 +126,52 @@ describe("CapturePanel", () => {
     await user.click(await screen.findByRole("button", { name: "确认写入 Ledger" }));
     expect(await screen.findByText(/已提交过/u)).toBeTruthy();
     expect(screen.getByText(/未重复写入/u)).toBeTruthy();
+  });
+
+  it("keeps an empty incremental preview explicit", async () => {
+    const user = userEvent.setup();
+    const emptyPreview: CapturePreview = {
+      ...preview,
+      projectedEvents: 0,
+      eventTypes: {},
+      items: [],
+      itemsTruncated: false,
+      hasMore: true,
+    };
+    render(<CapturePanel api={apiWith({ previewCapture: async () => emptyPreview })} sessionId="session-1" sourceAvailable />);
+    await user.click(screen.getByRole("button", { name: "生成采集预览" }));
+    expect(await screen.findByText("没有识别到可采集事件类型。")).toBeTruthy();
+    expect(screen.getByText("本次没有待写入的事件内容。")).toBeTruthy();
+    expect(screen.getByText("是，提交后需继续补采")).toBeTruthy();
+  });
+
+  it("shows bounded duplicate tracing and an enabled downstream stage", async () => {
+    const user = userEvent.setup();
+    const tracedResult: CaptureCommitResult = {
+      ...result,
+      appendedEvents: 1,
+      duplicateEvents: 1,
+      duplicateEventIds: ["event-existing"],
+      eventIdsTruncated: true,
+      knowledgeCompileStage: { ...result.knowledgeCompileStage, status: "RUNNING", reasonCode: "COMPONENT_STARTING" },
+    };
+    render(<CapturePanel api={apiWith({ commitCapture: async () => tracedResult })} sessionId="session-1" sourceAvailable />);
+    await user.click(screen.getByRole("button", { name: "生成采集预览" }));
+    await user.click(await screen.findByRole("button", { name: "确认写入 Ledger" }));
+    expect(await screen.findByText("event-existing")).toBeTruthy();
+    expect(screen.getByText(/事件 ID 列表已截断/u)).toBeTruthy();
+    expect(screen.getByText(/实际 StageSnapshot/u)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "查看 Ledger 已沉淀内容" })).toBeNull();
+  });
+
+  it("rejects an expired preview locally without calling commit", async () => {
+    const user = userEvent.setup();
+    const commitCapture = vi.fn(async () => result);
+    render(<CapturePanel api={apiWith({ previewCapture: async () => ({ ...preview, expiresAt: "2020-01-01T00:00:00.000Z" }), commitCapture })} sessionId="session-1" sourceAvailable />);
+    await user.click(screen.getByRole("button", { name: "生成采集预览" }));
+    await user.click(await screen.findByRole("button", { name: "确认写入 Ledger" }));
+    expect(await screen.findByText(/采集预览已经过期/u)).toBeTruthy();
+    expect(commitCapture).not.toHaveBeenCalled();
   });
 
   it("keeps the preview and same idempotency key when an unavailable Sidecar is retried", async () => {

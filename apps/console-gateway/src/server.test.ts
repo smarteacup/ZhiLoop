@@ -282,13 +282,13 @@ class FakeCommandPort implements ControlCommandPort {
   public async previewCapture(sessionId: string): Promise<CapturePreview> {
     if (this.failure) throw this.failure;
     this.calls.push(`preview:${sessionId}`);
-    return { schemaVersion: 1, sessionId, previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 3, ignoredRecords: 0, eventTypes: { USER_PROMPT: 1 }, cursor: { byteOffset: 100, lineNumber: 4 }, hasMore: false, expiresAt: NOW };
+    return { schemaVersion: 1, sessionId, previewRevision: 7, transcriptIdentityHash: "a".repeat(64), projectedEvents: 3, ignoredRecords: 0, eventTypes: { USER_PROMPT: 1 }, items: [{ eventId: "event-1", eventType: "USER_PROMPT", occurredAt: NOW, contentPreview: "设计 Ledger", contentTruncated: false }], itemsTruncated: false, cursor: { byteOffset: 100, lineNumber: 4 }, hasMore: false, expiresAt: NOW };
   }
 
   public async commitCapture(command: CaptureCommitCommand): Promise<CaptureCommitResult> {
     if (this.failure) throw this.failure;
     this.calls.push(`commit:${command.sessionId}:${command.previewRevision}:${command.idempotencyKey}`);
-    return { schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 3, duplicateEvents: 0, cursor: { byteOffset: 100, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: NOW, lastTransitionAt: NOW, retryable: false, evidenceRefs: [] } };
+    return { schemaVersion: 1, sessionId: command.sessionId, previewRevision: command.previewRevision, appendedEvents: 3, duplicateEvents: 0, appendedEventIds: ["event-1", "event-2", "event-3"], duplicateEventIds: [], eventIdsTruncated: false, cursor: { byteOffset: 100, lineNumber: 4 }, knowledgeCompileStage: { schemaVersion: 1, entityId: command.sessionId, stage: "KNOWLEDGE_COMPILE", status: "DISABLED", reasonCode: "KNOWLEDGE_WORKER_NOT_COMPOSED", observedAt: NOW, lastTransitionAt: NOW, retryable: false, evidenceRefs: [] } };
   }
 
   public async validateConfiguration(command: ConfigurationDraftCommand): Promise<ConfigurationValidationResult> {

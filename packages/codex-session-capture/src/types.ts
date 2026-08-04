@@ -68,6 +68,16 @@ export interface CaptureServiceOptions extends TranscriptLocatorOptions {
   readonly appendBatchSize?: number;
   readonly maxReadBytes?: number;
   readonly maxLineBytes?: number;
+  readonly projectEvent?: (event: EventEnvelope) => CaptureEventSample;
+}
+
+export interface CaptureEventSample {
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly occurredAt: string;
+  readonly turnId?: string;
+  readonly contentPreview: string;
+  readonly contentTruncated: boolean;
 }
 
 export interface CaptureSessionReport {
@@ -81,6 +91,11 @@ export interface CaptureSessionReport {
   readonly duplicateEvents: number;
   readonly ignoredRecords: number;
   readonly eventTypes: Readonly<Record<string, number>>;
+  readonly sampledEvents: readonly CaptureEventSample[];
+  readonly sampledEventsTruncated: boolean;
+  readonly appendedEventIds: readonly string[];
+  readonly duplicateEventIds: readonly string[];
+  readonly eventIdsTruncated: boolean;
   readonly cursor: {
     readonly byteOffset: number;
     readonly lineNumber: number;

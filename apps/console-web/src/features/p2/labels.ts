@@ -23,6 +23,13 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   KNOWLEDGE_PREVIEW_FAILED: "知识编译过程失败",
   KNOWLEDGE_WORKER_NOT_CONFIGURED: "知识编译器尚未配置",
   EXTRACTION_SNAPSHOT_NOT_FOUND: "提取快照不存在",
+  JOB_LEASE_EXPIRED: "后台任务执行租约已过期",
+  JOB_MAX_ATTEMPTS_EXHAUSTED: "后台任务已达到最大重试次数",
+  JOB_NON_RETRYABLE_FAILURE: "后台任务发生不可重试失败",
+  JOB_HANDLER_FAILED: "后台任务处理器执行失败",
+  JOB_HANDLER_NOT_FOUND: "没有找到对应的后台任务处理器",
+  JOB_CANCELLED: "后台任务已取消",
+  JOB_CANCELLATION_REQUESTED: "后台任务正在取消",
   EXPLICIT_COMMIT_REQUIRED: "需要明确确认后才能发布",
   POLICY_COMMITTED: "知识策略已确认",
   PUBLICATION_PENDING: "等待知识发布",
@@ -73,6 +80,11 @@ const details: Readonly<Record<string, string>> = Object.freeze({
   KNOWLEDGE_PREVIEW_INCOMPLETE: "后台闭环没有产出可提交的候选策略结果。系统会按重试策略重新执行；若达到最大次数仍未成功，任务将转为失败。",
   KNOWLEDGE_PREVIEW_FAILED: "知识编译流水线返回失败。请结合后台任务中的尝试记录判断具体失败阶段。",
   CANDIDATE_PREVIEW_RESULT_MISSING: "后台任务报告成功，但持久化存储中没有对应候选预览，需要检查任务完成与结果写入的原子性。",
+  JOB_LEASE_EXPIRED: "任务开始执行后，工作进程未能在租约期限内持续上报心跳。常见原因是服务重启、进程退出或执行被中断；系统会在重试额度内重新执行。",
+  JOB_MAX_ATTEMPTS_EXHAUSTED: "任务已经用完自动重试额度，需要先查看各次尝试的失败记录，再决定是否手动重试。",
+  JOB_NON_RETRYABLE_FAILURE: "后台判断该错误继续重试也不会自行恢复，需要修复配置或输入后重新发起。",
+  JOB_HANDLER_FAILED: "任务处理器抛出了未归类异常，请在后台任务页查看对应尝试记录。",
+  JOB_HANDLER_NOT_FOUND: "当前运行版本没有注册该任务类型的处理器，需检查组件部署与版本匹配。",
 });
 
 export function p2EnumLabel(value: string): string {

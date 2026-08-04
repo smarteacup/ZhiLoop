@@ -75,6 +75,20 @@ describe("SessionExtractionPanel", () => {
     expect(screen.getByText(/后台闭环没有产出可提交的候选策略结果/u)).toBeTruthy();
     expect(screen.getByText(/已尝试 1\/5 次/u)).toBeTruthy();
     expect(screen.getByText("KNOWLEDGE_PREVIEW_INCOMPLETE", { selector: "code" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "查看后台任务尝试记录" }).getAttribute("href")).toBe("#/jobs");
+  });
+
+  it("keeps an unknown terminal diagnostic visible without fabricating unavailable job metadata", async () => {
+    const failed: SessionExtractionView = {
+      ...view,
+      stages: [{ stage: "CANDIDATE_PREVIEW", status: "FAILED", reasonCode: "FUTURE_WORKER_FAILURE", retryable: false }],
+      candidates: [], previewId: undefined,
+      commitAction: { enabled: false, expectedRevision: 0, idempotencyKey: "commit:unavailable", reasonCode: "PREVIEW_NOT_READY" },
+    };
+    render(<SessionExtractionPanel api={apiWith({ sessionExtraction: async () => failed })} sessionId="session-1" captureCurrent />);
+    expect(await screen.findByText(/后台任务返回了失败诊断/u)).toBeTruthy();
+    expect(screen.getByText("FUTURE_WORKER_FAILURE", { selector: "code" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "查看后台任务尝试记录" })).toBeNull();
   });
 
   it("refreshes a stale revision once and retries with the latest server gate", async () => {

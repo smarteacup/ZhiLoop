@@ -31,7 +31,7 @@ function ready() {
     schemaVersion: 1,
     status: "READY",
     pluginVersion: "0.1.0",
-    sidecarVersion: "0.3.9",
+    sidecarVersion: "0.3.10",
     protocolVersion: 1,
     hookSchemaVersion: "codex-hooks-v1",
     appServerSchemaVersion: "codex-app-server-v2",

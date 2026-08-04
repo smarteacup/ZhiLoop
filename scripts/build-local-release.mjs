@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const VERSION = "0.3.9";
+const VERSION = "0.3.10";
 const EXTERNALS = [
   ["packages/schemas/node_modules/ajv", "ajv"],
   ["node_modules/ajv-formats", "ajv-formats"],

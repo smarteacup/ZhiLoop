@@ -11,7 +11,7 @@ export function useAsync<T>(load: (signal: AbortSignal) => Promise<T>): readonly
   const retry = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
     const controller = new AbortController();
-    setState({ status: "loading" });
+    setState((current) => current.status === "success" ? current : { status: "loading" });
     void load(controller.signal).then(
       (value) => { if (!controller.signal.aborted) setState({ status: "success", value }); },
       (error: unknown) => {

@@ -434,6 +434,33 @@ describe("Console Gateway security boundary", () => {
     expect((await authenticate()).response.status).toBe(401);
   });
 
+  it("resumes an existing browser session without weakening protected API CSRF checks", async () => {
+    await start();
+    const browser = (await authenticate()).browser as AuthenticatedBrowser;
+
+    const resumed = await fetch(`${address?.origin}/api/v1/auth/session`, {
+      headers: { cookie: browser.cookie },
+    });
+    expect(resumed.status).toBe(200);
+    expect(resumed.headers.get("cache-control")).toBe("no-store");
+    await expect(resumed.json()).resolves.toMatchObject({
+      schemaVersion: CONTROL_API_SCHEMA_VERSION,
+      csrfToken: browser.csrf,
+    });
+
+    expect((await fetch(`${address?.origin}/api/v1/auth/session`)).status).toBe(401);
+    expect((await fetch(`${address?.origin}/api/v1/auth/session?unexpected=true`, {
+      headers: { cookie: browser.cookie },
+    })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/auth/session`, {
+      method: "POST",
+      headers: { cookie: browser.cookie, origin: address?.origin ?? "" },
+    })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/overview`, {
+      headers: { cookie: browser.cookie },
+    })).status).toBe(403);
+  });
+
   it("rejects unauthenticated, missing-CSRF, wrong-Origin and forged-Host requests", async () => {
     await start();
     expect((await fetch(`${address?.origin}/api/v1/overview`)).status).toBe(401);

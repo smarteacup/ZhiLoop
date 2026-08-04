@@ -17,9 +17,12 @@ describe("browser session primitives", () => {
     expect(manager.exchange("x".repeat(32), 2)).toBeUndefined();
     const cookie = exchange?.cookie.split(";", 1)[0];
     expect(manager.authenticate(cookie, exchange?.csrfToken, 2)).toEqual({ authenticated: true, csrfValid: true });
+    expect(manager.resume(cookie, 2)).toEqual({ csrfToken: exchange?.csrfToken, expiresAt: "1970-01-01T00:00:10.001Z" });
+    expect(manager.resume("malformed", 2)).toBeUndefined();
     expect(manager.authenticate(`${cookie}; ${cookie}`, exchange?.csrfToken, 2)).toEqual({ authenticated: false, csrfValid: false });
     expect(manager.authenticate(cookie, "wrong", 2)).toEqual({ authenticated: true, csrfValid: false });
     expect(manager.authenticate(cookie, exchange?.csrfToken, 10_002)).toEqual({ authenticated: false, csrfValid: false });
+    expect(manager.resume(cookie, 10_002)).toBeUndefined();
     expect(new BrowserSessionManager("y".repeat(32), 10_000, 1).exchange("y".repeat(32), 1)).toBeUndefined();
     expect(createBootstrapToken()).toMatch(/^[A-Za-z0-9_-]{40,}$/u);
   });

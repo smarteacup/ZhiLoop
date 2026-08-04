@@ -481,6 +481,21 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
       return;
     }
 
+    if (url.pathname === "/api/v1/auth/session") {
+      if (request.method !== "GET" || url.searchParams.size !== 0) {
+        safeError(response, 405, "INVALID_REQUEST", "Session resume requires a parameter-free GET");
+        return;
+      }
+      const resumed = sessionManager.resume(request.headers.cookie);
+      if (resumed === undefined) {
+        safeError(response, 401, "UNAUTHORIZED", "Browser session is missing or expired");
+        return;
+      }
+      response.setHeader("cache-control", "no-store");
+      sendJson(response, 200, { schemaVersion: CONTROL_API_SCHEMA_VERSION, ...resumed });
+      return;
+    }
+
     if (url.pathname.startsWith("/api/")) {
       const csrfHeader = request.headers["x-zhiloop-csrf"];
       const authentication = sessionManager.authenticate(

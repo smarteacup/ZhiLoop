@@ -90,6 +90,24 @@ describe("useInvalidationFeed", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("coalesces a sustained invalidation stream into bounded background refreshes", async () => {
+    vi.useFakeTimers();
+    let handlers: InvalidationHandlers | undefined;
+    const onInvalidate = vi.fn();
+    render(<Harness api={unusedApi({
+      openInvalidations: (next) => { handlers = next; return { close: () => undefined }; },
+    })} onInvalidate={onInvalidate} />);
+
+    act(() => handlers?.onEvent({ schemaVersion: 1, eventId: "event-1", type: "job.updated", entityId: "job-1", revision: 1, occurredAt: timestamp }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(onInvalidate).toHaveBeenCalledOnce();
+    act(() => handlers?.onEvent({ schemaVersion: 1, eventId: "event-2", type: "job.updated", entityId: "job-1", revision: 2, occurredAt: timestamp }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_999); });
+    expect(onInvalidate).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to bounded polling and requests a full refresh for resync", async () => {
     vi.useFakeTimers();
     const onInvalidate = vi.fn();

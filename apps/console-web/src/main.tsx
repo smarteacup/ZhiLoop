@@ -2,13 +2,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { setCsrfToken } from "./api/client.js";
-import { exchangeBootstrapToken, takeBootstrapToken } from "./api/bootstrap.js";
+import { exchangeBootstrapToken, resumeBrowserSession, takeBootstrapToken } from "./api/bootstrap.js";
 import { App } from "./app/App.js";
 import "./styles.css";
 
 async function exchangeBootstrap(): Promise<void> {
   const bootstrap = takeBootstrapToken(window.location.hash);
-  if (bootstrap === undefined) return;
+  if (bootstrap === undefined) {
+    setCsrfToken(await resumeBrowserSession());
+    return;
+  }
   history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   setCsrfToken(await exchangeBootstrapToken(bootstrap));
 }

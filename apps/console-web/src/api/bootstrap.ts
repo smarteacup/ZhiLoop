@@ -18,3 +18,14 @@ export async function exchangeBootstrapToken(
   if (!response.ok || typeof value.csrfToken !== "string") throw new Error("ZhiLoop Console authentication failed");
   return value.csrfToken;
 }
+
+export async function resumeBrowserSession(request: typeof fetch = fetch): Promise<string> {
+  const response = await request("/api/v1/auth/session", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const value = await response.json() as { csrfToken?: unknown };
+  if (!response.ok || typeof value.csrfToken !== "string") throw new Error("ZhiLoop Console session is missing or expired; reopen the control page");
+  return value.csrfToken;
+}

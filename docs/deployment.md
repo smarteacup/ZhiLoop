@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.3.9
+npm run release:local -- --output /absolute/path/to/zhiloop-0.3.10
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,14 +52,14 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.3.9
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.3.9 --json
+  install --artifact /absolute/path/to/zhiloop-0.3.10 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.3.9 \
+  install --artifact /absolute/path/to/zhiloop-0.3.10 \
   --codex-executable /absolute/path/to/codex --apply --json
 ```
 
@@ -97,7 +97,9 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 ~/.local/bin/zhiloop ui --no-open --json
 ```
 
-仅在 `--no-open` 模式下，JSON 会返回一次性 `bootstrapUrl`。该 URL 的 fragment 会在页面发起认证前从地址栏移除；Gateway 使用短期 HttpOnly SameSite 会话、内存 CSRF token、Host/Origin 校验和无 CORS 策略。页面不使用 localStorage、sessionStorage 或 IndexedDB 持久化会话和知识数据。
+仅在 `--no-open` 模式下，JSON 会返回一次性 `bootstrapUrl`。该 URL 的 fragment 会在页面发起认证前从地址栏移除；Gateway 使用短期 HttpOnly SameSite 会话、内存 CSRF token、Host/Origin 校验和无 CORS 策略。浏览器硬刷新时，页面通过同源、只读、无参数的会话恢复端点重新取得内存 CSRF proof；其他 API 仍强制校验 CSRF。页面不使用 localStorage、sessionStorage 或 IndexedDB 持久化会话和知识数据。
+
+任务状态的实时失效事件会合并为最多每 5 秒一次后台刷新；刷新期间保留上一次成功结果，避免持续事件导致页面闪烁或请求风暴。
 
 控制台支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、配置与部署状态，以及会话级采集和提取的 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识页支持来源、版本、Evidence、编辑影响、suppress/restore；召回页支持确定性搜索、策略比较和本地 Codex 只读问答；会话页展示真实注入/MCP 审计；闭环页展示 Gate、纠偏、续跑和高风险治理。
 

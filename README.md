@@ -6,7 +6,7 @@ ZhiLoop 是一个面向 AI 编程代理的动态知识层。其核心架构 Code
 
 ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Contract。知识注入、任务契约和闭环验证都是可组合能力：默认向 AI 编程代理提供少量边界、门禁、已有能力和知识指针，运行中再按需展开。
 
-当前 P0-P4 源码实施、本地控制台与部署基线已经完成：覆盖 Codex/App Server 对话沉淀、只读 `codex exec` 抽取、证据驱动知识生命周期、Markdown/SQLite、混合召回、可控注入、MCP 展开、有限闭环、历史回填、Codex/CCM Hook 共存、sidecar 与可回滚部署。当前开发机已安装 `0.3.9` 并运行在 `SHADOW`：生产知识编译、分层入库、检索、Codex 辅助问答、注入审计、MCP 审计和闭环均已接通；只有经过显式 ACTIVE 资格与灰度门禁后才会把内容实际注入模型。
+当前 P0-P4 源码实施、本地控制台与部署基线已经完成：覆盖 Codex/App Server 对话沉淀、只读 `codex exec` 抽取、证据驱动知识生命周期、Markdown/SQLite、混合召回、可控注入、MCP 展开、有限闭环、历史回填、Codex/CCM Hook 共存、sidecar 与可回滚部署。当前开发机已安装 `0.3.10` 并运行在 `SHADOW`：生产知识编译、分层入库、检索、Codex 辅助问答、注入审计、MCP 审计和闭环均已接通；只有经过显式 ACTIVE 资格与灰度门禁后才会把内容实际注入模型。
 
 ## 文档入口
 
@@ -30,7 +30,7 @@ ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Cont
 - 系统设计：MVP Implementation Baseline
 - P0-P4 Console、运行时与本地部署：全部完成并通过模块、集成和浏览器 Gate
 - 自动化验证：超过 1,200 项单元/集成测试，另有依赖、lint、build、typecheck、coverage 与隔离部署门禁
-- 运行模式：当前用户 `0.3.9` READY/SHADOW，LaunchAgent `dev.zhiloop.sidecar`
+- 运行模式：当前用户 `0.3.10` READY/SHADOW，LaunchAgent `dev.zhiloop.sidecar`
 - 真实验收：会话 `019f837a-34d4-7e60-800c-6361f6fb6d49` 沉淀 98 条事件、49 个 Turn，生成 8 条候选并发布 6 条可召回知识；搜索与本地 Codex 问答均成功且可追溯，CCM 配置 hash 保持不变
 
 ## 本地验证

@@ -18,6 +18,11 @@ export interface SessionAuthentication {
   readonly csrfValid: boolean;
 }
 
+export interface SessionResume {
+  readonly csrfToken: string;
+  readonly expiresAt: string;
+}
+
 function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
@@ -85,6 +90,17 @@ export class BrowserSessionManager {
       authenticated: true,
       csrfValid: typeof csrfHeader === "string" && constantTimeEqual(csrfHeader, session.csrfToken),
     };
+  }
+
+  public resume(cookieHeader: string | undefined, now = Date.now()): SessionResume | undefined {
+    this.prune(now);
+    const cookies = parseCookies(cookieHeader);
+    if (!cookies) return undefined;
+    const sessionToken = cookies.get(SESSION_COOKIE);
+    if (!sessionToken) return undefined;
+    const session = this.sessions.get(sessionToken);
+    if (!session || session.expiresAt <= now) return undefined;
+    return Object.freeze({ csrfToken: session.csrfToken, expiresAt: new Date(session.expiresAt).toISOString() });
   }
 
   private prune(now: number): void {

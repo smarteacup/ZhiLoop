@@ -23,6 +23,7 @@ const MIN_POLL_DELAY_MS = 250;
 const MAX_POLL_DELAY_MS = 60_000;
 const OFFLINE_RETRY_MS = 5_000;
 const INVALIDATION_DEBOUNCE_MS = 100;
+const INVALIDATION_REFRESH_MIN_INTERVAL_MS = 5_000;
 
 function resourcesFor(event: SseInvalidationEvent): readonly InvalidatedResource[] {
   if (event.type === "job.updated") return ["JOBS"];
@@ -47,15 +48,23 @@ export function useInvalidationFeed(api: ConsoleApi, onInvalidate: (resources: r
     let subscription: InvalidationSubscription | undefined;
     let pollingTimer: ReturnType<typeof setTimeout> | undefined;
     let invalidateTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastInvalidatedAt: number | undefined;
 
     const publishResources = (next: readonly InvalidatedResource[]): void => {
       for (const resource of next) resources.current.add(resource);
       const invalidatedResources = ALL_RESOURCES.filter((resource) => resources.current.has(resource));
       setState((current) => ({ ...current, invalidatedResources }));
       if (invalidateTimer !== undefined) clearTimeout(invalidateTimer);
+      const elapsed = lastInvalidatedAt === undefined ? undefined : Math.max(0, Date.now() - lastInvalidatedAt);
+      const delay = elapsed === undefined
+        ? INVALIDATION_DEBOUNCE_MS
+        : Math.max(INVALIDATION_DEBOUNCE_MS, INVALIDATION_REFRESH_MIN_INTERVAL_MS - elapsed);
       invalidateTimer = setTimeout(() => {
-        if (!controller.signal.aborted) onInvalidate(invalidatedResources);
-      }, INVALIDATION_DEBOUNCE_MS);
+        if (!controller.signal.aborted) {
+          lastInvalidatedAt = Date.now();
+          onInvalidate(ALL_RESOURCES.filter((resource) => resources.current.has(resource)));
+        }
+      }, delay);
     };
 
     const accept = (event: SseInvalidationEvent): void => {

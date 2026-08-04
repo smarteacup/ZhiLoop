@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { ConsoleApi } from "../../../api/client.js";
+import { ConsoleApiError, type ConsoleApi } from "../../../api/client.js";
 import type { SessionExtractionView } from "../../../api/p2.js";
 import { useAsync } from "../../../app/useAsync.js";
 import { ErrorState, LoadingState } from "../../../components/AsyncState.js";
 import { StatusBadge } from "../../../components/StatusBadge.js";
 import { capabilityDecision } from "../capability.js";
 
-export function SessionExtractionPanel({ api, sessionId }: { readonly api: ConsoleApi; readonly sessionId: string }): React.JSX.Element {
+export function SessionExtractionPanel({ api, sessionId, captureCurrent }: { readonly api: ConsoleApi; readonly sessionId: string; readonly captureCurrent: boolean }): React.JSX.Element {
   const [result, setResult] = useState<SessionExtractionView>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -28,18 +28,44 @@ export function SessionExtractionPanel({ api, sessionId }: { readonly api: Conso
   }
   if (view === undefined) return <section className="panel"><p className="muted">服务端未返回提取视图。</p></section>;
   const gate = view.extractAction;
-  const canExtract = gate.enabled && api.startSessionExtraction !== undefined && !pending;
+  const queryExtraction = api.sessionExtraction;
+  const startExtraction = api.startSessionExtraction;
+  const canExtract = captureCurrent && gate.enabled && startExtraction !== undefined && !pending;
   const canCommit = view.commitAction.enabled && view.previewId !== undefined && api.commitSessionExtraction !== undefined && !pending;
   const start = async (): Promise<void> => {
-    if (!canExtract || api.startSessionExtraction === undefined) return;
+    if (!canExtract || startExtraction === undefined) return;
     setPending(true);
     setMessage(undefined);
     try {
-      const updated = await api.startSessionExtraction({ sessionId, expectedRevision: gate.expectedRevision, idempotencyKey: gate.idempotencyKey });
+      const updated = await startExtraction({ sessionId, expectedRevision: gate.expectedRevision, idempotencyKey: gate.idempotencyKey });
       setResult(updated);
       setMessage("提取请求已确认；下方状态来自服务端最新 revision。");
     } catch (error) {
-      setMessage(error instanceof Error ? `提取失败：${error.message}。请刷新 revision 后重试。` : "提取失败，请刷新 revision 后重试。");
+      let failure = error;
+      if (error instanceof ConsoleApiError && error.code === "STALE_REVISION" && queryExtraction !== undefined) {
+        try {
+          const refreshed = await queryExtraction(sessionId);
+          setResult(refreshed);
+          if (!refreshed.extractAction.enabled) throw error;
+          const updated = await startExtraction({
+            sessionId,
+            expectedRevision: refreshed.extractAction.expectedRevision,
+            idempotencyKey: refreshed.extractAction.idempotencyKey,
+          });
+          setResult(updated);
+          setMessage("检测到 revision 变化，已自动刷新并使用当前会话最新状态完成提取。");
+          return;
+        } catch (retryError) {
+          failure = retryError;
+        }
+      }
+      if (failure instanceof ConsoleApiError && failure.code === "CONFLICT") {
+        setMessage("提取失败：当前会话尚未采集到最新状态。请先在“主动采集”中确认写入 Ledger，再重新提取。");
+      } else if (failure instanceof ConsoleApiError && failure.code === "STALE_REVISION") {
+        setMessage("提取失败：会话 revision 持续变化，自动刷新后仍发生冲突，请稍后重试。");
+      } else {
+        setMessage(failure instanceof Error ? `提取失败：${failure.message}` : "提取失败");
+      }
     } finally {
       setPending(false);
     }
@@ -54,7 +80,8 @@ export function SessionExtractionPanel({ api, sessionId }: { readonly api: Conso
     finally { setPending(false); }
   };
   return <section className="panel extraction-panel" role="tabpanel" aria-labelledby="extraction-heading">
-    <div className="section-heading"><div><h2 id="extraction-heading">会话知识提取</h2><span>revision {view.revision} · 快照重试使用服务端幂等键</span></div><div className="capture-actions"><button type="button" className="primary-button" disabled={!canExtract} title={gate.reasonCode} onClick={() => void start()}>{pending ? "正在提取…" : "提取当前会话快照"}</button><button type="button" className="secondary-button" disabled={!canCommit} title={view.commitAction.reasonCode} onClick={() => void commit()}>明确提交策略并发布</button></div></div>
+    <div className="section-heading"><div><h2 id="extraction-heading">会话知识提取</h2><span>revision {view.revision} · 快照重试使用服务端幂等键</span></div><div className="capture-actions"><button type="button" className="primary-button" disabled={!canExtract} title={captureCurrent ? gate.reasonCode : "CAPTURE_NOT_CURRENT"} onClick={() => void start()}>{pending ? "正在提取…" : "提取当前会话快照"}</button><button type="button" className="secondary-button" disabled={!canCommit} title={view.commitAction.reasonCode} onClick={() => void commit()}>明确提交策略并发布</button></div></div>
+    {!captureCurrent ? <div className="inline-alert warning"><strong>会话尚未采集至最新</strong><p>请先在上方“主动采集”中生成预览并确认写入 Ledger，然后再提取知识。</p></div> : undefined}
     {!gate.enabled ? <div className="inline-alert warning"><strong>{gate.reasonCode}</strong><p>当前 revision 不允许创建新快照。</p></div> : undefined}
     {gate.enabled && api.startSessionExtraction === undefined ? <div className="inline-alert warning"><strong>EXTRACTION_COMMAND_API_NOT_EXPOSED</strong><p>提取视图可读，但当前 Console API 没有暴露写命令。</p></div> : undefined}
     {message === undefined ? undefined : <p role="status" aria-live="polite" className="inline-alert">{message}</p>}

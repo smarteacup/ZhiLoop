@@ -71,6 +71,12 @@ function assertIngestionId(ingestionId: string): void {
   }
 }
 
+function assertSessionId(sessionId: string): void {
+  if (sessionId.length < 1 || sessionId.length > 500 || /[\0\r\n]/u.test(sessionId)) {
+    throw new Error("sessionId must contain 1 to 500 safe characters");
+  }
+}
+
 function assertSequence(sequence: number): void {
   if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("sequence must be a non-negative safe integer");
 }
@@ -322,6 +328,16 @@ export class SqliteEventLedger {
     this.#assertOpen();
     const row = this.#database.prepare("SELECT COUNT(*) AS count FROM events").get() as { count: number };
     return row.count;
+  }
+
+  /** Latest global Ledger sequence owned by one session, or zero when absent. */
+  latestSequenceForSession(sessionId: string): number {
+    this.#assertOpen();
+    assertSessionId(sessionId);
+    const row = this.#database.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events WHERE session_id = ?
+    `).get(sessionId) as { sequence: number };
+    return row.sequence;
   }
 
   loadIngestionCursor<TCursor = unknown>(ingestionId: string): IngestionCursorRecord<TCursor> | undefined {

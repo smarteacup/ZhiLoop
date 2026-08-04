@@ -55,6 +55,17 @@ describe("SQLite Event Ledger", () => {
     ledger.close();
   });
 
+  it("reports a session-local latest sequence without coupling it to unrelated writes", () => {
+    const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
+    expect(ledger.latestSequenceForSession("session-ledger-1")).toBe(0);
+    expect(ledger.append(event(1))).toMatchObject({ sequence: 1 });
+    expect(ledger.append({ ...event(2), sessionId: "session-ledger-2" })).toMatchObject({ sequence: 2 });
+    expect(ledger.latestSequenceForSession("session-ledger-1")).toBe(1);
+    expect(ledger.latestSequenceForSession("session-ledger-2")).toBe(2);
+    expect(() => ledger.latestSequenceForSession("")).toThrow("sessionId");
+    ledger.close();
+  });
+
   it("writes and reads a batch of 1000 events in sequence order", () => {
     const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
     const results = ledger.appendBatch(Array.from({ length: 1000 }, (_, index) => event(index + 1)));
@@ -269,6 +280,7 @@ describe("consumer cursors and replay", () => {
     ledger.close();
     ledger.close();
     expect(() => ledger.count()).toThrow("closed");
+    expect(() => ledger.latestSequenceForSession("session-ledger-1")).toThrow("closed");
   });
 });
 

@@ -78,7 +78,7 @@ describe("P2 Console real composition", () => {
     const runtime = await P2SidecarRuntime.create({
       stateDirectory: directory, knowledgeWorker: production.worker, projectJob: (snapshot) => { jobs.push(snapshot); },
       snapshotSource: { observe: async (request) => ({
-        captureRevision: ledger.count(), observedAt: new Date().toISOString(),
+        captureRevision: ledger.latestSequenceForSession(request.sessionId), observedAt: new Date().toISOString(),
         sourceReferences: ledger.readAfter(request.sourceSequence.from - 1, 100).filter((record) => record.sequence <= request.sourceSequence.to)
           .map((record) => ({ eventId: record.event.eventId, ...(record.event.turnId === undefined ? {} : { turnId: record.event.turnId }), sourceSequence: record.sequence })),
       }) },
@@ -105,8 +105,11 @@ describe("P2 Console real composition", () => {
       inspectTranscriptSource: async () => ({ schemaVersion: 1, sessionId: "session-1", previewRevision: 1, transcriptIdentityHash: sha("transcript"), projectedEvents: 0, ignoredRecords: 0, eventTypes: {}, items: [], itemsTruncated: false, cursor: { byteOffset: 400, lineNumber: 4 }, hasMore: false, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
     });
     try {
-      const revision = ledger.count();
-      await facade.handle({ schemaVersion: 1, requestId: "start-1", type: "p2.session.preview", sessionId: "session-1", expectedRevision: revision, idempotencyKey: `extract:session-1:${revision}` });
+      const extractionView = facade.sessionView("session-1");
+      const unrelated = { ...events()[0]!, eventId: sha("unrelated-event"), sourceItemId: "unrelated-source", sessionId: "session-2", correlationId: sha("session-2") };
+      ledger.append(unrelated);
+      expect(facade.sessionView("session-1").revision).toBe(extractionView.revision);
+      await facade.handle({ schemaVersion: 1, requestId: "start-1", type: "p2.session.preview", sessionId: "session-1", expectedRevision: extractionView.extractAction.expectedRevision, idempotencyKey: extractionView.extractAction.idempotencyKey });
       const previewView = await waitFor(() => {
         const failed = jobs.find((job) => job.status === "FAILED");
         if (failed !== undefined) {

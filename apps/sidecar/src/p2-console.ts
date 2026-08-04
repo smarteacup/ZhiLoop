@@ -239,7 +239,7 @@ export class P2ConsoleRuntime {
     const commit = preview === undefined ? undefined : this.#options.runtime.service().getPolicyCommitForPreview(preview.previewId);
     const checkpoint = snapshot === undefined ? undefined : this.#options.production.checkpoint(snapshot.snapshotId);
     const publicationJob = preview === undefined ? undefined : this.#options.runtime.publicationJobForPreview(preview.previewId);
-    const currentRevision = this.#options.ledger.count();
+    const currentRevision = this.#options.ledger.latestSequenceForSession(sessionId);
     const failedStage = checkpoint === undefined ? undefined : Object.entries(checkpoint.stages)
       .find(([, value]) => value.status === "FAILED")?.[1];
     const publicationStatus = publicationJob?.status === "SUCCEEDED" && checkpoint?.status === "COMPLETED" ? "SUCCEEDED"
@@ -307,7 +307,7 @@ export class P2ConsoleRuntime {
   }
 
   async #startPreview(request: Extract<P2ConsoleRequest, { type: "p2.session.preview" }>) {
-    const revision = this.#options.ledger.count();
+    const revision = this.#options.ledger.latestSequenceForSession(request.sessionId);
     if (request.expectedRevision !== revision || request.idempotencyKey !== `extract:${request.sessionId}:${revision}`) {
       throw Object.assign(new Error("session extraction revision is stale"), { code: "STALE_REVISION" });
     }

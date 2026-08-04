@@ -27,7 +27,7 @@ export function SessionDetailPage({ api, sessionId }: { readonly api: ConsoleApi
     {tab === "injections" ? api.sessionInjections === undefined
       ? <section className="panel" role="tabpanel"><div className="section-heading"><h2>注入记录</h2><span>SHADOW 与实际投递严格区分</span></div><p className="muted">P4_INJECTION_ADAPTER_NOT_COMPOSED</p></section>
       : <div role="tabpanel"><InjectionPanel api={{ sessionInjections: api.sessionInjections }} sessionId={sessionId} /></div> : undefined}
-    {tab === "extraction" ? <SessionExtractionPanel api={api} sessionId={sessionId} /> : undefined}
+    {tab === "extraction" ? <SessionExtractionPanel api={api} sessionId={sessionId} captureCurrent={detail.summary.captureStatus === "CAPTURED_CURRENT"} /> : undefined}
     <section className="panel"><h2>覆盖与游标</h2><dl className="detail-grid"><div><dt>来源</dt><dd>{detail.summary.source}</dd></div><div><dt>事件</dt><dd>{detail.summary.eventCount}</dd></div><div><dt>Turn</dt><dd>{detail.summary.turnCount}</dd></div><div><dt>游标</dt><dd>{detail.latestCursor === undefined ? "未采集" : `${detail.latestCursor.lineNumber} 行 / ${detail.latestCursor.byteOffset} bytes`}</dd></div></dl></section>
   </div>;
 }

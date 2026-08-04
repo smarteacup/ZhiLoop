@@ -369,7 +369,7 @@ export class SidecarApplication {
             if (configuration?.get().hash !== request.configurationHash) {
               throw new ExtractionStaleRevisionError("configuration changed before snapshot creation");
             }
-            const captureRevision = ledger.count();
+            const captureRevision = ledger.latestSequenceForSession(request.sessionId);
             const previousCandidate = p2Runtime?.service().listSnapshots({ sessionId: request.sessionId, limit: 1 }).items[0];
             const previous = previousCandidate !== undefined
               && previousCandidate.transcriptIdentityHash === request.transcriptIdentityHash

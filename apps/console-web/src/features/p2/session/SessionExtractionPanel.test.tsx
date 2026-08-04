@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ConsoleApi } from "../../../api/client.js";
+import { ConsoleApiError, type ConsoleApi } from "../../../api/client.js";
 import type { SessionExtractionView } from "../../../api/p2.js";
 import { SessionExtractionPanel } from "./SessionExtractionPanel.js";
 
@@ -31,7 +31,7 @@ afterEach(() => cleanup());
 
 describe("SessionExtractionPanel", () => {
   it("renders partial snapshot, unsupported events, policy and bidirectional provenance", async () => {
-    render(<SessionExtractionPanel api={apiWith()} sessionId="session-1" />);
+    render(<SessionExtractionPanel api={apiWith()} sessionId="session-1" captureCurrent />);
     expect(await screen.findByRole("heading", { name: "会话知识提取" })).toBeTruthy();
     expect(screen.getAllByText("PARTIAL_SNAPSHOT").length).toBeGreaterThan(0);
     expect(screen.getByText(/TOOL_STREAM_DELTA/u)).toBeTruthy();
@@ -42,7 +42,7 @@ describe("SessionExtractionPanel", () => {
   it("uses the server expected revision and idempotency key when activated by keyboard", async () => {
     const start = vi.fn(async () => ({ ...view, revision: 8 }));
     const user = userEvent.setup();
-    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: start })} sessionId="session-1" />);
+    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: start })} sessionId="session-1" captureCurrent />);
     const button = await screen.findByRole("button", { name: "提取当前会话快照" });
     button.focus();
     await user.keyboard("{Enter}");
@@ -52,16 +52,61 @@ describe("SessionExtractionPanel", () => {
 
   it("does not query extraction when the actual capability is not verified", async () => {
     const query = vi.fn(async () => view);
-    render(<SessionExtractionPanel api={apiWith({ capabilities: async () => ({ items: [{ ...ready, status: "NOT_VERIFIED", reasonCode: "CAPABILITY_NOT_VERIFIED" }] }), sessionExtraction: query })} sessionId="session-1" />);
+    render(<SessionExtractionPanel api={apiWith({ capabilities: async () => ({ items: [{ ...ready, status: "NOT_VERIFIED", reasonCode: "CAPABILITY_NOT_VERIFIED" }] }), sessionExtraction: query })} sessionId="session-1" captureCurrent />);
     expect(await screen.findByText("CAPABILITY_NOT_VERIFIED")).toBeTruthy();
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("keeps stale command failures visible without claiming success", async () => {
+  it("refreshes a stale revision once and retries with the latest server gate", async () => {
     const user = userEvent.setup();
-    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: async () => { throw new Error("STALE_REVISION"); } })} sessionId="session-1" />);
+    const refreshed = { ...view, revision: 8, extractAction: { ...view.extractAction, expectedRevision: 8, idempotencyKey: "extract:session-1:8" } };
+    const query = vi.fn(async () => query.mock.calls.length === 1 ? view : refreshed);
+    const start = vi.fn()
+      .mockRejectedValueOnce(new ConsoleApiError("STALE_REVISION", "stale", false))
+      .mockResolvedValueOnce({ ...refreshed, revision: 9 });
+    render(<SessionExtractionPanel api={apiWith({ sessionExtraction: query, startSessionExtraction: start })} sessionId="session-1" captureCurrent />);
     await user.click(await screen.findByRole("button", { name: "提取当前会话快照" }));
-    expect((await screen.findByRole("status")).textContent).toContain("STALE_REVISION");
-    expect(screen.queryByText(/已确认/u)).toBeNull();
+    expect((await screen.findByRole("status")).textContent).toContain("已自动刷新");
+    expect(start).toHaveBeenNthCalledWith(1, { sessionId: "session-1", expectedRevision: 7, idempotencyKey: "extract:session-1:7" });
+    expect(start).toHaveBeenNthCalledWith(2, { sessionId: "session-1", expectedRevision: 8, idempotencyKey: "extract:session-1:8" });
+  });
+
+  it("stops after one automatic refresh when the refreshed gate is disabled", async () => {
+    const user = userEvent.setup();
+    const refreshed = {
+      ...view,
+      revision: 8,
+      extractAction: { ...view.extractAction, enabled: false, expectedRevision: 8, idempotencyKey: "extract:session-1:8" },
+    };
+    const query = vi.fn(async () => query.mock.calls.length === 1 ? view : refreshed);
+    const start = vi.fn().mockRejectedValue(new ConsoleApiError("STALE_REVISION", "stale", false));
+    render(<SessionExtractionPanel api={apiWith({ sessionExtraction: query, startSessionExtraction: start })} sessionId="session-1" captureCurrent />);
+    await user.click(await screen.findByRole("button", { name: "提取当前会话快照" }));
+    expect((await screen.findByRole("status")).textContent).toContain("自动刷新后仍发生冲突");
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an unexpected extraction failure without discarding its diagnostic message", async () => {
+    const user = userEvent.setup();
+    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: async () => { throw new Error("model offline"); } })} sessionId="session-1" captureCurrent />);
+    await user.click(await screen.findByRole("button", { name: "提取当前会话快照" }));
+    expect((await screen.findByRole("status")).textContent).toContain("model offline");
+  });
+
+  it("explains that a capture conflict must be resolved before extraction", async () => {
+    const user = userEvent.setup();
+    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: async () => { throw new ConsoleApiError("CONFLICT", "conflict", false); } })} sessionId="session-1" captureCurrent />);
+    await user.click(await screen.findByRole("button", { name: "提取当前会话快照" }));
+    expect((await screen.findByRole("status")).textContent).toContain("主动采集");
+  });
+
+  it("blocks extraction until the parent session confirms capture to the current cursor", async () => {
+    const start = vi.fn(async () => view);
+    render(<SessionExtractionPanel api={apiWith({ startSessionExtraction: start })} sessionId="session-1" captureCurrent={false} />);
+    const button = await screen.findByRole("button", { name: "提取当前会话快照" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("CAPTURE_NOT_CURRENT");
+    expect(screen.getByText("会话尚未采集至最新")).toBeTruthy();
+    expect(start).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,9 @@ import { useAsync } from "../../../app/useAsync.js";
 import { ErrorState, LoadingState } from "../../../components/AsyncState.js";
 import { StatusBadge } from "../../../components/StatusBadge.js";
 import { capabilityDecision } from "../capability.js";
+import { p2EnumLabel, p2ReasonDetail } from "../labels.js";
+
+const LIVE_STAGE_STATUSES = new Set(["QUEUED", "RUNNING", "RETRY_WAIT", "CANCEL_REQUESTED"]);
 
 export function SessionExtractionPanel({ api, sessionId, captureCurrent }: { readonly api: ConsoleApi; readonly sessionId: string; readonly captureCurrent: boolean }): React.JSX.Element {
   const [result, setResult] = useState<SessionExtractionView>();
@@ -19,12 +22,32 @@ export function SessionExtractionPanel({ api, sessionId, captureCurrent }: { rea
   }, [api, sessionId]);
   const [state, retry] = useAsync(load);
   useEffect(() => setResult(undefined), [sessionId]);
+  const loadedExtraction = state.status === "success" ? state.value.extraction : undefined;
+  const liveView = result ?? loadedExtraction;
+  const shouldPoll = liveView?.stages.some(({ status }) => LIVE_STAGE_STATUSES.has(status)) ?? false;
+  useEffect(() => {
+    if (!shouldPoll || api.sessionExtraction === undefined) return;
+    const controller = new AbortController();
+    let inFlight = false;
+    const refresh = (): void => {
+      if (inFlight) return;
+      inFlight = true;
+      void api.sessionExtraction!(sessionId, controller.signal)
+        .then((updated) => setResult(updated))
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) setMessage(error instanceof Error ? `进度刷新失败：${error.message}` : "进度刷新失败");
+        })
+        .finally(() => { inFlight = false; });
+    };
+    const timer = window.setInterval(refresh, 1_000);
+    return () => { window.clearInterval(timer); controller.abort(); };
+  }, [api, sessionId, shouldPoll]);
   if (state.status === "loading") return <LoadingState label="正在读取提取快照" />;
   if (state.status === "error") return <ErrorState error={state.error} retry={retry} />;
   const { capability, extraction } = state.value;
   const view = result ?? extraction;
   if (!capability.ready || api.sessionExtraction === undefined) {
-    return <section className="panel" role="tabpanel" aria-labelledby="extraction-heading"><div className="section-heading"><h2 id="extraction-heading">会话知识提取</h2><StatusBadge status={capability.status} /></div><div className="inline-alert warning"><strong>{capability.reasonCode}</strong><p>{capability.capabilityId} 未就绪；页面不推测后台已执行，也不会构造候选知识。</p></div></section>;
+    return <section className="panel" role="tabpanel" aria-labelledby="extraction-heading"><div className="section-heading"><h2 id="extraction-heading">会话知识提取</h2><StatusBadge status={capability.status} /></div><div className="inline-alert warning"><strong title={capability.reasonCode}>{p2EnumLabel(capability.reasonCode)}</strong><p>{capability.capabilityId} 未就绪；页面不推测后台已执行，也不会构造候选知识。</p></div></section>;
   }
   if (view === undefined) return <section className="panel"><p className="muted">服务端未返回提取视图。</p></section>;
   const gate = view.extractAction;
@@ -32,6 +55,7 @@ export function SessionExtractionPanel({ api, sessionId, captureCurrent }: { rea
   const startExtraction = api.startSessionExtraction;
   const canExtract = captureCurrent && gate.enabled && startExtraction !== undefined && !pending;
   const canCommit = view.commitAction.enabled && view.previewId !== undefined && api.commitSessionExtraction !== undefined && !pending;
+  const stageFailures = view.stages.filter(({ failure, status }) => status === "FAILED" || status === "RETRY_WAIT" || status === "CANCELLED" || (failure !== undefined && status !== "SUCCEEDED"));
   const start = async (): Promise<void> => {
     if (!canExtract || startExtraction === undefined) return;
     setPending(true);
@@ -82,15 +106,15 @@ export function SessionExtractionPanel({ api, sessionId, captureCurrent }: { rea
   return <section className="panel extraction-panel" role="tabpanel" aria-labelledby="extraction-heading">
     <div className="section-heading"><div><h2 id="extraction-heading">会话知识提取</h2><span>revision {view.revision} · 快照重试使用服务端幂等键</span></div><div className="capture-actions"><button type="button" className="primary-button" disabled={!canExtract} title={captureCurrent ? gate.reasonCode : "CAPTURE_NOT_CURRENT"} onClick={() => void start()}>{pending ? "正在提取…" : "提取当前会话快照"}</button><button type="button" className="secondary-button" disabled={!canCommit} title={view.commitAction.reasonCode} onClick={() => void commit()}>明确提交策略并发布</button></div></div>
     {!captureCurrent ? <div className="inline-alert warning"><strong>会话尚未采集至最新</strong><p>请先在上方“主动采集”中生成预览并确认写入 Ledger，然后再提取知识。</p></div> : undefined}
-    {!gate.enabled ? <div className="inline-alert warning"><strong>{gate.reasonCode}</strong><p>当前 revision 不允许创建新快照。</p></div> : undefined}
-    {gate.enabled && api.startSessionExtraction === undefined ? <div className="inline-alert warning"><strong>EXTRACTION_COMMAND_API_NOT_EXPOSED</strong><p>提取视图可读，但当前 Console API 没有暴露写命令。</p></div> : undefined}
+    {!gate.enabled ? <div className="inline-alert warning"><strong title={gate.reasonCode}>{p2EnumLabel(gate.reasonCode)}</strong><p>当前 revision 不允许创建新快照。</p></div> : undefined}
+    {gate.enabled && api.startSessionExtraction === undefined ? <div className="inline-alert warning"><strong title="EXTRACTION_COMMAND_API_NOT_EXPOSED">提取命令接口未开放</strong><p>提取视图可读，但当前 Console API 没有暴露写命令。</p></div> : undefined}
     {message === undefined ? undefined : <p role="status" aria-live="polite" className="inline-alert">{message}</p>}
-    {view.snapshot === undefined ? <p className="muted">尚无不可变提取快照。</p> : <article className="snapshot-card"><div className="section-heading"><h3>Snapshot {view.snapshot.snapshotId}</h3><StatusBadge status={view.snapshot.completeness} /></div><dl className="detail-grid"><div><dt>来源序列</dt><dd>{view.snapshot.sourceSequenceFrom}–{view.snapshot.sourceSequenceThrough}</dd></div><div><dt>编译器</dt><dd>{view.snapshot.compilerVersion}</dd></div><div><dt>策略哈希</dt><dd>{view.snapshot.policyHash}</dd></div><div><dt>创建时间</dt><dd>{new Date(view.snapshot.createdAt).toLocaleString()}</dd></div></dl>{view.snapshot.completeness === "PARTIAL_SNAPSHOT" ? <div className="inline-alert warning"><strong>PARTIAL_SNAPSHOT</strong><p>活跃会话只覆盖到固定序列；不支持事件类型：{view.snapshot.unsupportedEventTypes.join(", ") || "无"}</p></div> : undefined}</article>}
-    <div className="p2-grid"><section aria-labelledby="extraction-progress"><h3 id="extraction-progress">提取进度</h3><ol className="stage-list">{view.stages.map((stage) => <li key={stage.stage}><div><strong>{stage.stage}</strong><small>{stage.reasonCode}{stage.totalUnits === undefined ? "" : ` · ${stage.completedUnits ?? 0}/${stage.totalUnits}`}{stage.retryable ? " · RETRYABLE" : ""}</small></div><StatusBadge status={stage.status} /></li>)}</ol></section><section aria-labelledby="candidate-preview"><h3 id="candidate-preview">候选预览与策略</h3>{view.candidates.length === 0 ? <p className="muted">当前快照没有候选知识。</p> : <div className="candidate-list">{view.candidates.map((candidate) => <article key={candidate.candidateId}><div><strong>{candidate.title}</strong><StatusBadge status={candidate.status} /></div><p>{candidate.summary}</p><small>{candidate.kind} · {candidate.scope} · confidence {candidate.confidence.toFixed(2)}</small><div className="policy-result"><strong>{candidate.policy.action} → {candidate.policy.targetStatus}</strong><span>{candidate.policy.shouldPublish ? "允许发布" : "不进入召回"}</span><small>{candidate.policy.reasonCodes.join(", ")}</small></div><details><summary>双向追溯</summary><Provenance value={candidate.provenance} /></details></article>)}</div>}</section></div>
+    {view.snapshot === undefined ? <p className="muted">尚无不可变提取快照。</p> : <article className="snapshot-card"><div className="section-heading"><h3>快照 {view.snapshot.snapshotId}</h3><StatusBadge status={view.snapshot.completeness} /></div><dl className="detail-grid"><div><dt>来源序列</dt><dd>{view.snapshot.sourceSequenceFrom}–{view.snapshot.sourceSequenceThrough}</dd></div><div><dt>编译器</dt><dd>{view.snapshot.compilerVersion}</dd></div><div><dt>策略哈希</dt><dd>{view.snapshot.policyHash}</dd></div><div><dt>创建时间</dt><dd>{new Date(view.snapshot.createdAt).toLocaleString()}</dd></div></dl>{view.snapshot.completeness === "PARTIAL_SNAPSHOT" ? <div className="inline-alert warning"><strong title="PARTIAL_SNAPSHOT">部分快照</strong><p>活跃会话只覆盖到固定序列；不支持事件类型：{view.snapshot.unsupportedEventTypes.map(p2EnumLabel).join("、") || "无"}</p></div> : undefined}</article>}
+    <div className="p2-grid"><section aria-labelledby="extraction-progress"><h3 id="extraction-progress">提取进度</h3><ol className="stage-list">{view.stages.map((stage) => <li key={stage.stage}><div><strong title={stage.stage}>{p2EnumLabel(stage.stage)}</strong><small title={stage.reasonCode}>{p2EnumLabel(stage.reasonCode)}{stage.totalUnits === undefined ? "" : ` · ${stage.completedUnits ?? 0}/${stage.totalUnits}`}{stage.retryable ? " · 可自动重试" : ""}</small></div><StatusBadge status={stage.status} /></li>)}</ol>{stageFailures.map((stage) => { const code = stage.failure?.code ?? stage.reasonCode; return <div className="inline-alert warning" role="alert" key={`failure:${stage.stage}`}><strong>{p2EnumLabel(stage.stage)}：{p2EnumLabel(code)}</strong><p>{p2ReasonDetail(code) ?? "后台任务返回了失败诊断，请结合诊断码和尝试次数处理。"}</p><small>诊断码 <code>{code}</code>{stage.attempt === undefined ? "" : ` · 已尝试 ${stage.attempt}/${stage.maxAttempts ?? "?"} 次`}{stage.nextAttemptAt === undefined ? "" : ` · 下次重试 ${new Date(stage.nextAttemptAt).toLocaleString()}`}</small></div>; })}</section><section aria-labelledby="candidate-preview"><h3 id="candidate-preview">候选预览与策略</h3>{view.candidates.length === 0 ? <p className="muted">当前快照没有候选知识。</p> : <div className="candidate-list">{view.candidates.map((candidate) => <article key={candidate.candidateId}><div><strong>{candidate.title}</strong><StatusBadge status={candidate.status} /></div><p>{candidate.summary}</p><small><span title={candidate.kind}>{p2EnumLabel(candidate.kind)}</span> · <span title={candidate.scope}>{p2EnumLabel(candidate.scope)}</span> · 置信度 {candidate.confidence.toFixed(2)}</small><div className="policy-result"><strong><span title={candidate.policy.action}>{p2EnumLabel(candidate.policy.action)}</span> → <span title={candidate.policy.targetStatus}>{p2EnumLabel(candidate.policy.targetStatus)}</span></strong><span>{candidate.policy.shouldPublish ? "允许发布" : "不进入召回"}</span><small>{candidate.policy.reasonCodes.map(p2EnumLabel).join("、")}</small></div><details><summary>双向追溯</summary><Provenance value={candidate.provenance} /></details></article>)}</div>}</section></div>
     {view.reverseProvenance.length === 0 ? undefined : <section aria-labelledby="reverse-provenance"><h3 id="reverse-provenance">知识版本反向追溯</h3>{view.reverseProvenance.map((item, index) => <Provenance key={index} value={item} />)}</section>}
   </section>;
 }
 
 function Provenance({ value }: { readonly value: SessionExtractionView["reverseProvenance"][number] }): React.JSX.Element {
-  return <dl className="provenance-grid"><div><dt>Session / Turn</dt><dd>{value.sessionIds.join(", ")} / {value.turnIds.join(", ")}</dd></div><div><dt>Event / Snapshot</dt><dd>{value.eventIds.join(", ")} / {value.snapshotIds.join(", ")}</dd></div><div><dt>Episode</dt><dd>{value.episodeIds.join(", ")}</dd></div><div><dt>Knowledge version</dt><dd>{value.knowledgeVersions.map((item) => <a key={`${item.knowledgeId}:${item.version}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}>{item.knowledgeId}@{item.version}</a>)}</dd></div></dl>;
+  return <dl className="provenance-grid"><div><dt>会话 / 轮次</dt><dd>{value.sessionIds.join(", ")} / {value.turnIds.join(", ")}</dd></div><div><dt>事件 / 快照</dt><dd>{value.eventIds.join(", ")} / {value.snapshotIds.join(", ")}</dd></div><div><dt>对话片段</dt><dd>{value.episodeIds.join(", ")}</dd></div><div><dt>知识版本</dt><dd>{value.knowledgeVersions.map((item) => <a key={`${item.knowledgeId}:${item.version}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}>{item.knowledgeId}@{item.version}</a>)}</dd></div></dl>;
 }

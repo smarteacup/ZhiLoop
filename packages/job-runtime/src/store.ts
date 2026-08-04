@@ -497,6 +497,15 @@ export class SqliteDurableJobStore {
     return row === undefined ? undefined : this.#record(row);
   }
 
+  public getByIdempotencyKey(idempotencyKey: string): DurableJobRecord | undefined {
+    this.#assertOpen();
+    if (!idempotencyKeySchema.safeParse(idempotencyKey).success) throw new Error("idempotencyKey is invalid");
+    const row = this.#database.prepare(
+      "SELECT * FROM durable_jobs WHERE idempotency_key = ?",
+    ).get(idempotencyKey) as JobRow | undefined;
+    return row === undefined ? undefined : this.#record(row);
+  }
+
   public list(request: ListJobsRequest): JobList {
     this.#assertOpen();
     if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 1_000) {

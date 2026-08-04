@@ -291,15 +291,21 @@ export class P2SidecarRuntime {
     const snapshot = this.#service.getSnapshot(preview.snapshot.snapshotId);
     if (snapshot === undefined) return undefined;
     const key = p2CommitRequest(snapshot, preview.previewId, preview.revision, "console-publication-state").idempotencyKey;
-    let after: { readonly createdAt: string; readonly jobId: string } | undefined;
-    for (let pageNumber = 0; pageNumber < 1_000; pageNumber += 1) {
-      const page = this.#jobStore.list({ limit: 1_000, ...(after === undefined ? {} : { after }) });
-      const found = page.items.find((item) => item.jobType === COMMIT_JOB_TYPE && item.idempotency?.key === key);
-      if (found !== undefined) return found;
-      if (page.next === undefined) return undefined;
-      after = page.next;
-    }
-    throw new Error("P2 publication job lookup exceeded its bounded page limit");
+    return this.#jobForIdempotencyKey(COMMIT_JOB_TYPE, key);
+  }
+
+  /** Durable candidate-generation job state used by the Console read model. */
+  public candidatePreviewJobForSnapshot(snapshotId: string): JobSnapshot | undefined {
+    this.#assertOpen();
+    const snapshot = this.#service.getSnapshot(snapshotId);
+    if (snapshot === undefined) return undefined;
+    const key = p2PreviewRequest(snapshot, "console-preview-state").idempotencyKey;
+    return this.#jobForIdempotencyKey(PREVIEW_JOB_TYPE, key);
+  }
+
+  #jobForIdempotencyKey(jobType: string, key: string): JobSnapshot | undefined {
+    const record = this.#jobStore.getByIdempotencyKey(key);
+    return record?.snapshot.jobType === jobType ? record.snapshot : undefined;
   }
 
   async #preview(context: JobExecutionContext): Promise<void> {

@@ -29,6 +29,15 @@ export const p2ExtractionStageViewSchema = z.strictObject({
   retryable: z.boolean(),
   completedUnits: revision.optional(),
   totalUnits: revision.optional(),
+  jobId: safeId.optional(),
+  attempt: revision.optional(),
+  maxAttempts: positiveVersion.optional(),
+  nextAttemptAt: timestamp.optional(),
+  failure: z.strictObject({
+    code: safeCode,
+    retryable: z.boolean(),
+    occurredAt: timestamp,
+  }).optional(),
 });
 
 export const p2ExtractionSnapshotViewSchema = z.strictObject({

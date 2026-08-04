@@ -74,6 +74,7 @@ describe("durable job identity and persistence", () => {
       maxAttempts: 3,
     });
     expect(first.status).toBe("CREATED");
+    expect(store.getByIdempotencyKey("backfill:session:stable:revision:1")?.snapshot.jobId).toBe(first.job.snapshot.jobId);
     expect(duplicate).toMatchObject({ status: "EXISTING", job: { snapshot: { jobId: first.job.snapshot.jobId } } });
     expect(() => store.enqueue({
       jobType: "BACKFILL",

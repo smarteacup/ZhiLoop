@@ -33,9 +33,10 @@ describe("SessionExtractionPanel", () => {
   it("renders partial snapshot, unsupported events, policy and bidirectional provenance", async () => {
     render(<SessionExtractionPanel api={apiWith()} sessionId="session-1" captureCurrent />);
     expect(await screen.findByRole("heading", { name: "会话知识提取" })).toBeTruthy();
-    expect(screen.getAllByText("PARTIAL_SNAPSHOT").length).toBeGreaterThan(0);
-    expect(screen.getByText(/TOOL_STREAM_DELTA/u)).toBeTruthy();
-    expect(screen.getByText(/KEEP_PROPOSED → PROPOSED/u)).toBeTruthy();
+    expect(screen.getAllByText("部分快照").length).toBeGreaterThan(0);
+    expect(screen.getByText(/工具流式增量事件/u)).toBeTruthy();
+    expect(screen.getByText(/保留为候选/u)).toBeTruthy();
+    expect(screen.getByText(/技术决策/u)).toBeTruthy();
     expect(screen.getByRole("link", { name: "knowledge-1@2" }).getAttribute("href")).toBe("#/knowledge/knowledge-1");
   });
 
@@ -53,8 +54,27 @@ describe("SessionExtractionPanel", () => {
   it("does not query extraction when the actual capability is not verified", async () => {
     const query = vi.fn(async () => view);
     render(<SessionExtractionPanel api={apiWith({ capabilities: async () => ({ items: [{ ...ready, status: "NOT_VERIFIED", reasonCode: "CAPABILITY_NOT_VERIFIED" }] }), sessionExtraction: query })} sessionId="session-1" captureCurrent />);
-    expect(await screen.findByText("CAPABILITY_NOT_VERIFIED")).toBeTruthy();
+    expect(await screen.findByText("能力尚未验证")).toBeTruthy();
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("shows the real retry-wait failure reason, attempt count and next retry", async () => {
+    const retryAt = "2026-08-04T10:01:00.000Z";
+    const retrying: SessionExtractionView = {
+      ...view,
+      stages: [{
+        stage: "CANDIDATE_PREVIEW", status: "RETRY_WAIT", reasonCode: "KNOWLEDGE_PREVIEW_INCOMPLETE", retryable: true,
+        jobId: "job-preview-1", attempt: 1, maxAttempts: 5, nextAttemptAt: retryAt,
+        failure: { code: "KNOWLEDGE_PREVIEW_INCOMPLETE", retryable: true, occurredAt: observedAt },
+      }],
+      candidates: [], previewId: undefined,
+      commitAction: { enabled: false, expectedRevision: 0, idempotencyKey: "commit:unavailable", reasonCode: "PREVIEW_NOT_READY" },
+    };
+    render(<SessionExtractionPanel api={apiWith({ sessionExtraction: async () => retrying })} sessionId="session-1" captureCurrent />);
+    expect(await screen.findByText(/候选知识生成结果不完整/u, { selector: "small" })).toBeTruthy();
+    expect(screen.getByText(/后台闭环没有产出可提交的候选策略结果/u)).toBeTruthy();
+    expect(screen.getByText(/已尝试 1\/5 次/u)).toBeTruthy();
+    expect(screen.getByText("KNOWLEDGE_PREVIEW_INCOMPLETE", { selector: "code" })).toBeTruthy();
   });
 
   it("refreshes a stale revision once and retries with the latest server gate", async () => {

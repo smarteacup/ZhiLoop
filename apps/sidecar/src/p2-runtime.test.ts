@@ -264,6 +264,12 @@ describe("P2SidecarRuntime", () => {
         5_000,
       );
       expect(failed.lastFailure?.retryable).toBe(true);
+      expect(runtime.candidatePreviewJobForSnapshot(created.snapshot.snapshotId)).toMatchObject({
+        jobId: job.jobId,
+        status: "FAILED",
+        attempt: failed.attempt,
+        lastFailure: failed.lastFailure,
+      });
       expect(runtime.hasJob(job.jobId)).toBe(true);
       if (failed.revision === undefined) throw new Error("failed job revision is missing");
       await expect(runtime.retryJob({

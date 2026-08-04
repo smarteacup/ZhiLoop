@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { p2KnowledgeFilterSchema, type CapturePreview, type ProvenanceNode } from "@zhiloop/control-api";
+import { p2KnowledgeFilterSchema, type CapturePreview, type JobSnapshot, type ProvenanceNode } from "@zhiloop/control-api";
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import type { TranscriptCursor } from "@zhiloop/codex-session-capture";
 import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
@@ -174,8 +174,33 @@ export function ordinaryP2Scope(level: KnowledgeScope["level"]): P2ScopeLevel {
   return level;
 }
 
-function stage(stageName: string, status: string, reasonCode: string, retryable = false) {
-  return Object.freeze({ stage: stageName, status, reasonCode, retryable });
+function stage(stageName: string, status: string, reasonCode: string, retryable = false, job?: JobSnapshot) {
+  return Object.freeze({
+    stage: stageName,
+    status,
+    reasonCode,
+    retryable,
+    ...(job === undefined ? {} : {
+      jobId: job.jobId,
+      attempt: job.attempt,
+      maxAttempts: job.maxAttempts,
+      ...(job.nextAttemptAt === undefined ? {} : { nextAttemptAt: job.nextAttemptAt }),
+      ...(job.lastFailure === undefined ? {} : { failure: job.lastFailure }),
+    }),
+  });
+}
+
+function candidatePreviewReason(job: JobSnapshot | undefined): string {
+  if (job?.lastFailure !== undefined) return job.lastFailure.code;
+  switch (job?.status) {
+    case "QUEUED": return "CANDIDATE_PREVIEW_QUEUED";
+    case "RUNNING": return "CANDIDATE_PREVIEW_RUNNING";
+    case "RETRY_WAIT": return "CANDIDATE_PREVIEW_RETRY_WAIT";
+    case "CANCELLED": return "CANDIDATE_PREVIEW_CANCELLED";
+    case "FAILED": return "CANDIDATE_PREVIEW_FAILED";
+    case "SUCCEEDED": return "CANDIDATE_PREVIEW_RESULT_MISSING";
+    default: return "CANDIDATE_PREVIEW_NOT_ENQUEUED";
+  }
 }
 
 function policyStatus(decision: "PUBLISH" | "KEEP_PROPOSED" | "REQUIRE_CONFIRMATION" | "REJECT"): KnowledgeStatus {
@@ -236,6 +261,7 @@ export class P2ConsoleRuntime {
   sessionView(sessionId: string) {
     const snapshot = this.#options.runtime.service().listSnapshots({ sessionId, limit: 1 }).items[0];
     const preview = snapshot === undefined ? undefined : this.#options.runtime.service().getCandidatePreviewForSnapshot(snapshot.snapshotId);
+    const previewJob = snapshot === undefined ? undefined : this.#options.runtime.candidatePreviewJobForSnapshot(snapshot.snapshotId);
     const commit = preview === undefined ? undefined : this.#options.runtime.service().getPolicyCommitForPreview(preview.previewId);
     const checkpoint = snapshot === undefined ? undefined : this.#options.production.checkpoint(snapshot.snapshotId);
     const publicationJob = preview === undefined ? undefined : this.#options.runtime.publicationJobForPreview(preview.previewId);
@@ -247,7 +273,13 @@ export class P2ConsoleRuntime {
         : commit === undefined || checkpoint === undefined || checkpoint.status === "AWAITING_COMMIT" ? "PENDING" : "RUNNING";
     const stages = [
       stage("SNAPSHOT", snapshot === undefined ? "PENDING" : "SUCCEEDED", snapshot === undefined ? "SNAPSHOT_NOT_CREATED" : "SNAPSHOT_IMMUTABLE"),
-      stage("CANDIDATE_PREVIEW", preview === undefined ? (snapshot === undefined ? "PENDING" : "RUNNING") : "SUCCEEDED", preview === undefined ? "CANDIDATE_PREVIEW_PENDING" : "CANDIDATE_PREVIEW_READY", preview === undefined && snapshot !== undefined),
+      stage(
+        "CANDIDATE_PREVIEW",
+        preview !== undefined ? "SUCCEEDED" : snapshot === undefined ? "PENDING" : previewJob?.status ?? "PENDING",
+        preview !== undefined ? "CANDIDATE_PREVIEW_READY" : snapshot === undefined ? "SNAPSHOT_REQUIRED" : candidatePreviewReason(previewJob),
+        preview === undefined && (previewJob?.lastFailure?.retryable ?? previewJob?.status === "RETRY_WAIT"),
+        previewJob,
+      ),
       stage("POLICY_COMMIT", commit === undefined ? "PENDING" : "SUCCEEDED", commit === undefined ? "EXPLICIT_COMMIT_REQUIRED" : "POLICY_COMMITTED"),
       stage(
         "KNOWLEDGE_PUBLICATION",

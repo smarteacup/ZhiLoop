@@ -1,9 +1,9 @@
 # ZhiLoop Console 本地控制台技术设计
 
 **状态**：Implemented
-**版本**：1.0
+**版本**：1.1
 **创建日期**：2026-08-03  
-**最后更新**：2026-08-04
+**最后更新**：2026-08-07
 **目标读者**：产品设计者、实现者、维护者、测试与安全评审者  
 **关联文档**：
 
@@ -11,7 +11,9 @@
 - [本地部署与回滚](../deployment.md)
 - [ADR-0001：模块化单体与端口适配器](../adr/0001-modular-monolith.md)
 - [ADR-0004：可控复杂度知识注入与闭环验证](../adr/0004-context-orchestration-and-closure.md)
-- [OpenSpec：build-zhiloop-console](../../openspec/changes/build-zhiloop-console/design.md)
+- [ADR-0005：使用 CodeGraph 作为实时代码事实层](../adr/0005-codegraph-as-live-code-fact-layer.md)
+- [CodeGraph 集成与知识保鲜技术设计](./codegraph-integration-and-knowledge-freshness-tdd.md)
+- [OpenSpec：build-zhiloop-console](../../openspec/changes/archive/2026-08-03-build-zhiloop-console/design.md)
 
 ## 1. 摘要
 
@@ -76,6 +78,7 @@ ZhiLoop Console 是面向本机用户的可交互控制台。它不是 SQLite �
 | Stop 闭环和反馈 | 已实现 | 有限 continuation、Gate 与反馈已接通 | Closure、纠偏与人工确认可见 |
 | ACTIVE 模式 | 已实现 | 默认仍为 SHADOW | 只能经质量证据、灰度和高风险确认切换 |
 | 可观测控制面 | 已实现 | Gateway + SPA 已部署 | 本设计交付完成 |
+| CodeGraph 联邦检索与知识保鲜 | 已完成设计 | P8 尚未接通 | `DISABLED/NOT_CONFIGURED`，显示 CodeGraph、Anchor、Freshness Gate 前置条件 |
 | Linux/Windows、跨机器同步 | 未部署 | 未接通 | “部署与同步”页显示不支持 |
 
 ### 4.1 交互需求推演结论
@@ -313,6 +316,7 @@ sessionId -> turnId -> injectionAttempt -> runId -> retrievalTraceId
 - symbols、aliases、keywords
 - relation graph：派生、实现、冲突、替代、重复、相关
 - 生命周期历史和失效原因
+- P8 CodeAnchor、Verification Recipe、最后 code/graph revision、新鲜度结果和受影响 symbol/path
 - 最近被召回、注入、展开和反馈记录
 
 治理操作按风险分级：
@@ -359,6 +363,7 @@ sessionId -> turnId -> injectionAttempt -> runId -> retrievalTraceId
 - rerank 原因
 - 权威等级、证据、来源 Episode
 - 是否注入；若未注入，显示具体原因：预算、去重、低权威、Scope、状态、策略或超时
+- 来源类型：`KNOWLEDGE` 或 `LIVE_CODE_FACT`；代码事实显示 CodeGraph query kind、revision、耗时和 Freshness Gate 结果
 
 #### 召回实验室
 
@@ -374,8 +379,9 @@ sessionId -> turnId -> injectionAttempt -> runId -> retrievalTraceId
 
 召回页面提供两个明确模式：
 
-1. **搜索知识**：不调用模型，直接执行 Exact/FTS/Vector/Relation 混合召回，返回可解释的知识列表。适合查类名、配置、错误码和精确事实。
-2. **问 ZhiLoop**：先执行相同的 Scope 受限召回，再调用本地 Codex 对结果进行只读综合，返回答案、引用知识版本和不确定性。适合“结合已有方案告诉我应该怎么做”一类问题。
+1. **搜索知识**：不调用模型，执行 Exact/FTS/Vector/Relation 混合召回，返回需求、边界、决策、原因和经验等可解释语义知识。
+2. **查当前代码（P8）**：通过 CodeGraph 查询定义、调用者、被调用者、调用路径和影响范围；结果是 `LIVE_CODE_FACT`，不写入长期知识正文。
+3. **问 ZhiLoop**：先执行 Scope 受限语义召回，再按 CodeAnchor 获取当前代码事实，调用本地 Codex 进行只读综合；回答明确区分历史决策和当前代码，并返回引用与不确定性。
 
 “问 ZhiLoop”不是新的可写 Codex 对话，也不能执行工具或修改项目。它通过单独的 `CodexKnowledgeQueryModel` 端口调用本地 `codex exec --sandbox read-only --ephemeral`，输入仅包括用户问题、QueryContext 和有界的已召回知识。现有 `CodexExecStructuredGenerationModel` 可以复用进程隔离、输出 Schema、超时和 token 诊断，但需要新增面向问答的 prompt 与响应 Schema，不能复用“知识提取 worker”提示词。
 
@@ -493,6 +499,7 @@ sessionId -> turnId -> injectionAttempt -> runId -> retrievalTraceId
 | 事件覆盖与子 Agent 归并 | 会话详情、配置 | 已支持/忽略事件、parent relation | 覆盖策略草稿 |
 | 知识生产流水线 | 总览、会话、知识、任务 | 每阶段状态、输入输出、job、原因 | 重试失败阶段 |
 | 可解释召回 | 召回与注入 | channel、score、rank、filter、reason | dry-run/replay |
+| CodeGraph 联邦检索与知识保鲜 | 知识、召回与注入、任务、部署 | capability、CodeAnchor、code/graph revision、受影响代码、Freshness Gate 和失败原因 | P8 接通前只读展示前置条件；接通后允许手动复验 |
 | MCP 展开 | 召回与注入、部署 | transport、tool call、detail level | SHADOW 模拟；启用受门禁控制 |
 | 闭环与反馈 | 闭环、配置、任务 | Gate、decision、delta、counter | 重放验证（只读） |
 | ACTIVE 灰度 | 总览、配置、部署 | eligibility、影子质量、回滚状态 | 首版无启用按钮 |
@@ -846,6 +853,14 @@ SSE 只发布轻量失效通知，不携带知识正文：
 - [ ] 跨机器同步协议与冲突视图
 - [ ] 可选原生壳评估
 
+### Phase C6：CodeGraph 与知识保鲜扩展（P8 Proposed）
+
+- [ ] CodeGraph capability、版本、项目索引和降级状态
+- [ ] 知识详情中的 CodeAnchor、Verification Recipe、最后验证基线和失效原因
+- [ ] “查当前代码”模式与 `KNOWLEDGE/LIVE_CODE_FACT` 双来源 Trace
+- [ ] 受影响知识列表、自动修复任务、版本 Diff 和手动复验
+- [ ] Freshness Gate 时延、排除原因和故障降级指标
+
 ## 16. 模块验收与 Review 要求
 
 每个 Phase 必须独立完成自测和 review，不能以页面截图代替后端正确性。
@@ -889,6 +904,8 @@ Review 必须检查：
 | 知识 suppress 生效延迟 P95 | 无 | <1s 退出默认召回 | 治理 E2E |
 | Codex-assisted 回答引用率 | 无 | 100% 事实段有知识版本引用 | Answer Schema audit |
 | 可访问性 | 无 | 关键流程无严重违规 | axe + 键盘测试 |
+| 代码相关注入的新鲜度可见率 | 0% | 100% 显示 revision 与 Gate 结果 | Trace/UI E2E |
+| CodeGraph 失败原因可解释率 | 0% | 100% 使用稳定原因码和中文解释 | Contract test |
 
 ## 18. 风险与缓解
 
@@ -909,6 +926,8 @@ Review 必须检查：
 | 用户把“移除”误认为物理删除 | 高 | 中 | 分离 suppress/supersede/privacy purge，展示可恢复性和影响 |
 | Codex-assisted 查询生成无依据结论 | 高 | 中 | 先召回后综合、结构化 citations/unknowns、无引用不展示为事实 |
 | 后台频率或重试配置造成调用风暴 | 高 | 中 | 最小间隔、指数退避、jitter、并发上限和熔断 |
+| 用户混淆历史知识与当前代码事实 | 高 | 中 | 双来源标签、不同视觉层级、revision 和 observedAt，不允许合并为无来源正文 |
+| CodeGraph 未接通却被页面展示为可用 | 高 | 低 | Capability API 四维证据；P8 完成前固定 `DISABLED/NOT_CONFIGURED` |
 
 ## 19. 待确认但不阻塞设计的问题
 

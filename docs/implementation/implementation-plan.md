@@ -1,9 +1,9 @@
 # ZhiLoop 实施计划
 
-**状态**：Completed（P0～P7、横切任务与 MVP 最终单流 Gate 全部通过）  
-**版本**：0.3  
+**状态**：P0～P7 Completed；P8 Proposed  
+**版本**：0.4  
 **创建日期**：2026-08-01  
-**最近更新**：2026-08-02  
+**最近更新**：2026-08-07  
 **依据**：[ZhiLoop（Codex Knowledge Layer）技术设计](../design/codex-knowledge-layer-tdd.md)
 
 ## 1. 实施约束
@@ -27,9 +27,10 @@ flowchart LR
     P4 --> P5["P5 混合召回与可控注入"]
     P5 --> P6["P6 闭环验证、交互与反馈"]
     P6 --> P7["P7 App Server 与插件包装"]
+    P7 --> P8["P8 CodeGraph 联邦检索与知识保鲜"]
 ```
 
-P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；P6 完成“有限闭环 MVP”；P7 是接入形态演进阶段。
+P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；P6 完成“有限闭环 MVP”；P7 是接入形态演进阶段。P8 在已验收 MVP 上引入 CodeGraph 实时代码事实层，消除代码知识副本并补齐生产知识保鲜链路。
 
 ## 3. P0：工程与领域骨架（已完成）
 
@@ -600,7 +601,94 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - Plugin/sidecar/protocol/Hook/App Server 兼容规则由机器可读声明验证。
 - Plugin 只包装 Adapter 和启动方式，领域与应用源码不复制进插件。
 
-## 11. 横切任务
+## 11. P8：CodeGraph 联邦检索与知识保鲜（Proposed）
+
+设计依据：[CodeGraph 集成与知识保鲜技术设计](../design/codegraph-integration-and-knowledge-freshness-tdd.md)与 [ADR-0005](../adr/0005-codegraph-as-live-code-fact-layer.md)。P8 尚未实施，不计入当前 `0.3.14` 已完成能力。
+
+### CKL-801：CodeIntelligencePort 与 CodeGraph Adapter
+
+**依赖**：CKL-303、CKL-501、CKL-704  
+**状态**：未开始  
+**交付物**：能力协商、revision、anchor resolution、definition/callers/callees/trace/impact/change 查询端口，CodeGraph 生产 Adapter 与确定性 Fixture Adapter。  
+**验收条件**：
+
+- 领域包不得依赖 CodeGraph 数据库、进程或私有 Schema。
+- Adapter 查询必须携带 project/repository/worktree/branch/revision 身份。
+- 超时、未初始化、部分语言不支持和 Schema 变化具有稳定 reason codes。
+- CodeGraph 故障不得阻塞 Codex 主流程。
+
+### CKL-802：CodeAnchor、VerificationRecipe 与反向索引
+
+**依赖**：CKL-002、CKL-402、CKL-801 接口冻结  
+**状态**：未开始  
+**交付物**：CodeAnchor/VerificationRecipe Schema、SQLite 投影、symbol/path/query 到知识版本的反向索引、旧知识 dry-run 迁移报告。  
+**验收条件**：
+
+- 可重建代码事实不新增为长期知识正文。
+- Anchor 不依赖 CodeGraph node ID 的跨版本稳定性。
+- 删除 SQLite 后可从 Markdown 元数据和版本记录重建反向索引。
+- 迁移默认只预览，不覆盖旧正文、不删除 Evidence。
+
+### CKL-803：ChangeSet Adapter 与保鲜 Worker
+
+**依赖**：CKL-305、CKL-801、CKL-802  
+**状态**：未开始  
+**交付物**：Git/CodeGraph ChangeSet、文件事件去抖、受影响知识定位、确定性复验、指纹刷新、STALE/REVALIDATE 持久化和有界修复任务。  
+**验收条件**：
+
+- 无语义变化时只刷新指纹，不调用模型、不产生知识新正文。
+- 相关变化只复验命中 Anchor 的知识；不相关变化误失效率低于 1%。
+- 大型 ChangeSet 可分片、限流、恢复，重复事件保持幂等。
+- 分支、worktree 和 revision 隔离，不允许跨分支误失效。
+
+### CKL-804：CodeGraph 联邦召回与 Freshness Gate
+
+**依赖**：CKL-502、CKL-504、CKL-801、CKL-802  
+**状态**：未开始  
+**交付物**：`KNOWLEDGE/LIVE_CODE_FACT` 双来源 Retrieval Trace、CodeGraph 快速路径、最终候选批量新鲜度门禁、降级与断路器。  
+**验收条件**：
+
+- 纯代码结构问题优先由 CodeGraph 回答，不先召回代码知识副本。
+- 100% 最终注入的代码相关知识经过同一 revision 新鲜度校验。
+- 已知 `STALE/SUPERSEDED` 或复验失败的代码事实不进入默认 Context Envelope。
+- CodeGraph 不可用时允许继续 Codex 任务，但不得把无法确认的历史事实标记为当前事实。
+
+### CKL-805：控制台保鲜视图与治理操作
+
+**依赖**：CKL-803、CKL-804 Control API  
+**状态**：未开始  
+**交付物**：知识新鲜度、最后代码基线、CodeAnchor、受影响 symbol/path、失败原因、修复任务、版本 Diff 和手动复验入口。  
+**验收条件**：
+
+- 枚举和 reason codes 提供中文文案并保留原始码悬停信息。
+- 用户可从知识跳转到来源会话、旧版本和相关 CodeGraph 查询摘要。
+- 自动更新前后可以查看知识语义 Diff 与代码证据变化。
+- 手动复验使用 revision/expectedVersion，冲突时刷新后安全重试。
+
+### CKL-806：迁移、评估与真实链路 Gate
+
+**依赖**：CKL-801～CKL-805  
+**状态**：未开始  
+**交付物**：旧知识分类迁移、ChangeSet Golden Dataset、CodeGraph 故障注入、性能基线、真实仓库验收和回滚报告。  
+**验收条件**：
+
+- 相关代码变化定位 Recall 不低于 95%。
+- 已知过期代码事实误注入为 0。
+- 无语义变化场景调用模型的比例低于 5%。
+- CodeGraph 可用时 Freshness Gate P95 低于 200 ms。
+- 关闭 CodeGraph 后 Codex 主流程、知识治理和非代码知识召回仍可用。
+
+### P8 Gate
+
+**状态**：未开始  
+
+- 一次方法实现调整只触发关联知识复验，不扫描全部资产。
+- 语义不变时只刷新 Fingerprint；语义改变时生成新版本并保留旧版本追溯。
+- 同一问题的注入结果明确区分历史决策和 CodeGraph 当前事实。
+- CodeGraph 查询超时、未初始化和结构证据冲突均有可观察降级结果。
+- 真实仓库验证不修改用户 CodeGraph、Codex 或 CCM 配置。
+
+## 12. 横切任务
 
 ### CKL-X01：安全和脱敏
 
@@ -618,7 +706,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 记录 CKL、Codex、Hook Schema、App Server Schema、Markdown Schema 和 DB Migration 版本。
 
-## 12. 实施顺序和可并行边界
+## 13. 实施顺序和可并行边界
 
 在不破坏依赖关系时，可并行的任务：
 
@@ -627,6 +715,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - CKL-301 与 CKL-303 可并行。
 - CKL-401 与 CKL-402 的 Schema 设计可并行，实现以 CKL-401 为权威。
 - CKL-501 与 CKL-505 的评估框架可提前并行。
+- CKL-801 与 CKL-802 在端口和 Schema 冻结后可并行；CKL-803 与 CKL-804 在共同的 revision/anchor 契约冻结后可并行。
 
 不得并行导致接口漂移的组合：
 
@@ -636,8 +725,10 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 - Context Envelope Schema 和复杂度策略未冻结前，不实现多个注入 Adapter。
 - Closure Verification Result 未冻结前，不启用 Stop 自动续跑。
 - Shadow Mode 未达标前，不实现自动全局晋升。
+- CodeAnchor Schema 未冻结前，不实现多个代码图谱 Adapter。
+- Freshness Gate Trace 未定义前，不允许把 CodeGraph 结果加入 ACTIVE 注入。
 
-## 13. 实施默认值
+## 14. 实施默认值
 
 为避免实施前反复确认，以下值作为默认决定；只有用户明确改变方向时才调整：
 
@@ -646,10 +737,11 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 3. P0-P4 不要求生产向量服务，使用 Exact、FTS5、Scope 和 Relation 完成闭环；P4 完成 `VectorIndexPort` 和确定性测试实现。P5 是否启用具体 Embedding Provider 由 Golden Dataset 结果决定，不影响其他模块交付。
 4. 所有知识默认保存在 `~/.ckl`，项目仓库 Publisher 默认关闭。
 5. 自动验证默认只消费当前 Codex 会话已经发生的代码、命令和测试证据，不额外后台执行命令。
+6. P8 默认优先接入本地 CodeGraph；通过 `CodeIntelligencePort` 隔离，不把 CodeGraph 查询快照发布为长期知识正文。
 
 实施过程中不得因适配器或模型选择重新设计领域对象；不满足默认实现条件时，应新增 Adapter，而不是修改模块边界。
 
-## 14. MVP 最终验收场景
+## 15. MVP 最终验收场景
 
 ```text
 Given 用户在 Codex 中提出一个技术方案

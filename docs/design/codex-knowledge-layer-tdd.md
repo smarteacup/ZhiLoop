@@ -1,8 +1,9 @@
 # ZhiLoop（Codex Knowledge Layer）技术设计
 
 **状态**：Proposed  
-**版本**：0.2  
+**版本**：0.3  
 **创建日期**：2026-08-01  
+**最近更新**：2026-08-07  
 **目标读者**：实现者、维护者、技术评审者  
 **关联文档**：
 
@@ -11,13 +12,15 @@
 - [ADR-0002：Markdown 权威源与 SQLite 投影](../adr/0002-markdown-sqlite-storage.md)
 - [ADR-0003：Codex 接入策略](../adr/0003-codex-integration.md)
 - [ADR-0004：可控复杂度知识注入与闭环验证](../adr/0004-context-orchestration-and-closure.md)
+- [ADR-0005：使用 CodeGraph 作为实时代码事实层](../adr/0005-codegraph-as-live-code-fact-layer.md)
+- [CodeGraph 集成与知识保鲜技术设计](./codegraph-integration-and-knowledge-freshness-tdd.md)
 - [ZhiLoop Console 本地控制台技术设计](./zhiloop-console-tdd.md)
 
 ## 1. 摘要
 
 ZhiLoop（知环）的核心架构 Codex Knowledge Layer（下文简称 CKL）是一个与 CCM 并行运行、未来可封装为 Codex/CCM 及其他 AI 编程代理插件的本地知识采集、治理、检索、编排和注入系统。它从 Codex 对话和可观察工具事件中提取可复用知识，并通过代码、配置、测试和用户明确表态自动验证知识。系统默认不要求人工审核；只有高影响、存在冲突且无法通过证据判定时，才利用当前 Codex 对话进行一次微确认。
 
-CKL 沉淀的不只是“使用经验”，还包括需求、事实、技术方案、架构决策、实现记录、失败路径、规则、偏好和未解决问题。知识按任务、符号、模块、项目、用户、团队和全局作用域分层。
+CKL 沉淀的不只是“使用经验”，还包括需求、技术方案、架构决策、实现语义、失败路径、规则、偏好和未解决问题。知识按任务、符号、模块、项目、用户、团队和全局作用域分层。符号定义、调用链和影响范围等可从当前代码确定性重建的事实不重复沉淀为长期正文；目标架构通过 `CodeIntelligencePort` 使用 CodeGraph 作为实时代码事实层。
 
 CKL 不以“尽可能多地注入知识”为目标。它根据当前任务、模型能力、风险、歧义、知识状态和上下文预算，控制注入内容的广度、深度、权威性和证据粒度。默认只提供少量边界、门禁、已有能力摘要和知识指针，让底层模型自主决策；需要时再通过 `ckl.search`、`ckl.get` 和闭环验证定向展开知识。
 
@@ -27,7 +30,7 @@ CKL 不以“尽可能多地注入知识”为目标。它根据当前任务、�
 2. 使用 Codex Hooks 接入现有 Codex 客户端；后续增加 App Server 结构化适配器。
 3. 使用 Markdown 作为已发布知识的权威内容；SQLite 保存事件账本、候选知识、关系、FTS 索引和检索审计。
 4. 将“保存知识”和“知识生效”分离。候选知识可以无感保存，只有满足证据策略的知识才能进入默认召回集合。
-5. 使用精确匹配、FTS5、语义向量、作用域和关系扩展组成混合召回；由 Context Orchestrator 将结果编排为可控复杂度的 `ContextEnvelope`。
+5. 使用精确匹配、FTS5、语义向量、作用域和关系扩展召回语义知识，并通过 CodeGraph Adapter 获取当前代码事实；由 Context Orchestrator 将两类结果编排为可控复杂度的 `ContextEnvelope`。
 6. 使用 `UserPromptSubmit` 完成回合前主动注入，使用本地 MCP 工具完成运行中按需拉取。
 7. 在 `Stop` 阶段执行闭环验证；仅在信息不足或违反门禁时定向补充知识或纠偏，禁止重复注入完整历史。
 
@@ -44,6 +47,7 @@ Codex 对话会产生大量高价值信息，但目前通常存在以下问题�
 - 纯向量检索对类名、错误码、配置项和精确术语召回不稳定。
 - 项目知识、个人偏好和全局经验容易串用。
 - 代码变化后，历史知识不会自动过期。
+- 把调用链、符号位置等代码事实复制到知识库会与 CodeGraph 重复，并产生两份事实漂移。
 
 ### 2.2 目标
 
@@ -60,6 +64,7 @@ CKL 必须实现：
 9. 保持 Codex、CCM、存储和模型供应方可替换。
 10. 根据任务动态控制注入复杂度，并允许 Codex 运行中自主获取更深知识。
 11. 在任务结束前以确定性门禁和独立语义检查形成有限次数的自闭环。
+12. 使用成熟代码检索工具提供当前代码事实，ZhiLoop 只治理无法由代码直接重建的语义知识和验证关系。
 
 ### 2.3 非目标
 
@@ -71,6 +76,7 @@ CKL 必须实现：
 - 保存或依赖隐藏推理、思维链等不可稳定获得的数据。
 - 将候选方案自动提升为全局规则。
 - 替代 Codex 原生 Memories；CKL 与其并存但不依赖其内部格式。
+- 重新实现完整代码图谱、语言解析器或以 ZhiLoop 的历史正文替代 CodeGraph 当前事实。
 
 ## 3. 术语
 
@@ -89,6 +95,9 @@ CKL 必须实现：
 | Injection Complexity | 注入的广度、深度、权威性和证据粒度，分为 L0-L4 |
 | Task Contract | Context Envelope 中可选的任务目标、Scope、边界和完成门禁区块，不是 CKL 的唯一产物 |
 | Closure Verification | 任务结束前基于目标、上下文、Diff 和证据执行的独立验证过程 |
+| Live Code Fact | 从当前代码和 CodeGraph 实时获得、可重新计算的符号、关系、调用链和影响事实 |
+| Code Anchor | 知识到 repository/path/symbol/query recipe 的稳定引用，不保存上次查询结果作为权威事实 |
+| Freshness Gate | 知识进入 Context Envelope 前，对代码相关结论执行的有界新鲜度校验 |
 
 ## 4. 设计原则
 
@@ -104,6 +113,8 @@ CKL 必须实现：
 10. **按需展开**：运行中发现新问题时按知识 ID 定向拉取，不整体扩大上下文。
 11. **模型自主**：边界和门禁内的方案选择、执行顺序与工具选择交给底层模型。
 12. **闭环有限**：自动续跑默认最多一次，高风险任务最多两次，避免自验证死循环。
+13. **代码事实不复制**：能由 CodeGraph 从当前代码确定性重建的内容只保存锚点，不发布为长期知识正文。
+14. **召回前复验**：后台失效检测之外，代码相关知识进入注入集合前必须再次校验当前代码基线。
 
 ## 5. 系统上下文
 
@@ -119,6 +130,7 @@ flowchart LR
     CKL --> KB["本地知识目录\nMarkdown"]
     CKL --> DB["SQLite\nLedger / Candidate / FTS / Audit"]
     CKL --> EM["Extraction / Embedding / Rerank Port"]
+    CKL --> CG["CodeGraph\n实时代码事实与影响范围"]
 
     CKL -->|"UserPromptSubmit additionalContext"| CX
     CX -->|"ckl.search / get / related / check"| CKL
@@ -137,6 +149,7 @@ flowchart LR
 | Codex App Server | 后续用于结构化事件、历史线程读取和自有客户端 | 与 Hooks 使用同一规范化事件协议 |
 | CCM | 不作为知识事实源 | 可提供安装包装、指标或插件入口 |
 | 项目代码 | 只读分析、指纹和证据验证 | 未经授权不得后台执行任意命令 |
+| CodeGraph | 通过 `CodeIntelligencePort` 查询符号、关系、调用链、影响范围和结构化变化 | 当前代码事实源，不承载业务决策；超时或不可用时必须安全降级 |
 | Git 仓库 | 提供项目身份、Diff、版本和可选发布目标 | 自动知识生效不等于自动 Git 提交 |
 | CKL MCP | 运行中按需查询、展开和检查知识 | 只返回当前 Scope 内有资格的知识；所有结果可追溯 |
 
@@ -175,6 +188,7 @@ flowchart TB
         SQ["SQLite Ledger / Projection"]
         MOD["Model Adapter"]
         CODE["Code / Git Verifiers"]
+        CG["CodeGraph Adapter"]
     end
 
     D --> ING
@@ -199,8 +213,10 @@ flowchart TB
     REG --> SQ
     CMP --> MOD
     EVD --> CODE
+    EVD --> CG
     RET --> SQ
     RET --> MOD
+    RET --> CG
     CTX --> RET
     INJ --> CTX
     CLO --> EVD
@@ -219,7 +235,7 @@ flowchart TB
 | `scope-resolver` | 识别项目和知识作用域 | 候选知识、RepoContext | `ResolvedScope` | 检索排序、模型供应商 |
 | `evidence-engine` | 执行验证器并决定状态迁移 | 候选、断言、证据 | 新状态、置信度、证据 | Codex transcript、发布格式 |
 | `knowledge-registry` | 版本、关系、发布、失效和投影协调 | 已决策资产 | Markdown 和索引变更 | Codex Hook |
-| `retrieval-engine` | 多路召回、融合、重排和解释 | `QueryContext` | `RetrievedKnowledge[]`、`RetrievalTrace` | 直接读取 transcript、决定注入格式 |
+| `retrieval-engine` | 语义知识召回与实时代码事实联邦查询、融合、重排和解释 | `QueryContext` | `RetrievedKnowledge[]`、`LiveCodeFact[]`、`RetrievalTrace` | 直接读取 transcript、复制 CodeGraph 数据库、决定注入格式 |
 | `context-orchestrator` | 按复杂度策略编排任务、边界、门禁、能力和知识 | 查询结果、风险、预算、任务状态 | `ContextEnvelope` | Codex Hook 线协议、直接修改知识状态 |
 | `knowledge-injection` | 将 Context Envelope 推送或按需返回给 Codex | `ContextEnvelope`、MCP 请求 | `additionalContext`、MCP 结果 | 检索排序、知识编译 |
 | `closure-verifier` | 在任务停止前检查目标对齐、Scope 和门禁，决定闭环动作 | Context Envelope、Diff、测试、最终结论 | `PASS`、`RETRY_WITH_CONTEXT`、`RETRY_WITH_CORRECTION`、`ASK_USER` | 扩大原始需求、无限续跑 |
@@ -693,6 +709,8 @@ sequenceDiagram
     participant F as FTS/Exact
     participant V as Vector Index
     participant G as Relation/Scope Index
+    participant CG as CodeGraph Adapter
+    participant FG as Freshness Gate
     participant X as Context Orchestrator
     participant M as CKL MCP
 
@@ -707,7 +725,11 @@ sequenceDiagram
     V-->>R: ranked candidates
     G-->>R: ranked candidates
     R->>R: RRF + eligibility + rerank + diversity
-    R->>X: candidates + RetrievalTrace
+    R->>CG: final candidates 的 CodeAnchor 批量查询
+    CG-->>FG: LIVE_CODE_FACT + code/graph revision
+    R->>FG: semantic candidates
+    FG->>FG: 验证代码相关结论的新鲜度
+    FG->>X: fresh candidates + live facts + RetrievalTrace
     X->>X: risk + ambiguity + conflict + budget
     X-->>C: L0-L3 ContextEnvelope via additionalContext
     C->>M: optional search/get/related/check
@@ -719,17 +741,19 @@ sequenceDiagram
 
 1. 构建 `QueryContext`：prompt、projectId、cwd、branch、文件、符号、错误码。
 2. 按 Scope 和状态先做资格过滤。
-3. 并行执行精确、FTS5、向量和关系召回。
+3. 并行执行精确、FTS5、向量和关系召回；这些通道主要检索语义知识，不复制可由 CodeGraph 重建的代码结构事实。
 4. 使用 Reciprocal Rank Fusion 合并不同量纲的排名。
 5. 对前 30 条执行可替换的 Rerank。
 6. 使用多样性规则去除同一 subject 的重复版本。
-7. Context Orchestrator 根据任务风险、歧义、知识冲突、项目特异性、上下文压力和模型可用能力选择 `L0-L4`。
-8. 默认生成混合 Envelope：Binding Rule 以 `L2_COMPACT` 主动注入，其他候选以 `L1_POINTER` 简介注入；不自动批量注入正文。
-9. 运行中通过 `ckl.search/related` 发现更多 L1 指针，通过 `ckl.get` 定向展开到 L2 或 L3，并用 `ckl.check` 复核当前版本。
-10. 预分配 Trace ID，使用共享 Renderer 按完整 `additionalContext` 核算预算；记录 disclosed/omitted 数量，截断时提供 `ckl.search` 下一步动作。
-11. 输出 `ContextEnvelope` 和完整 Retrieval Trace。
+7. 对最终代码相关候选批量解析 `CodeAnchor`，通过 CodeGraph 取得同一代码 revision 下的符号、关系、调用链或影响事实。
+8. Freshness Gate 比较历史语义结论、Verification Recipe 与当前事实；失效候选退出默认注入，超时或 UNKNOWN 时不得把历史代码描述标记为当前事实。
+9. Context Orchestrator 根据任务风险、歧义、知识冲突、项目特异性、上下文压力和模型可用能力选择 `L0-L4`。
+10. 默认生成混合 Envelope：Binding Rule 以 `L2_COMPACT` 主动注入，其他候选以 `L1_POINTER` 简介注入；不自动批量注入正文。
+11. 运行中通过 `ckl.search/related` 发现更多 L1 指针，通过 `ckl.get` 定向展开到 L2 或 L3，并用 `ckl.check` 复核当前版本和 CodeGraph revision。
+12. 预分配 Trace ID，使用共享 Renderer 按完整 `additionalContext` 核算预算；记录 disclosed/omitted 数量，截断时提供 `ckl.search` 下一步动作。
+13. 输出 `ContextEnvelope` 和完整 Retrieval Trace，显式区分 `KNOWLEDGE` 与 `LIVE_CODE_FACT` 来源。
 
-向量服务不可用时，系统必须使用精确匹配、FTS5、Scope 和关系索引降级。
+向量服务不可用时，系统必须使用精确匹配、FTS5、Scope 和关系索引降级。CodeGraph 不可用时，不影响 Codex 主流程；系统可以使用 Git/path/config/dependency Verifier 降级，但无法复验的代码事实不得作为当前事实注入。
 
 复杂度由四个正交维度控制：
 
@@ -877,6 +901,8 @@ updated_at: 2026-08-01T00:00:00+08:00
 | `knowledge_relations` | contradicts、supersedes、implements 等 |
 | `evidence` | 证据和验证结果 |
 | `assertions` | 可执行断言及其状态 |
+| `code_anchors` | 知识版本到 repository/path/symbol/query recipe 的反向索引 |
+| `code_verification_runs` | code/graph revision、新鲜度结果、reason codes 与有界审计摘要 |
 | `knowledge_fts` | FTS5 索引 |
 | `vector_chunks` | 稳定 chunkId、embedding 和 contentHash |
 | `retrieval_runs` | 查询级召回审计 |
@@ -907,6 +933,8 @@ Embedding 相似只能产生“可能重复”关系，不得直接覆盖。
 | Scope 晋升 | 创建目标 Scope 版本，保留来源关系 |
 | 代码失效 | 状态变为 `STALE`，不删除正文 |
 | 用户否定 | 状态变为 `REJECTED`，保留失败历史 |
+
+代码保鲜采用两级机制：Git/CodeGraph ChangeSet 变化驱动受影响知识复验；知识进入 `ContextEnvelope` 前再次执行 Freshness Gate。代码变化但语义断言仍成立时只刷新指纹和验证时间，不调用模型；语义变化时生成新版本并 supersede 旧版本；无法判断时标记 `STALE` 或 `REVALIDATE`，旧正文继续可追溯但不作为当前代码事实注入。
 
 ### 11.3 全局晋升
 
@@ -1118,6 +1146,20 @@ retention:
 **只注入任务契约缺点**：会丢失项目事实、历史决策和可复用经验，错误地缩窄 CKL 职责。  
 **决策**：两者均不采用。使用可控复杂度 Context Envelope，保留知识注入主能力，并提供按需展开与闭环验证。
 
+### 15.7 ZhiLoop 自建代码图谱或复制 CodeGraph 结果
+
+**自建代码图谱优点**：完全控制模型和部署。  
+**自建代码图谱缺点**：重复成熟的解析、增量索引、调用关系和影响分析能力，正确性与维护成本不可接受。  
+**复制 CodeGraph 结果优点**：首次读取简单。  
+**复制 CodeGraph 结果缺点**：形成双重事实源，代码变化后历史快照快速漂移。  
+**决策**：两者均不采用。CodeGraph 作为可替换的实时代码事实 Adapter；ZhiLoop 只保存语义知识、CodeAnchor 和 Verification Recipe。
+
+### 15.8 只使用 CodeGraph
+
+**优点**：纯代码导航准确、快速、无需维护代码知识副本。  
+**缺点**：无法保存对话承诺、业务边界、决策原因、历史版本、作用域、注入策略和闭环状态。  
+**决策**：纯代码问题直接走 CodeGraph 快速路径；涉及语义历史与治理的任务由 ZhiLoop 联邦编排。
+
 ## 16. 风险与缓解
 
 | 风险 | 严重度 | 可能性 | 缓解措施 |
@@ -1138,6 +1180,10 @@ retention:
 | 敏感代码或凭证泄漏 | 高 | 中 | 本地优先、脱敏、最小保留、禁止日志正文 |
 | 用户被频繁确认打断 | 中 | 中 | 每 Turn 上限、仅高影响冲突、默认不阻塞 |
 | 模型或向量服务不可用 | 中 | 中 | 可插拔端口，FTS/Scope 降级，不影响 Codex 主流程 |
+| 复制代码结构事实导致知识漂移 | 高 | 中 | 可重建代码事实不进入长期正文，只保存 CodeAnchor 并实时查询 CodeGraph |
+| CodeGraph 不可用或超时 | 高 | 中 | `CodeIntelligencePort`、有界超时、断路器、确定性 Verifier 降级；无法复验时退出当前事实注入 |
+| 静态调用图与运行时行为不一致 | 高 | 中 | CodeGraph 只作结构证据，动态结论必须结合测试、配置或运行证据 |
+| 多分支/多 worktree 互相误失效 | 高 | 低 | project/repository/worktree/branch/revision 组合身份隔离 |
 
 ## 17. 成功指标
 
@@ -1165,6 +1211,10 @@ retention:
 | Markdown 到索引生效 P95 | < 5 s | Indexer 指标 |
 | 代码变化后失效识别率 | >= 85% | Fingerprint fixture 测试 |
 | `VERIFIED` 知识证据可追溯率 | 100% | Registry 一致性检查 |
+| 最终注入的代码相关知识新鲜度校验覆盖率 | 100% | Injection Trace 检查 |
+| 已知过期代码事实误注入 | 0 | Golden change cases |
+| 相关代码变化定位 Recall | >= 95% | CodeGraph ChangeSet Golden Dataset |
+| CodeGraph 可用时 Freshness Gate P95 | < 200 ms | Retrieval/Injection 指标 |
 
 ## 18. 测试策略
 
@@ -1261,6 +1311,10 @@ Hooks 入队、Ledger、Episode、候选知识和 CLI 查看。知识不注入 C
 
 增加结构化事件和历史回填，提供 Codex/CCM 插件包装，但保持领域核心不变。
 
+### Phase 6：CodeGraph 联邦检索与知识保鲜（Proposed）
+
+增加 `CodeIntelligencePort` 与 CodeGraph Adapter、CodeAnchor 反向索引、ChangeSet Worker、召回前 Freshness Gate、旧知识非破坏迁移和控制台保鲜视图。该阶段只在 P0-P7 已完成基线上演进，不能把规划能力描述为当前已实现。
+
 详细任务和验收标准见[实施计划](../implementation/implementation-plan.md)。
 
 ## 21. 未决问题与默认决定
@@ -1273,6 +1327,7 @@ Hooks 入队、Ledger、Episode、候选知识和 CLI 查看。知识不注入 C
 | 是否自动后台运行测试 | 默认不运行，只消费会话已有结果 | 建立命令白名单和授权模型后 |
 | 是否读取 Codex Memories | 不读取内部格式 | 官方提供稳定接口后 |
 | 是否中心化同步 | 不做，本地优先 | 出现明确团队共享需求后 |
+| 代码事实使用哪个引擎 | 优先通过 `CodeIntelligencePort` 接入 CodeGraph；未接通前沿用现有 Git/path/symbol Verifier | CodeGraph 无法满足语言、性能或本地部署约束 |
 
 ## 22. Definition of Done
 

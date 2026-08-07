@@ -29,4 +29,14 @@ Symbol 无 path 时依赖 Code Adapter 输出 `changedSymbols`；Config/Dependen
 
 - 文件监听、Git diff→changedSymbols 解析和实际 digest 计算属于 Daemon Adapter。
 - REFRESH_FINGERPRINT 只表示可安全生成新 snapshot；原子持久化由后续 Registry 完成。
-- 当前未安装 Hook、未启动 Daemon，也未读写用户配置目录。
+- CKL-305 独立模块交付时未安装 Hook、未启动 Daemon，也未读写用户配置目录；后续 P7 已完成 sidecar 部署，但尚未接入 P8 CodeGraph 保鲜链路。
+
+## 5. 后续演进：CodeGraph 实时代码事实层
+
+CKL-305 保持纯决策引擎，不扩展为代码图谱。P8 通过 `CodeIntelligencePort` 接入 CodeGraph，由 Adapter 提供 symbol、trace、impact、revision 和结构化 `KnowledgeChangeSet`；ZhiLoop 保存 CodeAnchor 和 Verification Recipe，而不是长期复制 CodeGraph 查询结果。
+
+变化驱动 Worker 负责把决策原子写入 Registry，召回前 Freshness Gate 负责兜底复验。详细边界和任务拆分见：
+
+- [ADR-0005：使用 CodeGraph 作为实时代码事实层](../adr/0005-codegraph-as-live-code-fact-layer.md)
+- [CodeGraph 集成与知识保鲜技术设计](../design/codegraph-integration-and-knowledge-freshness-tdd.md)
+- [实施计划 P8](implementation-plan.md)

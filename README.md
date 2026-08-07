@@ -10,6 +10,7 @@ ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Cont
 
 ## 文档入口
 
+- [产品介绍与分享材料](docs/zhiloop-product-introduction.md)
 - [技术设计](docs/design/codex-knowledge-layer-tdd.md)
 - [实施计划](docs/implementation/implementation-plan.md)
 - [实施进度与验证记录](docs/implementation/progress.md)

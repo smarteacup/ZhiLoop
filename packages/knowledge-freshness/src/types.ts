@@ -12,6 +12,11 @@ export interface KnowledgeFreshnessRecord {
   readonly projectId: string;
   readonly lifecycleStatus: KnowledgeStatus;
   readonly freshnessStatus: FreshnessStatus;
+  /** Present on live reads; absent in legacy stored projections until state is joined. */
+  readonly freshnessRevision?: number;
+  /** Exact code/graph identity proven by the current Freshness state. */
+  readonly codeRevision?: string;
+  readonly graphRevision?: string;
   readonly candidate: KnowledgeCandidate;
   readonly fingerprint: KnowledgeFingerprint;
   readonly anchors: readonly FingerprintTarget[];
@@ -41,6 +46,24 @@ export interface AffectedKnowledgeVersion {
 export interface AffectedKnowledgeResult {
   readonly items: readonly AffectedKnowledgeVersion[];
   readonly bounded: boolean;
+}
+
+export interface FrozenAffectedKnowledgeSnapshot {
+  readonly schemaVersion: 1;
+  readonly snapshotId: string;
+  readonly projectId: string;
+  readonly sourceRef: string;
+  readonly changeSetHash: string;
+  readonly recipeSelectionHash: string;
+  readonly targetHash: string;
+  readonly targetCount: number;
+  readonly createdAt: string;
+}
+
+export interface FrozenAffectedKnowledgePage {
+  readonly snapshot: FrozenAffectedKnowledgeSnapshot;
+  readonly items: readonly AffectedKnowledgeVersion[];
+  readonly nextCursor?: AffectedKnowledgeVersion;
 }
 
 export interface FreshnessPlan {

@@ -1,6 +1,6 @@
 # ZhiLoop 持续知识演进生产闭环技术方案
 
-**状态**：Proposed  
+**状态**：Implementing（模块 A、B 及 C 的 Freshness Gate 已完成）  
 **基线版本**：ZhiLoop 0.4.0  
 **创建时间**：2026-08-19  
 **适用范围**：本地 Sidecar、Codex/CCM Hook、控制台、知识编译与注入链路  
@@ -75,6 +75,8 @@ ZhiLoop 采用这些模式，但不复制其产品边界：
 6. Golden 指标达到第 15 节目标；否则自动发布仍保持禁用，但其余模块可独立交付。
 
 ## 4. 0.4.0 能力审计
+
+> 2026-08-19 实施更新：持久化 `KNOWLEDGE_COMPILE`/`KNOWLEDGE_REVALIDATE`、Git observation、全量当前代码 Recipe 快照、精确 revision 门禁和 Sidecar 生命周期已接通，并已通过[专项 Gate](../implementation/durable-knowledge-revalidation-gate-report.md)。Repair Draft、CodeGraph Initialize、Legacy Migration 仍按能力注册表明确报告 `NOT_CONFIGURED`，自动发布继续关闭。
 
 | 原模块 | 0.4.0 状态 | 已有能力 | 本方案补齐项 |
 |---|---|---|---|

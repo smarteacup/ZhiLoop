@@ -135,6 +135,12 @@ export interface AutomaticPreviewDispatchRequest extends KnowledgeCompilationPip
 
 export type AutomaticPreviewDispatchResult =
   | {
+      /** Durable outer job accepted the work; the immutable Snapshot is created by that job. */
+      readonly status: "QUEUED";
+      readonly jobId: string;
+      readonly compiledThroughSequence: number;
+    }
+  | {
       readonly status: "ENQUEUED" | "EXISTING";
       readonly snapshotId: string;
       readonly jobId: string;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -63,7 +64,8 @@ describe("SqliteKnowledgeFreshnessStore", () => {
     expect(store.affected(changes())).toEqual({ items: [{ assetId: "asset-1", assetVersion: 1 }], bounded: false });
     expect(store.affected(changes({ changedSymbols: [], changedPaths: ["src/runtime.ts"] })).items).toHaveLength(1);
     expect(store.affected(changes({ changedSymbols: ["Other"] })).items).toHaveLength(0);
-    expect(store.get("asset-1")).toEqual(buildFreshnessRecord(projection()));
+    expect(store.get("asset-1")).toEqual({ ...buildFreshnessRecord(projection()),
+      freshnessRevision: 0, codeRevision: "publication:content-v1" });
     expect(Object.isFrozen(store.get("asset-1")?.candidate)).toBe(true);
 
     const second = projection({ asset: { ...projection().asset, version: 2, contentHash: "content-v2" } });
@@ -101,6 +103,25 @@ describe("SqliteKnowledgeFreshnessStore", () => {
       .toThrow("FRESHNESS_STATE_REVISION_CONFLICT");
   });
 
+  it("records stable transition effects and recognizes a completed effect after later state advances", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    const first = {
+      assetId: "asset-1", assetVersion: 1, expectedRevision: 0, projectId: "project-1", status: "REVALIDATE" as const,
+      codeRevision: "git:head-2", reasonCodes: ["RELATED_TARGET_CHANGED"], affectedAssertionIds: ["assertion-symbol"],
+      updatedAt: "2026-08-19T00:00:00.000Z",
+    };
+    expect(store.transition(first)).toMatchObject({ status: "TRANSITIONED", state: { revision: 1 } });
+    expect(store.transition({ ...first, expectedRevision: 1, status: "FRESH", codeRevision: "git:head-3",
+      reasonCodes: ["REVALIDATION_SUPPORTED"] })).toMatchObject({ state: { revision: 2 } });
+    const replay = store.transitionWithEffect("a".repeat(64), first);
+    expect(replay).toMatchObject({ status: "IDEMPOTENT", state: { revision: 1, status: "REVALIDATE" } });
+    expect(store.transitionWithEffect("a".repeat(64), { ...first, expectedRevision: 99 })).toEqual(replay);
+    expect(() => store.transitionWithEffect("a".repeat(64), { ...first, status: "CONFLICT" }))
+      .toThrow("FRESHNESS_EFFECT_CONFLICT");
+    expect(store.getState("asset-1")).toMatchObject({ revision: 2, status: "FRESH" });
+  });
+
   it("backfills freshness state for projections created before the state table", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-freshness-state-"));
     const filename = path.join(directory, "freshness.sqlite");
@@ -110,5 +131,57 @@ describe("SqliteKnowledgeFreshnessStore", () => {
       using reopened = new SqliteKnowledgeFreshnessStore(filename);
       expect(reopened.getState("asset-1")).toMatchObject({ status: "FRESH", revision: 0, codeRevision: "publication:content-v1" });
     } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("freezes exact affected versions and pages them independently of later active versions", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    const assetTwo = { ...projection().asset, id: "asset-2", version: 1, contentHash: "asset-two" };
+    store.project(projection({ asset: assetTwo }));
+    const frozen = store.freezeAffectedSnapshot({
+      changes: changes(), changeSetHash: "a".repeat(64), recipeSelectionHash: "b".repeat(64), maxTargets: 10,
+    });
+    expect(frozen).toMatchObject({ targetCount: 2, targetHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(store.readAffectedSnapshotPage({ snapshotId: frozen.snapshotId, limit: 1 })).toMatchObject({
+      items: [{ assetId: "asset-1", assetVersion: 1 }], nextCursor: { assetId: "asset-1", assetVersion: 1 },
+    });
+    expect(store.readAffectedSnapshotPage({ snapshotId: frozen.snapshotId, limit: 10,
+      after: { assetId: "asset-1", assetVersion: 1 } }).items).toEqual([{ assetId: "asset-2", assetVersion: 1 }]);
+    store.project(projection({ asset: { ...projection().asset, version: 2, contentHash: "content-v2" } }));
+    expect(store.readAffectedSnapshotPage({ snapshotId: frozen.snapshotId, limit: 10 }).items).toEqual([
+      { assetId: "asset-1", assetVersion: 1 }, { assetId: "asset-2", assetVersion: 1 },
+    ]);
+    expect(store.freezeAffectedSnapshot({ changes: changes(), changeSetHash: "a".repeat(64),
+      recipeSelectionHash: "b".repeat(64) })).toEqual(frozen);
+  });
+
+  it("fails closed when an affected snapshot is corrupted", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-freshness-snapshot-corrupt-"));
+    const filename = path.join(directory, "freshness.sqlite");
+    try {
+      const first = new SqliteKnowledgeFreshnessStore(filename);
+      first.project(projection());
+      const frozen = first.freezeAffectedSnapshot({ changes: changes(), changeSetHash: "a".repeat(64),
+        recipeSelectionHash: "b".repeat(64) });
+      first.close();
+      const database = new DatabaseSync(filename);
+      database.prepare("UPDATE knowledge_freshness_affected_snapshots SET target_hash=? WHERE snapshot_id=?")
+        .run("c".repeat(64), frozen.snapshotId);
+      database.close();
+      using reopened = new SqliteKnowledgeFreshnessStore(filename);
+      expect(() => reopened.getAffectedSnapshot(frozen.snapshotId)).toThrow("SNAPSHOT_CORRUPT");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("freezes every current code Recipe for the production exact-revision selection", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    store.project(projection({ asset: { ...projection().asset, id: "asset-2", contentHash: "content-2" } }));
+    const recipeSelectionHash = createHash("sha256").update("all-current-recipes-v1").digest("hex");
+    const frozen = store.freezeAffectedSnapshot({ changes: changes({ changedSymbols: ["Other"] }),
+      changeSetHash: "d".repeat(64), recipeSelectionHash });
+    expect(frozen.targetCount).toBe(2);
+    expect(store.readAffectedSnapshotPage({ snapshotId: frozen.snapshotId, limit: 10 }).items)
+      .toEqual([{ assetId: "asset-1", assetVersion: 1 }, { assetId: "asset-2", assetVersion: 1 }]);
   });
 });

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   P2AutomaticCompilationAdapter,
+  P2DurableAutomaticCompilationAdapter,
   type P2CandidatePreviewPort,
 } from "./p2-preview-coordinator.js";
 import { P2SidecarRuntime } from "./p2-runtime.js";
@@ -17,6 +18,24 @@ const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(async (directory) => await rm(directory, { recursive: true, force: true })));
+});
+
+describe("P2DurableAutomaticCompilationAdapter", () => {
+  it("validates and plans without directly creating a Snapshot, then queues one durable outer job", async () => {
+    const ledger = new SqliteEventLedger(":memory:");
+    const coordinate = vi.fn(async () => ({ status: "INELIGIBLE" as const, reasonCode: "NO_EXTRACTABLE_EVENTS" as const }));
+    const plan = vi.fn(async () => ({ status: "READY" as const, sourceRange: { from: 1, to: 3 }, compiledThroughSequence: 3 }));
+    const coordinator: P2CandidatePreviewPort = { pipelineIdentity: () => pipeline, plan, coordinate };
+    const enqueue = vi.fn(() => ({ status: "CREATED" as const, job: { snapshot: { jobId: "evolution-job-1" } } }));
+    const adapter = new P2DurableAutomaticCompilationAdapter({ get: async () => catalogEntry() }, ledger, coordinator,
+      { enqueue } as never, 7);
+    await expect(adapter.dispatchPreview(request())).resolves.toEqual({ status: "QUEUED", jobId: "evolution-job-1",
+      compiledThroughSequence: 3 });
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ jobType: "KNOWLEDGE_COMPILE", sessionId: "session-1",
+      sourceRange: { from: 1, to: 3 }, pipelineHash: expect.stringMatching(/^[a-f0-9]{64}$/u) }), 7);
+    expect(coordinate).not.toHaveBeenCalled();
+    ledger.close();
+  });
 });
 
 function event(index: number, eventType: EventEnvelope["eventType"], turnId: string): EventEnvelope {
@@ -97,6 +116,7 @@ describe("P2AutomaticCompilationAdapter", () => {
     ledger.append(event(3, "session.ended", "turn-2"));
     const coordinator: P2CandidatePreviewPort = {
       pipelineIdentity: () => pipeline,
+      plan: async () => ({ status: "CURRENT", compiledThroughSequence: 3 }),
       coordinate: async () => ({ status: "CURRENT", compiledThroughSequence: 3 }),
     };
     const adapter = new P2AutomaticCompilationAdapter({ get: async () => catalogEntry() }, ledger, coordinator);
@@ -123,7 +143,8 @@ describe("P2AutomaticCompilationAdapter", () => {
       compiledThroughSequence: 3,
     }));
     let current = catalogEntry();
-    const coordinator: P2CandidatePreviewPort = { pipelineIdentity: () => pipeline, coordinate };
+    const coordinator: P2CandidatePreviewPort = { pipelineIdentity: () => pipeline,
+      plan: async () => ({ status: "READY", sourceRange: { from: 1, to: 3 }, compiledThroughSequence: 3 }), coordinate };
     const adapter = new P2AutomaticCompilationAdapter({ get: async () => current }, ledger, coordinator);
     await expect(adapter.dispatchPreview(request())).resolves.toMatchObject({ status: "ENQUEUED", jobId: "job-1" });
     expect(coordinate).toHaveBeenCalledWith({

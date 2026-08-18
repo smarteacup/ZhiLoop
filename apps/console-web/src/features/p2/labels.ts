@@ -5,6 +5,11 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   KNOWLEDGE_PUBLICATION: "知识发布",
   EPISODE_BUILD: "对话片段构建",
   EVIDENCE: "证据校验",
+  KNOWLEDGE_COMPILE: "对话知识编译",
+  KNOWLEDGE_REVALIDATE: "代码知识重新验证",
+  KNOWLEDGE_REPAIR_DRAFT: "知识修复草稿",
+  CODEGRAPH_INITIALIZE: "CodeGraph 初始化",
+  LEGACY_KNOWLEDGE_MIGRATION: "历史知识迁移",
 
   SNAPSHOT_IMMUTABLE: "快照已固化，不会被后续会话变化覆盖",
   SNAPSHOT_NOT_CREATED: "尚未创建提取快照",
@@ -29,6 +34,11 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   JOB_HANDLER_FAILED: "后台任务处理器执行失败",
   JOB_HANDLER_NOT_FOUND: "没有找到对应的后台任务处理器",
   JOB_CANCELLED: "后台任务已取消",
+  JOB_QUEUED: "后台任务已排队",
+  JOB_RUNNING: "后台任务运行中",
+  JOB_RETRY_WAIT: "后台任务等待重试",
+  JOB_SUCCEEDED: "后台任务已成功完成",
+  JOB_FAILED: "后台任务执行失败",
   JOB_CANCELLATION_REQUESTED: "后台任务正在取消",
   EXPLICIT_COMMIT_REQUIRED: "需要明确确认后才能发布",
   POLICY_COMMITTED: "知识策略已确认",
@@ -139,6 +149,10 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   VERIFICATION_CANCELLED: "证据验证已取消",
   VERIFICATION_DEADLINE_EXCEEDED: "证据验证超过时限",
   VERIFICATION_SOURCE_UNAVAILABLE: "缺少可用的证据来源",
+  COMPONENT_READY: "组件已就绪",
+  COMPONENT_DEGRADED: "组件处于降级状态",
+  CAPABILITY_DISABLED: "能力已禁用",
+  CAPABILITY_NOT_CONFIGURED: "能力尚未配置",
 });
 
 const details: Readonly<Record<string, string>> = Object.freeze({

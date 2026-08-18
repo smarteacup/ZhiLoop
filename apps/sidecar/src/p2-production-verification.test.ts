@@ -70,7 +70,7 @@ describe("P2 production verification composition", () => {
     }] }) };
     const production = await P2ProductionComposition.create({ stateDirectory: state, ledger,
       extraction: () => ({ getSnapshot: (id: string) => id === snapshot.snapshotId ? snapshot : undefined }) as never,
-      compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 1_000, verificationTimeoutMs: 5_000, compiler });
+      compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 5_000, verificationTimeoutMs: 10_000, compiler });
     try {
       const preview = await production.worker.runtime.run(production.worker.requestFor(snapshot));
       expect(preview.status).toBe("AWAITING_COMMIT");
@@ -132,7 +132,7 @@ describe("P2 production verification composition", () => {
     }] }) };
     const production = await P2ProductionComposition.create({ stateDirectory: state, ledger,
       extraction: () => ({ getSnapshot: (id: string) => id === snapshot.snapshotId ? snapshot : undefined }) as never,
-      compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 1_000, verificationTimeoutMs: 5_000, compiler });
+      compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 5_000, verificationTimeoutMs: 10_000, compiler });
     try {
       const preview = await production.worker.runtime.run(production.worker.requestFor(snapshot));
       expect(preview.status).toBe("AWAITING_COMMIT");

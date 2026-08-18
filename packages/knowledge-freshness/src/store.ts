@@ -8,6 +8,9 @@ import type { KnowledgeChangeSet } from "@zhiloop/invalidation-engine";
 import { buildFreshnessRecord } from "./freshness.js";
 import type {
   AffectedKnowledgeResult,
+  AffectedKnowledgeVersion,
+  FrozenAffectedKnowledgePage,
+  FrozenAffectedKnowledgeSnapshot,
   FreshnessProjectionInput,
   FreshnessProjectionWriteResult,
   KnowledgeFreshnessRecord,
@@ -25,6 +28,7 @@ function canonical(value: unknown): string {
 }
 
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+const ALL_CURRENT_RECIPES_HASH = hash("all-current-recipes-v1");
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value !== "object" || value === null || seen.has(value)) return value;
@@ -52,8 +56,20 @@ function parse(payload: string, payloadHash: string): KnowledgeFreshnessRecord {
   return deepFreeze(value);
 }
 
+interface AffectedSnapshotRow {
+  readonly snapshot_id: string;
+  readonly project_id: string;
+  readonly source_ref: string;
+  readonly change_set_hash: string;
+  readonly recipe_selection_hash: string;
+  readonly target_hash: string;
+  readonly target_count: number;
+  readonly created_at: string;
+}
+
 export class SqliteKnowledgeFreshnessStore {
   readonly #database: DatabaseSync;
+  readonly #verifiedSnapshots = new Set<string>();
   #closed = false;
 
   constructor(filename: string) {
@@ -128,6 +144,27 @@ export class SqliteKnowledgeFreshnessStore {
         ) STRICT;
         CREATE INDEX IF NOT EXISTS freshness_state_events_asset
           ON knowledge_freshness_state_events(asset_id, asset_version, revision);
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_transition_effects(
+          effect_key TEXT PRIMARY KEY, input_hash TEXT NOT NULL, result_json TEXT NOT NULL,
+          result_hash TEXT NOT NULL, asset_id TEXT NOT NULL, asset_version INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS freshness_transition_effect_asset
+          ON knowledge_freshness_transition_effects(asset_id, asset_version);
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_affected_snapshots(
+          snapshot_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_ref TEXT NOT NULL,
+          change_set_hash TEXT NOT NULL, recipe_selection_hash TEXT NOT NULL,
+          target_hash TEXT NOT NULL, target_count INTEGER NOT NULL CHECK(target_count >= 0), created_at TEXT NOT NULL,
+          UNIQUE(project_id, source_ref, change_set_hash, recipe_selection_hash)
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_affected_snapshot_items(
+          snapshot_id TEXT NOT NULL REFERENCES knowledge_freshness_affected_snapshots(snapshot_id) ON DELETE RESTRICT,
+          asset_id TEXT NOT NULL, asset_version INTEGER NOT NULL CHECK(asset_version > 0),
+          PRIMARY KEY(snapshot_id, asset_id, asset_version),
+          FOREIGN KEY(asset_id, asset_version) REFERENCES knowledge_freshness(asset_id, asset_version) ON DELETE RESTRICT
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS freshness_affected_snapshot_page
+          ON knowledge_freshness_affected_snapshot_items(snapshot_id, asset_id, asset_version);
         INSERT OR IGNORE INTO knowledge_freshness_state
           (asset_id,asset_version,project_id,status,revision,code_revision,graph_revision,reason_codes_json,
            affected_assertion_ids_json,updated_at)
@@ -202,7 +239,9 @@ export class SqliteKnowledgeFreshnessStore {
     if (row === undefined) return undefined;
     const projection = parse(row.payload_json, row.payload_hash);
     const state = this.getState(assetId, assetVersion);
-    return state === undefined ? projection : deepFreeze({ ...projection, freshnessStatus: state.status, updatedAt: state.updatedAt });
+    return state === undefined ? projection : deepFreeze({ ...projection, freshnessStatus: state.status,
+      freshnessRevision: state.revision, codeRevision: state.codeRevision,
+      ...(state.graphRevision === undefined ? {} : { graphRevision: state.graphRevision }), updatedAt: state.updatedAt });
   }
 
   getState(assetId: string, assetVersion?: number): KnowledgeFreshnessState | undefined {
@@ -292,6 +331,52 @@ export class SqliteKnowledgeFreshnessStore {
     } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
   }
 
+  transitionWithEffect(effectKey: string, input: FreshnessStateTransitionInput): FreshnessStateTransitionResult {
+    this.#open();
+    if (!/^[a-f0-9]{64}$/u.test(effectKey)) throw new Error("FRESHNESS_EFFECT_KEY_INVALID");
+    const semanticInput = { ...input, expectedRevision: undefined };
+    const inputHash = hash(canonical(semanticInput));
+    const replay = (): FreshnessStateTransitionResult | undefined => {
+      const row = this.#database.prepare("SELECT * FROM knowledge_freshness_transition_effects WHERE effect_key=?")
+        .get(effectKey) as { readonly input_hash: string; readonly result_json: string; readonly result_hash: string } | undefined;
+      if (row === undefined) return undefined;
+      if (row.input_hash !== inputHash || hash(row.result_json) !== row.result_hash) throw new Error("FRESHNESS_EFFECT_CONFLICT");
+      let result: FreshnessStateTransitionResult;
+      try { result = JSON.parse(row.result_json) as FreshnessStateTransitionResult; }
+      catch { throw new Error("FRESHNESS_EFFECT_CORRUPT"); }
+      if (!new Set(["TRANSITIONED", "IDEMPOTENT"]).has(result.status)
+        || result.state.assetId !== input.assetId || result.state.assetVersion !== input.assetVersion
+        || result.state.projectId !== input.projectId || result.state.status !== input.status
+        || result.state.codeRevision !== input.codeRevision || result.state.graphRevision !== input.graphRevision
+        || canonical(result.state.reasonCodes) !== canonical(input.reasonCodes)
+        || canonical(result.state.affectedAssertionIds) !== canonical(input.affectedAssertionIds)) {
+        throw new Error("FRESHNESS_EFFECT_CORRUPT");
+      }
+      return deepFreeze(result);
+    };
+    const existing = replay();
+    if (existing !== undefined) return existing;
+    let result: FreshnessStateTransitionResult;
+    try { result = this.transition(input); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "FRESHNESS_STATE_REVISION_CONFLICT") throw error;
+      const rows = this.#database.prepare(`SELECT * FROM knowledge_freshness_state_events
+        WHERE asset_id=? AND asset_version=? AND project_id=? AND status=? AND code_revision=?
+          AND COALESCE(graph_revision,'')=COALESCE(?,'') AND reason_codes_json=? AND affected_assertion_ids_json=?
+        ORDER BY revision LIMIT 2`).all(input.assetId, input.assetVersion, input.projectId, input.status,
+          input.codeRevision, input.graphRevision ?? null, canonical(input.reasonCodes), canonical(input.affectedAssertionIds)) as unknown as Record<string, unknown>[];
+      if (rows.length !== 1) throw error;
+      result = Object.freeze({ status: "IDEMPOTENT", state: this.#state(rows[0]!) });
+    }
+    const resultJson = canonical(result);
+    this.#database.prepare(`INSERT OR IGNORE INTO knowledge_freshness_transition_effects
+      (effect_key,input_hash,result_json,result_hash,asset_id,asset_version,created_at) VALUES(?,?,?,?,?,?,?)`)
+      .run(effectKey, inputHash, resultJson, hash(resultJson), input.assetId, input.assetVersion, input.updatedAt);
+    const stored = replay();
+    if (stored === undefined) throw new Error("FRESHNESS_EFFECT_WRITE_FAILED");
+    return stored;
+  }
+
   listStateEvents(assetId: string, assetVersion: number, limit = 100): readonly FreshnessStateEvent[] {
     this.#open();
     if (!safeText(assetId) || !Number.isSafeInteger(assetVersion) || assetVersion < 1
@@ -309,10 +394,8 @@ export class SqliteKnowledgeFreshnessStore {
     }));
   }
 
-  affected(changes: KnowledgeChangeSet, limit = 500): AffectedKnowledgeResult {
-    this.#open();
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new Error("FRESHNESS_AFFECTED_LIMIT_INVALID");
-    if (!safeText(changes.projectId) || !safeText(changes.sourceRef) || !Number.isFinite(Date.parse(changes.observedAt))
+  #affectedVersions(changes: KnowledgeChangeSet, maximum: number): AffectedKnowledgeResult {
+    if (!safeText(changes.projectId) || !safeText(changes.sourceRef, 4_096) || !Number.isFinite(Date.parse(changes.observedAt))
       || !changes.changedPaths.every(safePath)
       || ![...changes.changedSymbols, ...changes.changedConfigs, ...changes.changedDependencies].every((item) => safeText(item))) {
       throw new Error("FRESHNESS_CHANGESET_INVALID");
@@ -323,8 +406,8 @@ export class SqliteKnowledgeFreshnessStore {
       ...changes.changedConfigs.map((key) => ({ kind: "CONFIG", key })),
       ...changes.changedDependencies.map((key) => ({ kind: "DEPENDENCY", key })),
     ];
-    if (keys.length > 10_000) throw new Error("FRESHNESS_CHANGESET_LIMIT_EXCEEDED");
-    const found = new Map<string, { assetId: string; assetVersion: number }>();
+    if (keys.length > 1_000_000) throw new Error("FRESHNESS_CHANGESET_LIMIT_EXCEEDED");
+    const found = new Map<string, AffectedKnowledgeVersion>();
     for (const item of keys) {
       const rows = item.path !== undefined
         ? this.#database.prepare(`SELECT anchor.asset_id,anchor.asset_version FROM knowledge_freshness_anchors anchor
@@ -333,23 +416,145 @@ export class SqliteKnowledgeFreshnessStore {
               ON state.asset_id=anchor.asset_id AND state.asset_version=anchor.asset_version
             WHERE anchor.project_id=? AND (anchor.anchor_path=? OR (anchor.kind='PATH' AND anchor.anchor_key=?))
               AND (state.code_revision IS NULL OR state.code_revision<>?)
-            ORDER BY anchor.asset_id LIMIT ?`)
-          .all(changes.projectId, item.path, item.path, changes.sourceRef, limit + 1)
+            ORDER BY anchor.asset_id,anchor.asset_version LIMIT ?`)
+          .all(changes.projectId, item.path, item.path, changes.sourceRef, maximum + 1)
         : this.#database.prepare(`SELECT anchor.asset_id,anchor.asset_version FROM knowledge_freshness_anchors anchor
             JOIN knowledge_freshness_active active ON active.asset_id=anchor.asset_id AND active.asset_version=anchor.asset_version
             LEFT JOIN knowledge_freshness_state state
               ON state.asset_id=anchor.asset_id AND state.asset_version=anchor.asset_version
             WHERE anchor.project_id=? AND anchor.kind=? AND anchor.anchor_key=?
               AND (state.code_revision IS NULL OR state.code_revision<>?)
-            ORDER BY anchor.asset_id LIMIT ?`)
-          .all(changes.projectId, item.kind ?? "", item.key ?? "", changes.sourceRef, limit + 1);
+            ORDER BY anchor.asset_id,anchor.asset_version LIMIT ?`)
+          .all(changes.projectId, item.kind ?? "", item.key ?? "", changes.sourceRef, maximum + 1);
       for (const row of rows as unknown as Array<{ asset_id: string; asset_version: number }>) {
-        found.set(row.asset_id, { assetId: row.asset_id, assetVersion: row.asset_version });
+        found.set(`${row.asset_id}\0${row.asset_version}`, { assetId: row.asset_id, assetVersion: row.asset_version });
       }
-      if (found.size > limit) break;
+      if (found.size > maximum) break;
     }
-    const items = [...found.values()].sort((a, b) => a.assetId.localeCompare(b.assetId)).slice(0, limit);
-    return Object.freeze({ items, bounded: found.size > limit });
+    const sorted = [...found.values()].sort((left, right) => left.assetId.localeCompare(right.assetId)
+      || left.assetVersion - right.assetVersion);
+    return Object.freeze({ items: Object.freeze(sorted.slice(0, maximum)), bounded: sorted.length > maximum });
+  }
+
+  freezeAffectedSnapshot(input: {
+    readonly changes: KnowledgeChangeSet;
+    readonly changeSetHash: string;
+    readonly recipeSelectionHash: string;
+    readonly maxTargets?: number;
+  }): FrozenAffectedKnowledgeSnapshot {
+    this.#open();
+    const maximum = input.maxTargets ?? 100_000;
+    if (!/^[a-f0-9]{64}$/u.test(input.changeSetHash) || !/^[a-f0-9]{64}$/u.test(input.recipeSelectionHash)
+      || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 100_000) {
+      throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_INPUT_INVALID");
+    }
+    const identity = canonical(["freshness-affected-v1", input.changes.projectId, input.changes.sourceRef,
+      input.changeSetHash, input.recipeSelectionHash]);
+    const snapshotId = `affected_${hash(identity)}`;
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.#database.prepare("SELECT * FROM knowledge_freshness_affected_snapshots WHERE snapshot_id=?")
+        .get(snapshotId) as unknown as AffectedSnapshotRow | undefined;
+      if (existing !== undefined) {
+        const replay = this.getAffectedSnapshot(snapshotId)!;
+        this.#database.exec("COMMIT");
+        return replay;
+      }
+      const affected = input.recipeSelectionHash === ALL_CURRENT_RECIPES_HASH
+        ? this.#allCurrentCodeVersions(input.changes.projectId, input.changes.sourceRef, maximum)
+        : this.#affectedVersions(input.changes, maximum);
+      if (affected.bounded) throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_LIMIT_EXCEEDED");
+      const targetHash = hash(canonical(affected.items));
+      this.#database.prepare(`INSERT INTO knowledge_freshness_affected_snapshots
+        (snapshot_id,project_id,source_ref,change_set_hash,recipe_selection_hash,target_hash,target_count,created_at)
+        VALUES(?,?,?,?,?,?,?,?)`).run(snapshotId, input.changes.projectId, input.changes.sourceRef, input.changeSetHash,
+          input.recipeSelectionHash, targetHash, affected.items.length, input.changes.observedAt);
+      const insert = this.#database.prepare("INSERT INTO knowledge_freshness_affected_snapshot_items VALUES (?,?,?)");
+      for (const item of affected.items) insert.run(snapshotId, item.assetId, item.assetVersion);
+      this.#database.exec("COMMIT");
+      this.#verifiedSnapshots.add(snapshotId);
+      return Object.freeze({ schemaVersion: 1, snapshotId, projectId: input.changes.projectId,
+        sourceRef: input.changes.sourceRef, changeSetHash: input.changeSetHash,
+        recipeSelectionHash: input.recipeSelectionHash, targetHash, targetCount: affected.items.length,
+        createdAt: input.changes.observedAt });
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+
+  #allCurrentCodeVersions(projectId: string, sourceRef: string, maximum: number): AffectedKnowledgeResult {
+    const rows = this.#database.prepare(`SELECT active.asset_id,active.asset_version
+      FROM knowledge_freshness_active active
+      JOIN knowledge_freshness projection
+        ON projection.asset_id=active.asset_id AND projection.asset_version=active.asset_version
+      LEFT JOIN knowledge_freshness_state state
+        ON state.asset_id=active.asset_id AND state.asset_version=active.asset_version
+      WHERE active.project_id=? AND (state.code_revision IS NULL OR state.code_revision<>?)
+        AND (json_extract(projection.payload_json,'$.candidate.kind')='IMPLEMENTATION'
+          OR EXISTS (SELECT 1 FROM knowledge_freshness_anchors anchor
+            WHERE anchor.asset_id=active.asset_id AND anchor.asset_version=active.asset_version AND anchor.kind='SYMBOL'))
+      ORDER BY active.asset_id,active.asset_version LIMIT ?`).all(projectId, sourceRef, maximum + 1) as unknown as
+      Array<{ readonly asset_id: string; readonly asset_version: number }>;
+    return Object.freeze({ items: Object.freeze(rows.slice(0, maximum)
+      .map((row) => Object.freeze({ assetId: row.asset_id, assetVersion: row.asset_version }))), bounded: rows.length > maximum });
+  }
+
+  getAffectedSnapshot(snapshotId: string): FrozenAffectedKnowledgeSnapshot | undefined {
+    this.#open();
+    if (!/^affected_[a-f0-9]{64}$/u.test(snapshotId)) throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_ID_INVALID");
+    const row = this.#database.prepare("SELECT * FROM knowledge_freshness_affected_snapshots WHERE snapshot_id=?")
+      .get(snapshotId) as unknown as AffectedSnapshotRow | undefined;
+    if (row === undefined) return undefined;
+    if (!safeText(row.project_id) || !safeText(row.source_ref, 4_096) || !/^[a-f0-9]{64}$/u.test(row.change_set_hash)
+      || !/^[a-f0-9]{64}$/u.test(row.recipe_selection_hash) || !/^[a-f0-9]{64}$/u.test(row.target_hash)
+      || !Number.isSafeInteger(row.target_count) || row.target_count < 0 || row.target_count > 100_000
+      || !Number.isFinite(Date.parse(row.created_at))) {
+      throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_CORRUPT");
+    }
+    if (!this.#verifiedSnapshots.has(snapshotId)) {
+      const items = this.#database.prepare(`SELECT asset_id,asset_version FROM knowledge_freshness_affected_snapshot_items
+        WHERE snapshot_id=? ORDER BY asset_id,asset_version`).all(snapshotId) as unknown as Array<{ asset_id: string; asset_version: number }>;
+      const targets = items.map((item) => ({ assetId: item.asset_id, assetVersion: item.asset_version }));
+      if (targets.length !== row.target_count || hash(canonical(targets)) !== row.target_hash) {
+        throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_CORRUPT");
+      }
+      this.#verifiedSnapshots.add(snapshotId);
+    }
+    return Object.freeze({ schemaVersion: 1, snapshotId: row.snapshot_id, projectId: row.project_id,
+      sourceRef: row.source_ref, changeSetHash: row.change_set_hash, recipeSelectionHash: row.recipe_selection_hash,
+      targetHash: row.target_hash, targetCount: row.target_count, createdAt: row.created_at });
+  }
+
+  readAffectedSnapshotPage(request: {
+    readonly snapshotId: string;
+    readonly limit: number;
+    readonly after?: AffectedKnowledgeVersion;
+  }): FrozenAffectedKnowledgePage {
+    this.#open();
+    const snapshot = this.getAffectedSnapshot(request.snapshotId);
+    if (snapshot === undefined) throw new Error("FRESHNESS_AFFECTED_SNAPSHOT_NOT_FOUND");
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 1_000
+      || (request.after !== undefined && (!safeText(request.after.assetId)
+        || !Number.isSafeInteger(request.after.assetVersion) || request.after.assetVersion < 1))) {
+      throw new Error("FRESHNESS_AFFECTED_PAGE_INPUT_INVALID");
+    }
+    const afterId = request.after?.assetId ?? "";
+    const afterVersion = request.after?.assetVersion ?? 0;
+    const rows = this.#database.prepare(`SELECT asset_id,asset_version FROM knowledge_freshness_affected_snapshot_items
+      WHERE snapshot_id=? AND (asset_id>? OR (asset_id=? AND asset_version>?))
+      ORDER BY asset_id,asset_version LIMIT ?`).all(request.snapshotId, afterId, afterId, afterVersion, request.limit + 1) as unknown as
+      Array<{ asset_id: string; asset_version: number }>;
+    const hasMore = rows.length > request.limit;
+    const items = rows.slice(0, request.limit).map((item) => Object.freeze({ assetId: item.asset_id, assetVersion: item.asset_version }));
+    const last = items.at(-1);
+    return Object.freeze({ snapshot, items: Object.freeze(items),
+      ...(hasMore && last !== undefined ? { nextCursor: last } : {}) });
+  }
+
+  affected(changes: KnowledgeChangeSet, limit = 500): AffectedKnowledgeResult {
+    this.#open();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new Error("FRESHNESS_AFFECTED_LIMIT_INVALID");
+    const totalKeys = changes.changedPaths.length + changes.changedSymbols.length + changes.changedConfigs.length + changes.changedDependencies.length;
+    if (totalKeys > 10_000) throw new Error("FRESHNESS_CHANGESET_LIMIT_EXCEEDED");
+    return this.#affectedVersions(changes, limit);
   }
 
   close(): void { if (!this.#closed) { this.#database.close(); this.#closed = true; } }

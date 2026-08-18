@@ -10,6 +10,7 @@ import {
 } from "@zhiloop/knowledge-compiler";
 import {
   automaticPreviewIdempotencyKey,
+  knowledgeCompilationPipelineHash,
   type AutomaticPreviewDispatchRequest,
   type AutomaticPreviewDispatchResult,
   type CompilationDispatchPort,
@@ -17,6 +18,7 @@ import {
   type CompilationSessionObservation,
   type KnowledgeCompilationPipelineIdentity,
 } from "@zhiloop/knowledge-compilation-scheduler";
+import type { EvolutionJobRuntime, KnowledgeCompileJobInput } from "@zhiloop/evolution-job-runtime";
 import type { SessionCatalogEntry, SessionCatalogQueryPort } from "@zhiloop/session-catalog";
 import { snapshotIdempotencyKey } from "@zhiloop/session-extraction";
 
@@ -88,6 +90,13 @@ export interface P2CandidatePreviewCoordinatorOptions {
 
 export interface P2CandidatePreviewPort {
   pipelineIdentity(): KnowledgeCompilationPipelineIdentity;
+  plan(request: {
+    readonly sessionId: string;
+    readonly expectedLedgerSequence: number;
+  }): Promise<
+    | { readonly status: "READY"; readonly sourceRange: { readonly from: number; readonly to: number }; readonly compiledThroughSequence: number }
+    | Extract<PreviewCoordinationResult, { readonly status: "CURRENT" | "STALE" | "INELIGIBLE" }>
+  >;
   coordinate(request: {
     readonly sessionId: string;
     readonly expectedLedgerSequence: number;
@@ -103,11 +112,13 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
     return Object.freeze({ ...P2_COMPILATION_PIPELINE, configurationHash: this.options.configurationHash() });
   }
 
-  async coordinate(request: {
+  async plan(request: {
     readonly sessionId: string;
     readonly expectedLedgerSequence: number;
-    readonly requestId: string;
-  }): Promise<PreviewCoordinationResult> {
+  }): Promise<
+    | { readonly status: "READY"; readonly sourceRange: { readonly from: number; readonly to: number }; readonly compiledThroughSequence: number }
+    | Extract<PreviewCoordinationResult, { readonly status: "CURRENT" | "STALE" | "INELIGIBLE" }>
+  > {
     const revision = this.options.ledger.latestSequenceForSession(request.sessionId);
     if (revision !== request.expectedLedgerSequence) return Object.freeze({ status: "STALE", reasonCode: "LEDGER_CHANGED" });
     let source: CapturePreview;
@@ -148,9 +159,22 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
       );
     }
     if (records.length === 0) return Object.freeze({ status: "INELIGIBLE", reasonCode: "NO_EXTRACTABLE_EVENTS" });
-    const from = records[0]!.sequence;
-    const to = records.at(-1)!.sequence;
+    return Object.freeze({ status: "READY", sourceRange: { from: records[0]!.sequence, to: records.at(-1)!.sequence },
+      compiledThroughSequence: revision });
+  }
+
+  async coordinate(request: {
+    readonly sessionId: string;
+    readonly expectedLedgerSequence: number;
+    readonly requestId: string;
+  }): Promise<PreviewCoordinationResult> {
+    const planned = await this.plan(request);
+    if (planned.status !== "READY") return planned;
+    const source = await this.options.inspectTranscriptSource(request.sessionId);
+    const records = ledgerRange(this.options.ledger, request.sessionId, planned.sourceRange.from, planned.sourceRange.to);
+    if (records.length === 0) return Object.freeze({ status: "INELIGIBLE", reasonCode: "NO_EXTRACTABLE_EVENTS" });
     const sourceClosed = records.at(-1)?.event.eventType === "session.ended" && source.ignoredRecords === 0;
+    const pipeline = this.pipelineIdentity();
     const completeness = {
       status: sourceClosed ? "COMPLETE_SNAPSHOT" as const : "PARTIAL_SNAPSHOT" as const,
       sourceClosed,
@@ -161,9 +185,9 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
       requestId: request.requestId,
       type: "extraction.snapshot.create" as const,
       sessionId: request.sessionId,
-      expectedCaptureRevision: revision,
+      expectedCaptureRevision: planned.compiledThroughSequence,
       transcriptIdentityHash: source.transcriptIdentityHash,
-      sourceSequence: { from, to },
+      sourceSequence: planned.sourceRange,
       cursor: source.cursor,
       completeness,
       compilerVersion: pipeline.compilerVersion,
@@ -177,7 +201,7 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
       status: created.status === "EXISTING" && existingJob !== undefined ? "EXISTING" : "ENQUEUED",
       snapshotId: created.snapshot.snapshotId,
       jobId: job.jobId,
-      compiledThroughSequence: revision,
+      compiledThroughSequence: planned.compiledThroughSequence,
     });
   }
 }
@@ -186,7 +210,7 @@ export class P2AutomaticCompilationAdapter implements CompilationObservationPort
   constructor(
     private readonly catalog: Pick<SessionCatalogQueryPort, "get">,
     private readonly ledger: SqliteEventLedger,
-    private readonly coordinator: P2CandidatePreviewPort,
+    protected readonly coordinator: P2CandidatePreviewPort,
   ) {}
 
   async inspect(session: SessionCatalogEntry): Promise<CompilationSessionObservation> {
@@ -203,6 +227,17 @@ export class P2AutomaticCompilationAdapter implements CompilationObservationPort
   }
 
   async dispatchPreview(request: AutomaticPreviewDispatchRequest): Promise<AutomaticPreviewDispatchResult> {
+    const validated = await this.validate(request);
+    if (validated !== undefined) return validated;
+    const requestId = `auto-${request.idempotencyKey.slice(-64)}`;
+    return await this.coordinator.coordinate({
+      sessionId: request.sessionId,
+      expectedLedgerSequence: request.expectedLedgerSequence,
+      requestId,
+    });
+  }
+
+  protected async validate(request: AutomaticPreviewDispatchRequest): Promise<AutomaticPreviewDispatchResult | undefined> {
     if (request.executionMode !== "PREVIEW_ONLY") throw Object.assign(new Error("automatic compilation must be PREVIEW_ONLY"), { retryable: false });
     const pipeline = this.coordinator.pipelineIdentity();
     if (request.compilerVersion !== pipeline.compilerVersion
@@ -230,11 +265,31 @@ export class P2AutomaticCompilationAdapter implements CompilationObservationPort
     if ((request.sourceVersion ?? null) !== (current.sourceVersion ?? null)) {
       return Object.freeze({ status: "STALE", reasonCode: "SOURCE_CHANGED" });
     }
-    const requestId = `auto-${request.idempotencyKey.slice(-64)}`;
-    return await this.coordinator.coordinate({
-      sessionId: request.sessionId,
-      expectedLedgerSequence: request.expectedLedgerSequence,
-      requestId,
-    });
+    return undefined;
+  }
+}
+
+/** Keeps trigger evaluation in the compatibility scheduler while moving execution ownership to the durable evolution worker. */
+export class P2DurableAutomaticCompilationAdapter extends P2AutomaticCompilationAdapter {
+  constructor(
+    catalog: Pick<SessionCatalogQueryPort, "get">,
+    ledger: SqliteEventLedger,
+    coordinator: P2CandidatePreviewPort,
+    private readonly jobs: Pick<EvolutionJobRuntime, "enqueue">,
+    private readonly maxAttempts: number,
+  ) { super(catalog, ledger, coordinator); }
+
+  override async dispatchPreview(request: AutomaticPreviewDispatchRequest): Promise<AutomaticPreviewDispatchResult> {
+    const validated = await this.validate(request);
+    if (validated !== undefined) return validated;
+    const planned = await this.coordinator.plan({ sessionId: request.sessionId,
+      expectedLedgerSequence: request.expectedLedgerSequence });
+    if (planned.status !== "READY") return planned;
+    const input: KnowledgeCompileJobInput = Object.freeze({ schemaVersion: 1, jobType: "KNOWLEDGE_COMPILE",
+      sessionId: request.sessionId, sourceRange: planned.sourceRange,
+      pipelineHash: knowledgeCompilationPipelineHash(this.coordinator.pipelineIdentity()) });
+    const result = this.jobs.enqueue(input, this.maxAttempts);
+    return Object.freeze({ status: "QUEUED", jobId: result.job.snapshot.jobId,
+      compiledThroughSequence: planned.compiledThroughSequence });
   }
 }

@@ -2,16 +2,56 @@
 
 ## 审查统计
 
-| 指标 | 本轮（Production Evidence Hub） | 累计 |
+| 指标 | 本轮（Durable Knowledge Revalidation） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 12 |
-| 风险发现 | 5 | 90 |
-| 高风险 | 1 | 41 |
-| 中风险 | 4 | 41 |
+| Review 次数 | 1 | 13 |
+| 风险发现 | 9 | 99 |
+| 高风险 | 3 | 44 |
+| 中风险 | 6 | 47 |
 | 低风险 | 0 | 8 |
-| 已修复 | 7（含上轮 2 个生产缺口销项） | 85 |
+| 已修复 | 9 | 94 |
 | 未解决 | 0 | 5 |
-| 本轮耗时 | 约 52 分钟 | 已知耗时约 3 小时 34 分钟（首轮历史报告未记录耗时） |
+| 本轮耗时 | 约 80 分钟 | 已知耗时约 4 小时 54 分钟（首轮历史报告未记录耗时） |
+
+## Durable Knowledge Revalidation 审查结论
+
+知识编译与代码保鲜现在由同一套有类型、可租约恢复的任务运行时编排；Git 变化在基线确认前保持不可变，受影响知识集合冻结后分页复验，最后一步才 CAS 推进基线。注入与 MCP 使用严格的代码/图 revision 门禁，无法证明当前一致性的代码事实只被排除并触发补偿，不阻塞 Codex。审查覆盖租约围栏、幂等、分页、定时器、取消、SQLite、隐私、延迟、配置回滚、删除影响与失败语义；9 个发现已全部修复。
+
+## Durable Knowledge Revalidation 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 初版只冻结“路径直接受影响”的 Recipe | Exact revision 门禁下，未直接命中路径但仍有效的代码知识会永久保留旧 revision 并持续被排除 | 生产默认冻结项目内全部当前代码 Recipe；稳定选择哈希绑定 `all-current-recipes-v1`，分页重启测试保持集合不漂移 |
+| 高 | 新 Git 观察库最初使用新文件名 | 升级会绕过旧 `git-freshness-baseline.sqlite`，等价于静默重置已确认基线并制造重复变化 | 原路径原位迁移 revision/observation 表；旧表迁移与重启回归通过 |
+| 高 | Sidecar 重启后没有恢复已观察 project/root 到 verifier | 已恢复任务会找不到项目根或把生产复验降级为未知，导致队列反复失败 | 从持久化 Git source 恢复 registry，并同步恢复 verifier root；关闭/重开后继续任务测试 |
+| 中 | Revalidation use case 直接依赖 Git adapter DTO | 领域用例被具体采集实现绑死，后续 watcher/远端 source 无法替换 | 改为最小 `DurableKnowledgeChangePort`，依赖方向由架构测试固定 |
+| 中 | 配置热更新先停旧 intake 再构造新 intake | 新配置或数据库构造失败会让当前有效消费者也被停掉 | candidate 先构造和验证，成功后再 stop/swap；失败保留旧实例，返回幂等 rollback |
+| 中 | 只要项目存在 graph revision 就要求所有代码知识匹配 graph | 纯文件/配置知识被无关 CodeGraph 状态误杀 | 仅 graph-backed Freshness 记录要求 graph revision；文件事实只绑定 code revision |
+| 中 | 补偿最初只能返回合成 wake 标识 | 已有不可变 observation 时，调用方拿不到真实 durable job，追踪链断裂 | `enqueuePending(projectId)` 优先返回真实 jobId；尚无 observation 时才返回稳定 wake identity |
+| 中 | 动态能力快照把 `DEGRADED` 映射成 `DISABLED` | 控制台会把故障误报为人为关闭，运维决策错误 | 保留 READY/DEGRADED/DISABLED 原状态，并补中文任务/原因标签 |
+| 中 | 组合失败清理先关闭 evolution job 再关闭自动编译 producer | producer 尾任务可能向已关闭 job store 入队，掩盖原始启动错误 | 清理顺序改为先关闭 producer，再关闭 evolution consumer/store；正常关闭顺序保持一致 |
+
+## Durable Knowledge Revalidation 关键维度确认
+
+- **租约与幂等**：generic job store 的 attempt/worker/fencing token 围栏保持不变；compile/revalidate 输入 canonical hash 和稳定 effect key 防止重复 Candidate、Verification、Freshness 事件和基线推进。
+- **Git 与分页**：rename 保留新旧路径，dirty/untracked/commit/checkout 和缺失旧对象均有界处理；超过 10,000 路径分库存储，不截断；affected snapshot 使用精确资产版本游标。
+- **失败语义**：Recipe 缺失成功投影为 `UNKNOWN`；revision 漂移、输出基数错误和存储损坏失败关闭；基线只在所有页与 effect 完成后推进。
+- **Hook 延迟与安全**：门禁最多 200ms、限制候选与同步复验数量，不从 Hook 启动 Git scan、命令、测试或 CodeGraph 初始化；错误只排除代码事实，Codex 继续运行。
+- **隐私与控制面**：任务投影只包含类型、状态、次数、revision、实体引用和原因码，不含 prompt、知识正文、Git 输出或 CodeGraph 事实；前端枚举保持中文。
+- **兼容与生命周期**：旧 Freshness 行按可选 revision 字段兼容读取；旧 Git baseline 原位迁移；producer → intake/worker → stores 的关闭顺序经过真实 Sidecar SIGTERM/重启验证。
+
+## Durable Knowledge Revalidation Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，71 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7 Gate | 60/60 通过 |
+| Vitest unit/integration | 183 files，1,580/1,580 通过 |
+| Coverage | statements 90.00%，branches 85.02%，functions 92.02%，lines 93.81% |
+| OpenSpec strict validation | `durabilize-knowledge-revalidation` 有效 |
+| 真实回放 | 69 MB Codex transcript、Git/CodeGraph stale→sync、Sidecar SIGTERM→restart 均通过 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## Production Evidence Hub 审查结论
 

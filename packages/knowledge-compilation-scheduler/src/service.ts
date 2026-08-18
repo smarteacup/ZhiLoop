@@ -301,7 +301,7 @@ export class KnowledgeCompilationService {
         continue;
       }
 
-      if (result.status === "ENQUEUED" || result.status === "EXISTING") {
+      if (result.status === "QUEUED" || result.status === "ENQUEUED" || result.status === "EXISTING") {
         if (result.compiledThroughSequence !== observation.ledgerSequence) {
           this.#addDiagnostic(diagnostics, diagnostic("LEDGER_CHANGED", true, entry.sessionId));
           return "RETRY";
@@ -316,7 +316,7 @@ export class KnowledgeCompilationService {
           lastCompiledEventCount: observation.effectiveEventCount,
           lastCompiledTurnCount: observation.effectiveTurnCount,
           lastCompiledPipelineHash: this.#pipelineHash,
-          pendingSnapshotId: result.snapshotId,
+          ...(result.status === "QUEUED" ? {} : { pendingSnapshotId: result.snapshotId }),
           pendingJobId: result.jobId,
         });
         if (await this.#dependencies.checkpoints.compareAndSwap(entry.sessionId, previous?.version, next) === "COMMITTED") return "QUEUED";

@@ -1,0 +1,25 @@
+{
+  "name": "@zhiloop/knowledge-evolution-jobs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/evolution-job-runtime",
+      "@zhiloop/job-runtime",
+      "@zhiloop/invalidation-engine",
+      "@zhiloop/knowledge-freshness"
+    ],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": {
+    "@zhiloop/evolution-job-runtime": "0.0.0",
+    "@zhiloop/job-runtime": "0.0.0",
+    "@zhiloop/invalidation-engine": "0.0.0",
+    "@zhiloop/knowledge-freshness": "0.0.0"
+  },
+  "devDependencies": { "@zhiloop/knowledge-change-intake": "0.0.0" }
+}

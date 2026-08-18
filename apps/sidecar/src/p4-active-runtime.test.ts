@@ -8,6 +8,7 @@ import { ContextOrchestrator } from "@zhiloop/context-orchestrator";
 import type { KnowledgeAsset } from "@zhiloop/domain";
 import { SqliteKnowledgeRegistryProjection } from "@zhiloop/knowledge-registry";
 import { calculateKnowledgeContentHash, MarkdownKnowledgeRepository } from "@zhiloop/markdown-repository";
+import type { KnowledgeFreshnessRecord } from "@zhiloop/knowledge-freshness";
 import { resolveQueryContext } from "@zhiloop/query-context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -72,6 +73,13 @@ function retrieval(value = asset(), delay = 0): ActiveKnowledgeRetrievalPort {
 
 function hook() {
   return { hook_event_name: "UserPromptSubmit" as const, session_id: "session-1", turn_id: "turn-1", cwd: "/workspace/project-a", prompt: "How does RuntimeBeacon work?" };
+}
+
+function freshness(value: KnowledgeAsset, codeRevision: string): KnowledgeFreshnessRecord {
+  return { schemaVersion: 1, assetId: value.id, assetVersion: value.version, assetContentHash: value.contentHash,
+    projectId: "project-a", lifecycleStatus: value.status, freshnessStatus: "FRESH", freshnessRevision: 1,
+    codeRevision, candidate: {} as KnowledgeFreshnessRecord["candidate"],
+    fingerprint: {} as KnowledgeFreshnessRecord["fingerprint"], anchors: [], updatedAt: now };
 }
 
 function stop(active = false) {
@@ -180,6 +188,60 @@ describe("P4ActiveSidecarRuntime", () => {
     await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "NO_CONTEXT", captureCompleted: true });
     const attempt = runtime.consoleDependencies().audits.listInjections("session-1").items[0];
     expect(attempt?.envelope.items).toEqual([]);
+    runtime.close(); values.projection.close();
+  });
+
+  it("applies the same exact live-revision gate to Hook injection and MCP search", async () => {
+    const values = await resources();
+    forceDecision(values.rollout, { stateRevision: 2, policyRevision: 2, mode: "ACTIVE", reasonCode: "ACTIVE_CANARY_INCLUDED" });
+    const value = asset();
+    let liveRevision = "git:current";
+    const runtime = await P4ActiveSidecarRuntime.create({ ...values.dependencies,
+      p2: { registry: values.projection, freshnessStore: { get: () => freshness(value, "git:current") } },
+      liveKnowledgeRevisions: { read: () => ({ projectId: "project-a", codeRevision: liveRevision }) },
+    });
+    expect(() => runtime.applyFreshnessGateConfiguration({ deadlineMs: 201, maxItems: 100,
+      maxTargetedItems: 0, minimumTargetedBudgetMs: 20 })).toThrow("FRESHNESS_GATE_OPTIONS_INVALID");
+    const rollbackGate = runtime.applyFreshnessGateConfiguration({ deadlineMs: 80, maxItems: 50,
+      maxTargetedItems: 0, minimumTargetedBudgetMs: 10 });
+    expect(await runtime.handleHook(hook())).toMatchObject({ status: "INJECTED" });
+    expect(await runtime.handleMcp({ schemaVersion: 1, requestId: "request-fresh", tool: "ckl.search",
+      context: query("RuntimeBeacon"), input: { query: "RuntimeBeacon" } })).toMatchObject({
+      response: { result: { items: [{ id: "knowledge-1" }] } },
+    });
+    liveRevision = "git:newer";
+    expect(await runtime.handleHook({ ...hook(), turn_id: "turn-2" })).toMatchObject({ status: "NO_CONTEXT" });
+    expect(await runtime.handleMcp({ schemaVersion: 1, requestId: "request-stale", tool: "ckl.search",
+      context: query("RuntimeBeacon"), input: { query: "RuntimeBeacon" } })).toMatchObject({
+      response: { result: { items: [] } },
+    });
+    rollbackGate();
+    runtime.close(); values.projection.close();
+  });
+
+  it("keeps the production Hook freshness gate P95 below 200ms and fails safely during compensation outage", async () => {
+    const values = await resources();
+    forceDecision(values.rollout, { stateRevision: 2, policyRevision: 2, mode: "ACTIVE", reasonCode: "ACTIVE_CANARY_INCLUDED" });
+    const value = asset();
+    let liveRevision = "git:current";
+    const runtime = await P4ActiveSidecarRuntime.create({ ...values.dependencies,
+      p2: { registry: values.projection, freshnessStore: { get: () => freshness(value, "git:current") } },
+      liveKnowledgeRevisions: { read: () => ({ projectId: "project-a", codeRevision: liveRevision }) },
+      freshnessCompensation: { schedule: () => { throw new Error("background queue unavailable"); } },
+      freshnessGateDeadlineMs: 100,
+    });
+    const durations: number[] = [];
+    for (let index = 1; index <= 20; index += 1) {
+      const started = performance.now();
+      expect(await runtime.handleHook({ ...hook(), turn_id: `latency-${index}` })).toMatchObject({ status: "INJECTED" });
+      durations.push(performance.now() - started);
+    }
+    liveRevision = "git:newer";
+    const degradedStarted = performance.now();
+    expect(await runtime.handleHook({ ...hook(), turn_id: "latency-degraded" })).toMatchObject({ status: "NO_CONTEXT" });
+    durations.push(performance.now() - degradedStarted);
+    const p95 = [...durations].sort((left, right) => left - right)[Math.ceil(durations.length * 0.95) - 1]!;
+    expect(p95).toBeLessThan(200);
     runtime.close(); values.projection.close();
   });
 

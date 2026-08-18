@@ -253,6 +253,17 @@ test("built release installs, captures in SHADOW, preserves CCM, and uninstalls 
     await new Promise((resolve) => sidecar.once("close", resolve));
     sidecar = undefined;
 
+    sidecar = spawn(paths.sidecarLauncher, ["serve", "--config", paths.configPath], { stdio: "ignore" });
+    const restartedHealth = await waitForHealth(paths.sidecarLauncher, paths.configPath);
+    assert.equal(restartedHealth.status, "READY");
+    const replayedAfterRestart = JSON.parse((await execFileAsync(paths.zhiloopLauncher, [
+      "capture", "--home", home, "--session", "acceptance-history", "--json",
+    ])).stdout);
+    assert.equal(replayedAfterRestart.appendedEvents, 0, "Sidecar restart must not duplicate durable capture effects");
+    sidecar.kill("SIGTERM");
+    await new Promise((resolve) => sidecar.once("close", resolve));
+    sidecar = undefined;
+
     const drifted = JSON.parse(await readFile(paths.codexHooksPath, "utf8"));
     drifted.hooks.SessionStart = [{ hooks: [{ type: "command", command: "/user/after-install-hook" }] }];
     await writeFile(paths.codexHooksPath, `${JSON.stringify(drifted, null, 2)}\n`);

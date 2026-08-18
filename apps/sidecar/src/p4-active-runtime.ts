@@ -36,7 +36,16 @@ import { ContextPrewarmService, SqliteContextPrewarmStore } from "@zhiloop/conte
 import type { KnowledgeAsset, KnowledgeScope, TaskContractBlock } from "@zhiloop/domain";
 import { SqliteFeedbackStore } from "@zhiloop/feedback-engine";
 import { KnowledgeMcpService, type KnowledgeMcpBackend } from "@zhiloop/knowledge-mcp";
-import { ProjectionFreshnessGate, type FreshnessRecordReadPort } from "@zhiloop/knowledge-freshness";
+import {
+  FreshnessGateService,
+  ProjectionFreshnessGate,
+  requiresFreshness,
+  type FreshnessCompensationPort,
+  type FreshnessEnsureDecision,
+  type FreshnessRecordReadPort,
+  type LiveKnowledgeRevisionReadPort,
+  type TargetedFreshnessVerificationPort,
+} from "@zhiloop/knowledge-freshness";
 import type { QueryContext } from "@zhiloop/query-context";
 import { SqliteRuntimeAuditStore, type ClosureRunRecord } from "@zhiloop/runtime-audit-store";
 import type { StopContextDeltaPort, StopHookInput, StopContinuationResult } from "@zhiloop/stop-continuation";
@@ -82,6 +91,14 @@ export interface P4ActiveSidecarDependencies {
   readonly captureUserPrompt: (input: UserPromptSubmitInput) => void | Promise<void>;
   readonly observeProject?: (project: { readonly projectId: string; readonly projectRoot: string }) => void | Promise<void>;
   readonly scanProjectChanges?: () => void | Promise<void>;
+  /** Cache/read-model only. The Hook never invokes Git or CodeGraph commands. */
+  readonly liveKnowledgeRevisions?: LiveKnowledgeRevisionReadPort;
+  readonly targetedFreshnessVerification?: TargetedFreshnessVerificationPort;
+  readonly freshnessCompensation?: FreshnessCompensationPort;
+  readonly freshnessGateDeadlineMs?: number;
+  readonly freshnessGateMaxItems?: number;
+  readonly freshnessGateMaxTargetedItems?: number;
+  readonly freshnessGateMinimumRemainingMs?: number;
   readonly closureEvidence: P4ClosureEvidencePort;
   readonly contextDelta: StopContextDeltaPort;
   readonly confirmationEffects: ConfirmationEffectPort;
@@ -242,19 +259,28 @@ class RegistryMcpBackend implements KnowledgeMcpBackend {
   constructor(
     private readonly registry: P2ProductionComposition["registry"],
     private readonly eligibility: RegistryEligibility,
+    private readonly freshness?: (context: QueryContext, assets: readonly KnowledgeAsset[]) => Promise<readonly FreshnessEnsureDecision[]>,
   ) {}
 
-  #eligible(context: QueryContext, assets: readonly KnowledgeAsset[]): readonly KnowledgeAsset[] {
+  async #eligible(context: QueryContext, assets: readonly KnowledgeAsset[]): Promise<readonly KnowledgeAsset[]> {
     const key = scopeKey(context);
-    return assets.filter((asset) => {
+    const eligible = assets.filter((asset) => {
       const check = this.eligibility.inspect({ assetId: asset.id, version: asset.version, scopeKey: key });
       return check.exists && check.current && check.scopeMatched && check.statusEligible && !check.suppressed;
     });
+    if (this.freshness === undefined || context.project === undefined) return eligible;
+    try {
+      const decisions = await this.freshness(context, eligible);
+      const admitted = new Set(decisions.filter((item) => item.eligible).map((item) => `${item.assetId}@${item.assetVersion}`));
+      return eligible.filter((asset) => admitted.has(`${asset.id}@${asset.version}`));
+    } catch {
+      return eligible.filter((asset) => !requiresFreshness(asset));
+    }
   }
 
   async search(request: Parameters<KnowledgeMcpBackend["search"]>[0]) {
     const assets = this.registry.search(request.query, { limit: request.limit }).map((item) => item.asset);
-    return { traceId: digest("trace-mcp-search", [request.query, scopeKey(request.context)]), assets: this.#eligible(request.context, assets) };
+    return { traceId: digest("trace-mcp-search", [request.query, scopeKey(request.context)]), assets: await this.#eligible(request.context, assets) };
   }
 
   async current(request: Parameters<KnowledgeMcpBackend["current"]>[0]) {
@@ -262,7 +288,7 @@ class RegistryMcpBackend implements KnowledgeMcpBackend {
       const current = this.registry.getAsset(id);
       return current === undefined ? [] : [current.asset];
     });
-    return { traceId: digest("trace-mcp-current", [request.assetIds, scopeKey(request.context)]), assets: this.#eligible(request.context, assets) };
+    return { traceId: digest("trace-mcp-current", [request.assetIds, scopeKey(request.context)]), assets: await this.#eligible(request.context, assets) };
   }
 
   async related(request: Parameters<KnowledgeMcpBackend["related"]>[0]) {
@@ -280,7 +306,7 @@ class RegistryMcpBackend implements KnowledgeMcpBackend {
       const current = this.registry.getAsset(id);
       return current === undefined ? [] : [current.asset];
     });
-    return { traceId: digest("trace-mcp-related", [request.seedAssetIds, scopeKey(request.context)]), assets: this.#eligible(request.context, assets) };
+    return { traceId: digest("trace-mcp-related", [request.seedAssetIds, scopeKey(request.context)]), assets: await this.#eligible(request.context, assets) };
   }
 }
 
@@ -292,7 +318,7 @@ export class P4ActiveSidecarRuntime {
   readonly #operations: SqliteActiveClosureOperationStore;
   readonly #confirmations: SqliteConfirmationWritebackRepository;
   readonly #prewarmStore: SqliteContextPrewarmStore;
-  readonly #freshnessGate: ProjectionFreshnessGate | undefined;
+  #freshnessGate: ProjectionFreshnessGate | FreshnessGateService | undefined;
   readonly #eligibility: RegistryEligibility;
   readonly #mcp: VersionedKnowledgeMcpRuntime;
   readonly #closure: ActiveClosureRuntime;
@@ -306,10 +332,20 @@ export class P4ActiveSidecarRuntime {
     this.#operations = new SqliteActiveClosureOperationStore(join(dependencies.stateDirectory, "p4-closure-operations.sqlite"));
     this.#confirmations = new SqliteConfirmationWritebackRepository(join(dependencies.stateDirectory, "p4-confirmations.sqlite"));
     this.#prewarmStore = new SqliteContextPrewarmStore(join(dependencies.stateDirectory, "context-prewarm.sqlite"));
-    this.#freshnessGate = dependencies.p2.freshnessStore === undefined
-      ? undefined : new ProjectionFreshnessGate(dependencies.p2.freshnessStore);
+    this.#freshnessGate = dependencies.p2.freshnessStore === undefined ? undefined
+      : dependencies.liveKnowledgeRevisions === undefined ? new ProjectionFreshnessGate(dependencies.p2.freshnessStore)
+        : new FreshnessGateService({ records: dependencies.p2.freshnessStore, revisions: dependencies.liveKnowledgeRevisions,
+          ...(dependencies.targetedFreshnessVerification === undefined ? {} : { targeted: dependencies.targetedFreshnessVerification }),
+          ...(dependencies.freshnessCompensation === undefined ? {} : { compensation: dependencies.freshnessCompensation }),
+          ...(dependencies.freshnessGateDeadlineMs === undefined ? {} : { deadlineMs: dependencies.freshnessGateDeadlineMs }),
+          ...(dependencies.freshnessGateMaxItems === undefined ? {} : { maxItems: dependencies.freshnessGateMaxItems }),
+          ...(dependencies.freshnessGateMaxTargetedItems === undefined ? {} : { maxTargetedItems: dependencies.freshnessGateMaxTargetedItems }),
+          ...(dependencies.freshnessGateMinimumRemainingMs === undefined ? {}
+            : { minimumTargetedBudgetMs: dependencies.freshnessGateMinimumRemainingMs }) });
     this.#eligibility = new RegistryEligibility(dependencies.p2.registry, this.#feedback);
-    const mcpService = new KnowledgeMcpService(new RegistryMcpBackend(dependencies.p2.registry, this.#eligibility));
+    const mcpService = new KnowledgeMcpService(new RegistryMcpBackend(dependencies.p2.registry, this.#eligibility,
+      this.#freshnessGate === undefined ? undefined : async (context, assets) => await this.#freshnessDecisions(
+        context.project?.projectId, assets)));
     this.#mcp = new VersionedKnowledgeMcpRuntime({
       service: mcpService,
       contextAuthority: { authorize: async (requested, signal) => await dependencies.authority.authorizeMcp(requested, signal) },
@@ -350,6 +386,28 @@ export class P4ActiveSidecarRuntime {
       closure: { status: "READY" as const, reasonCode: "STOP_EXPLICIT_EVIDENCE_READY" as const },
       feedback: { status: "READY" as const, reasonCode: "FEEDBACK_ELIGIBILITY_GATED" as const },
     });
+  }
+
+  applyFreshnessGateConfiguration(configuration: {
+    readonly deadlineMs: number;
+    readonly maxItems: number;
+    readonly maxTargetedItems: number;
+    readonly minimumTargetedBudgetMs: number;
+  }): () => void {
+    this.#assertOpen();
+    if (this.#dependencies.p2.freshnessStore === undefined || this.#dependencies.liveKnowledgeRevisions === undefined) {
+      throw new Error("FRESHNESS_EXACT_GATE_NOT_COMPOSED");
+    }
+    const candidate = new FreshnessGateService({ records: this.#dependencies.p2.freshnessStore,
+      revisions: this.#dependencies.liveKnowledgeRevisions,
+      ...(this.#dependencies.targetedFreshnessVerification === undefined ? {} : { targeted: this.#dependencies.targetedFreshnessVerification }),
+      ...(this.#dependencies.freshnessCompensation === undefined ? {} : { compensation: this.#dependencies.freshnessCompensation }),
+      deadlineMs: configuration.deadlineMs, maxItems: configuration.maxItems,
+      maxTargetedItems: configuration.maxTargetedItems, minimumTargetedBudgetMs: configuration.minimumTargetedBudgetMs });
+    const previous = this.#freshnessGate;
+    this.#freshnessGate = candidate;
+    let rolledBack = false;
+    return () => { if (rolledBack || this.#closed) return; rolledBack = true; this.#freshnessGate = previous; };
   }
 
   consoleDependencies(): P4ConsoleDependencies {
@@ -525,8 +583,9 @@ export class P4ActiveSidecarRuntime {
         );
         const currentCandidates = result.candidates.filter(current);
         const freshness = this.#freshnessGate === undefined || authority.projectId === undefined
-          ? undefined : this.#freshnessGate.inspect(authority.projectId, currentCandidates.map((candidate) => candidate.asset));
-        const freshVersions = freshness === undefined ? undefined : new Set(freshness.eligibleAssetVersions);
+          ? undefined : await this.#freshnessDecisions(authority.projectId, currentCandidates.map((candidate) => candidate.asset), signal);
+        const freshVersions = freshness === undefined ? undefined : new Set(freshness.filter((item) => item.eligible)
+          .map((item) => `${item.assetId}@${item.assetVersion}`));
         const admitted = (candidate: { readonly asset: KnowledgeAsset }): boolean => current(candidate)
           && (freshVersions === undefined || freshVersions.has(`${candidate.asset.id}@${candidate.asset.version}`));
         return {
@@ -536,7 +595,7 @@ export class P4ActiveSidecarRuntime {
             items: result.retrieval.items.filter(admitted),
             diagnostics: [
               ...result.retrieval.diagnostics,
-              ...(freshness?.decisions.filter((item) => !item.eligible).map((item) => ({
+              ...(freshness?.filter((item) => !item.eligible).map((item) => ({
                 code: "FRESHNESS_FILTERED" as const,
                 channel: "EXACT" as const,
                 message: item.reasonCode,
@@ -636,6 +695,20 @@ export class P4ActiveSidecarRuntime {
   }
 
   #assertOpen(): void { if (this.#closed) throw new Error("P4 active Sidecar runtime is closed"); }
+
+  async #freshnessDecisions(projectId: string | undefined, assets: readonly KnowledgeAsset[], signal?: AbortSignal): Promise<readonly FreshnessEnsureDecision[]> {
+    if (this.#freshnessGate === undefined || projectId === undefined) return assets.map((item) => ({
+      assetId: item.id, assetVersion: item.version, eligible: !requiresFreshness(item), codeFact: requiresFreshness(item),
+      reasonCode: requiresFreshness(item) ? "FRESHNESS_CURRENT_REVISION_UNAVAILABLE" : "FRESHNESS_NOT_REQUIRED",
+    }));
+    if (this.#freshnessGate instanceof FreshnessGateService) {
+      return (await this.#freshnessGate.ensureFresh({ projectId, assets, ...(signal === undefined ? {} : { signal }) })).decisions;
+    }
+    return this.#freshnessGate.inspect(projectId, assets).decisions.map((item) => ({
+      assetId: item.assetId, assetVersion: item.assetVersion, eligible: item.eligible,
+      codeFact: item.freshness !== "NOT_REQUIRED", reasonCode: item.reasonCode,
+    }));
+  }
 }
 
 function shadowController(revision: number): InjectionRolloutController {

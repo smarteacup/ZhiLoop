@@ -377,6 +377,7 @@ export class SidecarControlPlane {
       capability("knowledge.provenance", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.compile", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.governance", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.evolution", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.automatic-compile", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Manual extraction is the only enabled SHADOW trigger"),
       capability("knowledge.retrieval", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Compose the retrieval runtime"),
       capability("codex.query", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the read-only Codex query model"),
@@ -489,13 +490,31 @@ export class SidecarControlPlane {
     this.#readModel.projectCapability(knowledgeConfigured
       ? capability("knowledge.governance", "READY", "COMPONENT_READY", observedAt)
       : capability("knowledge.governance", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the production knowledge stores"));
+  }
+
+  public setKnowledgeEvolutionState(status: "READY" | "DEGRADED" | "DISABLED"): void {
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability(capability(
+      "knowledge.evolution",
+      status,
+      status === "READY" ? "COMPONENT_READY" : status === "DEGRADED" ? "COMPONENT_DEGRADED" : "CAPABILITY_DISABLED",
+      observedAt,
+      status === "DEGRADED",
+      status === "DISABLED" ? "Enable knowledge evolution in Sidecar configuration"
+        : status === "DEGRADED" ? "Inspect background jobs and retryable failures" : undefined,
+    ));
+  }
+
+  public setAutomaticKnowledgeCompilationState(status: "READY" | "DEGRADED" | "DISABLED"): void {
+    const observedAt = timestamp(this.#clock);
     this.#readModel.projectCapability(capability(
       "knowledge.automatic-compile",
-      "DISABLED",
-      "CAPABILITY_DISABLED",
+      status,
+      status === "READY" ? "COMPONENT_READY" : status === "DEGRADED" ? "COMPONENT_DEGRADED" : "CAPABILITY_DISABLED",
       observedAt,
-      false,
-      "Manual extraction is the only enabled SHADOW trigger",
+      status === "DEGRADED",
+      status === "DISABLED" ? "Enable automatic knowledge compilation in configuration"
+        : status === "DEGRADED" ? "Inspect automatic compilation diagnostics" : undefined,
     ));
   }
 

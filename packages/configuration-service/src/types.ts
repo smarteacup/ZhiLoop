@@ -2,7 +2,7 @@ import type { ConsoleConfiguration } from "./schema.js";
 
 export type ConfigurationScope = "GLOBAL" | "PROJECT";
 export type ConfigurationFieldSource = "DEFAULT" | "GLOBAL" | "PROJECT_OVERRIDE";
-export type ConsumerCapability = "READY" | "DISABLED" | "NOT_CONFIGURED" | "NOT_VERIFIED";
+export type ConsumerCapability = "READY" | "DEGRADED" | "DISABLED" | "NOT_CONFIGURED" | "NOT_VERIFIED";
 
 export interface ConfigurationDiagnostic {
   readonly code: "INVALID_CONFIGURATION" | "STALE_REVISION" | "CONFLICT" | "CONSUMER_DISABLED" | "COMPONENT_PREPARE_FAILED" | "COMPONENT_APPLY_FAILED" | "COMPONENT_ROLLBACK_FAILED" | "NOT_FOUND";

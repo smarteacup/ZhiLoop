@@ -5,6 +5,7 @@ import {
   normalizeKnowledgeCompilationConfiguration,
   type NormalizedKnowledgeCompilationConfiguration,
 } from "@zhiloop/knowledge-compilation-scheduler";
+import { normalizeP2EvolutionRuntimeConfiguration, type P2EvolutionRuntimeConfiguration } from "./p2-evolution-runtime.js";
 
 const MAX_CONFIG_BYTES = 1_048_576;
 
@@ -27,6 +28,7 @@ export interface SidecarConfig {
     readonly userConfiguration: "ALLOW" | "IGNORE";
   };
   readonly automaticKnowledgeCompilation?: NormalizedKnowledgeCompilationConfiguration;
+  readonly knowledgeEvolution?: P2EvolutionRuntimeConfiguration;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +94,23 @@ function automaticKnowledgeCompilation(value: unknown): NormalizedKnowledgeCompi
   return normalizeKnowledgeCompilationConfiguration(value);
 }
 
+function knowledgeEvolution(value: unknown): P2EvolutionRuntimeConfiguration | undefined {
+  if (value === undefined) return undefined;
+  const allowed = new Set([
+    "enabled", "workerPollIntervalMs", "changeDebounceMs", "fallbackScanIntervalMs", "leaseMs", "heartbeatMs",
+    "maxAttempts", "revalidationPageSize", "maxAffectedPerJob", "freshnessGateDeadlineMs", "freshnessGateMaxItems",
+    "freshnessGateMaxTargetedItems",
+    "freshnessGateMinimumRemainingMs",
+  ]);
+  if (!isRecord(value) || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error("knowledgeEvolution configuration is invalid");
+  }
+  if (value["enabled"] !== undefined && typeof value["enabled"] !== "boolean") {
+    throw new Error("knowledgeEvolution.enabled is invalid");
+  }
+  return normalizeP2EvolutionRuntimeConfiguration(value as Partial<P2EvolutionRuntimeConfiguration>);
+}
+
 export function parseSidecarConfig(value: unknown): SidecarConfig {
   if (!isRecord(value) || value["schemaVersion"] !== 1) {
     throw new Error("sidecar configuration schemaVersion must be 1");
@@ -99,6 +118,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
   const allowed = new Set([
     "schemaVersion", "rolloutMode", "socketPath", "codexSessionsRoot", "ledgerPath", "spoolPath", "logPath",
     "hookMaxInputBytes", "hookTimeoutMs", "logMaxBytes", "logRetainFiles", "codexQuery", "automaticKnowledgeCompilation",
+    "knowledgeEvolution",
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("sidecar configuration contains unknown fields");
   if (value["rolloutMode"] !== "SHADOW") {
@@ -106,6 +126,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
   }
   const query = codexQuery(value["codexQuery"]);
   const compilation = automaticKnowledgeCompilation(value["automaticKnowledgeCompilation"]);
+  const evolution = knowledgeEvolution(value["knowledgeEvolution"]);
   return Object.freeze({
     schemaVersion: 1,
     rolloutMode: "SHADOW",
@@ -120,6 +141,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
     logRetainFiles: boundedInteger(value["logRetainFiles"] ?? 3, "logRetainFiles", 1, 20),
     ...(query === undefined ? {} : { codexQuery: query }),
     ...(compilation === undefined ? {} : { automaticKnowledgeCompilation: compilation }),
+    ...(evolution === undefined ? {} : { knowledgeEvolution: evolution }),
   });
 }
 

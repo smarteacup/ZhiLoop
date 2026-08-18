@@ -1,0 +1,20 @@
+{
+  "name": "@zhiloop/evolution-job-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/control-api",
+      "@zhiloop/job-runtime"
+    ],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": {
+    "@zhiloop/control-api": "0.0.0",
+    "@zhiloop/job-runtime": "0.0.0"
+  }
+}

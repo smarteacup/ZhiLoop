@@ -158,6 +158,20 @@ describe("sidecar configuration", () => {
     expect(() => parseSidecarConfig({ ...config, automaticKnowledgeCompilation: { enabled: "yes" } })).toThrow("enabled");
     expect(() => parseSidecarConfig({ ...config, automaticKnowledgeCompilation: { publish: true } })).toThrow("invalid");
   });
+
+  it("normalizes the complete durable knowledge evolution configuration before startup", async () => {
+    const { config } = await temporaryConfig();
+    expect(parseSidecarConfig({ ...config, knowledgeEvolution: { enabled: true, workerPollIntervalMs: 250,
+      changeDebounceMs: 100, fallbackScanIntervalMs: 10_000, leaseMs: 2_000, heartbeatMs: 500,
+      maxAttempts: 7, revalidationPageSize: 50, maxAffectedPerJob: 5_000, freshnessGateDeadlineMs: 120,
+      freshnessGateMaxItems: 80, freshnessGateMaxTargetedItems: 2 } })).toMatchObject({ knowledgeEvolution: {
+        enabled: true, workerPollIntervalMs: 250, maxAttempts: 7, freshnessGateDeadlineMs: 120,
+        freshnessGateMaxTargetedItems: 2,
+      } });
+    expect(() => parseSidecarConfig({ ...config, knowledgeEvolution: { leaseMs: 100, heartbeatMs: 100 } })).toThrow("HEARTBEAT");
+    expect(() => parseSidecarConfig({ ...config, knowledgeEvolution: { freshnessGateDeadlineMs: 201 } })).toThrow("GATE_DEADLINE");
+    expect(() => parseSidecarConfig({ ...config, knowledgeEvolution: { publish: true } })).toThrow("invalid");
+  });
 });
 
 describe("sidecar service", () => {
@@ -590,7 +604,8 @@ describe("sidecar service", () => {
         expect.objectContaining({ capabilityId: "session.extraction", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "knowledge.provenance", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "knowledge.compile", status: "READY", reasonCode: "COMPONENT_READY" }),
-        expect.objectContaining({ capabilityId: "knowledge.automatic-compile", status: "DISABLED", reasonCode: "CAPABILITY_DISABLED" }),
+        expect.objectContaining({ capabilityId: "knowledge.automatic-compile", status: "READY", reasonCode: "COMPONENT_READY" }),
+        expect.objectContaining({ capabilityId: "knowledge.evolution", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "context.injection", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "knowledge.mcp", status: "READY", reasonCode: "COMPONENT_READY" }),
         expect.objectContaining({ capabilityId: "closure.verification", status: "NOT_VERIFIED", reasonCode: "CAPABILITY_NOT_VERIFIED" }),

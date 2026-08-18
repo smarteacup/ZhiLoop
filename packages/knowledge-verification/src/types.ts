@@ -91,6 +91,15 @@ export interface StoredVerificationRecipe extends VerificationRecipe {
   readonly assertionsHash: string;
 }
 
+export interface MigrationRecipeWriteResult {
+  readonly status: "CREATED" | "IDEMPOTENT" | "PREEXISTING";
+  readonly recipe: StoredVerificationRecipe;
+}
+
+export interface MigrationRecipeRollbackResult {
+  readonly status: "ROLLED_BACK" | "IDEMPOTENT" | "NOT_OWNED";
+}
+
 export interface SupportingProofRef {
   readonly runId: string;
   readonly canonicalProjectId: string;

@@ -18,6 +18,10 @@ import type {
   FreshnessStateEvent,
   FreshnessStateTransitionInput,
   FreshnessStateTransitionResult,
+  MigrationFreshnessOwner,
+  MigrationFreshnessProjectionInput,
+  MigrationFreshnessRollbackResult,
+  MigrationFreshnessWriteResult,
 } from "./types.js";
 
 function canonical(value: unknown): string {
@@ -149,6 +153,12 @@ export class SqliteKnowledgeFreshnessStore {
           result_hash TEXT NOT NULL, asset_id TEXT NOT NULL, asset_version INTEGER NOT NULL,
           created_at TEXT NOT NULL
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_migration_owners(
+          asset_id TEXT NOT NULL, asset_version INTEGER NOT NULL, migration_id TEXT NOT NULL,
+          payload_hash TEXT NOT NULL, owned_state_revision INTEGER NOT NULL CHECK(owned_state_revision>=0),
+          verification_run_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          PRIMARY KEY(asset_id,asset_version)
+        ) STRICT;
         CREATE INDEX IF NOT EXISTS freshness_transition_effect_asset
           ON knowledge_freshness_transition_effects(asset_id, asset_version);
         CREATE TABLE IF NOT EXISTS knowledge_freshness_affected_snapshots(
@@ -221,6 +231,124 @@ export class SqliteKnowledgeFreshnessStore {
       this.#database.exec("COMMIT");
     } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
     return { status: "PROJECTED", assetId: record.assetId, assetVersion: record.assetVersion, anchorCount: record.anchors.length };
+  }
+
+  projectForMigration(input: MigrationFreshnessProjectionInput): MigrationFreshnessWriteResult {
+    this.#open();
+    if (!safeText(input.migrationId) || !safeText(input.verificationRunId) || !safeText(input.codeRevision, 4_096)
+      || (input.graphRevision !== undefined && !safeText(input.graphRevision, 4_096))
+      || !new Set(["FRESH", "CONFLICT", "UNKNOWN"]).has(input.status)
+      || input.reasonCodes.length > 32 || input.reasonCodes.some((reason) => !/^[A-Z][A-Z0-9_]{0,119}$/u.test(reason))) {
+      throw new Error("FRESHNESS_MIGRATION_INPUT_INVALID");
+    }
+    const built = buildFreshnessRecord(input);
+    const record = deepFreeze({ ...built, freshnessStatus: input.status, updatedAt: input.observedAt });
+    const payload = canonical(record); const payloadHash = hash(payload);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const owner = this.#database.prepare(`SELECT migration_id,payload_hash,status FROM knowledge_freshness_migration_owners
+        WHERE asset_id=? AND asset_version=?`).get(record.assetId, record.assetVersion) as
+        { migration_id: string; payload_hash: string; status: string } | undefined;
+      if (owner !== undefined && (owner.migration_id !== input.migrationId || owner.payload_hash !== payloadHash)) {
+        throw new Error("FRESHNESS_MIGRATION_OWNERSHIP_CONFLICT");
+      }
+      if (owner?.status === "ROLLED_BACK") throw new Error("FRESHNESS_MIGRATION_ALREADY_ROLLED_BACK");
+      const existing = this.#database.prepare("SELECT payload_hash FROM knowledge_freshness WHERE asset_id=? AND asset_version=?")
+        .get(record.assetId, record.assetVersion) as { payload_hash: string } | undefined;
+      if (existing !== undefined) {
+        if (existing.payload_hash !== payloadHash) throw new Error("FRESHNESS_MIGRATION_PROJECTION_CONFLICT");
+        this.#database.exec("COMMIT");
+        return { status: owner?.status === "OWNED" ? "IDEMPOTENT" : "PREEXISTING", assetId: record.assetId,
+          assetVersion: record.assetVersion, anchorCount: record.anchors.length, freshnessStatus: input.status };
+      }
+      const active = this.#database.prepare("SELECT asset_version FROM knowledge_freshness_active WHERE asset_id=?")
+        .get(record.assetId) as { asset_version: number } | undefined;
+      if (active !== undefined && active.asset_version >= record.assetVersion) throw new Error("FRESHNESS_MIGRATION_VERSION_CONFLICT");
+      this.#database.prepare(`INSERT INTO knowledge_freshness(asset_id,asset_version,project_id,payload_json,payload_hash)
+        VALUES(?,?,?,?,?)`).run(record.assetId, record.assetVersion, record.projectId, payload, payloadHash);
+      const insertAnchor = this.#database.prepare(`INSERT INTO knowledge_freshness_anchors
+        (asset_id,asset_version,project_id,kind,anchor_key,anchor_path,assertion_id) VALUES(?,?,?,?,?,?,?)`);
+      for (const anchor of record.anchors) insertAnchor.run(record.assetId, record.assetVersion, record.projectId,
+        anchor.kind, anchor.key, anchor.path ?? null, anchor.assertionId);
+      this.#database.prepare(`INSERT INTO knowledge_freshness_active(asset_id,asset_version,project_id) VALUES(?,?,?)
+        ON CONFLICT(asset_id) DO UPDATE SET asset_version=excluded.asset_version,project_id=excluded.project_id`)
+        .run(record.assetId, record.assetVersion, record.projectId);
+      this.#database.prepare(`INSERT INTO knowledge_freshness_state
+        (asset_id,asset_version,project_id,status,revision,code_revision,graph_revision,reason_codes_json,
+         affected_assertion_ids_json,updated_at) VALUES(?,?,?,?,0,?,?,?,?,?)`).run(record.assetId, record.assetVersion,
+          record.projectId, input.status, input.codeRevision, input.graphRevision ?? null,
+          canonical([...new Set(input.reasonCodes)].sort()), canonical(record.candidate.assertions.map((item) => item.assertionId).sort()),
+          input.observedAt);
+      this.#database.prepare(`INSERT INTO knowledge_freshness_migration_owners
+        (asset_id,asset_version,migration_id,payload_hash,owned_state_revision,verification_run_id,status,created_at,updated_at)
+        VALUES(?,?,?,?,0,?,'OWNED',?,?)`).run(record.assetId, record.assetVersion, input.migrationId, payloadHash,
+          input.verificationRunId, input.observedAt, input.observedAt);
+      this.#database.exec("COMMIT");
+      return { status: "PROJECTED", assetId: record.assetId, assetVersion: record.assetVersion,
+        anchorCount: record.anchors.length, freshnessStatus: input.status };
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+
+  getMigrationProjectionOwner(assetId: string, assetVersion: number): MigrationFreshnessOwner | undefined {
+    this.#open();
+    if (!safeText(assetId) || !Number.isSafeInteger(assetVersion) || assetVersion < 1) {
+      throw new Error("FRESHNESS_MIGRATION_OWNER_QUERY_INVALID");
+    }
+    const owner = this.#database.prepare(`SELECT migration_id,payload_hash,status
+      FROM knowledge_freshness_migration_owners WHERE asset_id=? AND asset_version=?`).get(assetId, assetVersion) as
+      { migration_id: string; payload_hash: string; status: "OWNED" | "ROLLED_BACK" } | undefined;
+    return owner === undefined ? undefined : Object.freeze({ migrationId: owner.migration_id,
+      payloadHash: owner.payload_hash, status: owner.status });
+  }
+
+  rollbackMigrationProjection(request: { readonly migrationId: string; readonly assetId: string;
+    readonly assetVersion: number; readonly updatedAt: string }): MigrationFreshnessRollbackResult {
+    this.#open();
+    if (!safeText(request.migrationId) || !safeText(request.assetId) || !Number.isSafeInteger(request.assetVersion)
+      || request.assetVersion < 1 || !Number.isFinite(Date.parse(request.updatedAt))) {
+      throw new Error("FRESHNESS_MIGRATION_ROLLBACK_INVALID");
+    }
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const owner = this.#database.prepare(`SELECT migration_id,payload_hash,owned_state_revision,status
+        FROM knowledge_freshness_migration_owners WHERE asset_id=? AND asset_version=?`).get(request.assetId, request.assetVersion) as
+        { migration_id: string; payload_hash: string; owned_state_revision: number; status: string } | undefined;
+      if (owner === undefined) { this.#database.exec("COMMIT"); return { status: "NOT_OWNED" }; }
+      if (owner.migration_id !== request.migrationId) throw new Error("FRESHNESS_MIGRATION_OWNERSHIP_CONFLICT");
+      if (owner.status === "ROLLED_BACK") { this.#database.exec("COMMIT"); return { status: "IDEMPOTENT" }; }
+      const projection = this.#database.prepare("SELECT payload_hash FROM knowledge_freshness WHERE asset_id=? AND asset_version=?")
+        .get(request.assetId, request.assetVersion) as { payload_hash: string } | undefined;
+      if (projection === undefined || projection.payload_hash !== owner.payload_hash) {
+        this.#database.exec("COMMIT"); return { status: "CONFLICT", reasonCode: "PROJECTION_CHANGED" };
+      }
+      const active = this.#database.prepare("SELECT asset_version FROM knowledge_freshness_active WHERE asset_id=?")
+        .get(request.assetId) as { asset_version: number } | undefined;
+      if (active?.asset_version !== request.assetVersion) {
+        this.#database.exec("COMMIT"); return { status: "CONFLICT", reasonCode: "ACTIVE_VERSION_CHANGED" };
+      }
+      const state = this.#database.prepare("SELECT revision FROM knowledge_freshness_state WHERE asset_id=? AND asset_version=?")
+        .get(request.assetId, request.assetVersion) as { revision: number } | undefined;
+      const events = this.#database.prepare("SELECT COUNT(*) AS count FROM knowledge_freshness_state_events WHERE asset_id=? AND asset_version=?")
+        .get(request.assetId, request.assetVersion) as { count: number };
+      if (state?.revision !== owner.owned_state_revision || events.count > 0) {
+        this.#database.exec("COMMIT"); return { status: "CONFLICT", reasonCode: "FRESHNESS_CHANGED" };
+      }
+      this.#database.prepare("DELETE FROM knowledge_freshness_active WHERE asset_id=?").run(request.assetId);
+      this.#database.prepare("DELETE FROM knowledge_freshness_state WHERE asset_id=? AND asset_version=?")
+        .run(request.assetId, request.assetVersion);
+      this.#database.prepare("DELETE FROM knowledge_freshness_anchors WHERE asset_id=? AND asset_version=?")
+        .run(request.assetId, request.assetVersion);
+      this.#database.prepare("DELETE FROM knowledge_freshness WHERE asset_id=? AND asset_version=?")
+        .run(request.assetId, request.assetVersion);
+      const previous = this.#database.prepare(`SELECT asset_version,project_id FROM knowledge_freshness
+        WHERE asset_id=? AND asset_version<? ORDER BY asset_version DESC LIMIT 1`).get(request.assetId, request.assetVersion) as
+        { asset_version: number; project_id: string } | undefined;
+      if (previous !== undefined) this.#database.prepare("INSERT INTO knowledge_freshness_active VALUES(?,?,?)")
+        .run(request.assetId, previous.asset_version, previous.project_id);
+      this.#database.prepare(`UPDATE knowledge_freshness_migration_owners SET status='ROLLED_BACK',updated_at=?
+        WHERE asset_id=? AND asset_version=?`).run(request.updatedAt, request.assetId, request.assetVersion);
+      this.#database.exec("COMMIT"); return { status: "ROLLED_BACK" };
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
   }
 
   get(assetId: string, assetVersion?: number): KnowledgeFreshnessRecord | undefined {

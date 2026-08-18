@@ -2,16 +2,59 @@
 
 ## 审查统计
 
-| 指标 | 本轮（Semantic Evolution and Alerts） | 累计 |
+| 指标 | 本轮（Legacy Code Knowledge Migration） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 15 |
-| 风险发现 | 2 | 107 |
-| 高风险 | 1 | 47 |
-| 中风险 | 1 | 52 |
+| Review 次数 | 1 | 16 |
+| 风险发现 | 12 | 119 |
+| 高风险 | 6 | 53 |
+| 中风险 | 6 | 58 |
 | 低风险 | 0 | 8 |
-| 已修复 | 2 | 102 |
+| 已修复 | 12 | 114 |
 | 未解决 | 0 | 5 |
-| 本轮耗时 | 约 35 分钟 | 已知耗时约 6 小时 14 分钟（首轮历史报告未记录耗时） |
+| 本轮耗时 | 约 50 分钟 | 已知耗时约 7 小时 4 分钟（首轮历史报告未记录耗时） |
+
+## Legacy Code Knowledge Migration 审查结论
+
+历史代码知识现在可由操作员先生成不可变 dry-run，再通过 revision/idempotency 门禁进入 durable migration job。迁移只从现存 Freshness Candidate、精确 Recipe 或显式 symbol anchor 重建代码断言；不读正文猜测，不修改 Markdown、Registry 内容、Scope、Authority 或 lifecycle。Recipe 与 Freshness 写入在各自事务内登记 migration owner；回滚仅删除仍由同一迁移拥有且没有后续活动的派生数据。审查覆盖权限、分类、并发、崩溃恢复、回滚、隐私、分页和控制面，12 个发现全部修复。
+
+## Legacy Code Knowledge Migration 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 完成状态写入后、最终 checkpoint 写入前退出时，重放会把 `COMPLETED` 当 preview mismatch | 已成功迁移被永久标记失败，无法自动恢复 | 允许 exact revision 的 completed recovery，以已保存 processedCount 补写最终 checkpoint；崩溃窗口测试仅执行一次验证 |
+| 高 | 完成 transition 使用新的系统时间 | 相同 effect key 重放时输入 hash 改变并触发幂等冲突 | 使用不可变 COMMITTING 时间；完成 effect 与重放输入稳定 |
+| 高 | 预览后出现 Freshness 行时无法区分外部并发写与本迁移崩溃遗留 | 可能窃取他人数据的回滚所有权，或拒绝自己的安全重放 | 增加事务 owner 查询；只允许同 migration 的 `OWNED` 行重放，其他行 `TARGET_DRIFT` |
+| 高 | 已回滚状态直接返回，绕过 revision 和 idempotency key | 新命令可伪装成历史成功回执 | 所有回放均经过原始 effect receipt；新 key 在终态明确冲突 |
+| 高 | 回滚完成 effect 在重放时使用最新 header revision | 首次成功后再次调用同一命令产生 effect conflict | 完成 effect 永远绑定 rolling revision；精确命令跨终态稳定重放 |
+| 高 | Recipe 回滚捕获所有异常并当作内容冲突 | SQLite/存储故障会被误报为人工修改并错误结束流程 | 仅 `KnowledgeVerificationConflictError` 转换为 `RECIPE_CHANGED`，其他错误向上重试/失败 |
+| 中 | 回滚按正序扫描，与设计的逆序撤销不一致 | 多版本或依赖派生数据可能按错误顺序删除 | 新增受界 reverse paging，三项跨页回滚顺序测试为 3→2→1 |
+| 中 | 相同 Registry 内容的新 dry-run 复用旧 migrationId | 回滚后无法创建新一轮迁移，或与旧时间载荷冲突 | migrationId 纳入 requestedAt；相同请求仍幂等，后续新预览获得新 ID |
+| 中 | Recipe 与 Freshness 同时存在时未比较断言 | 不一致派生数据会被误报为 `ALREADY_CURRENT` | 比较 canonical code assertion hash，不一致明确 `RECIPE_FRESHNESS_MISMATCH` |
+| 中 | 项目 Scope 匹配时未再核对断言中的 projectId | 跨项目 symbol/call/impact assertion 可能进入错误项目迁移 | 所有带 projectId 的代码断言先做集合校验；跨项目 Freshness/Recipe 均跳过 |
+| 中 | 新请求类型未加入 Socket 的 P2 分流 | 合法 `knowledge.migrations.*` 在业务层之前被 `INVALID_REQUEST` 拒绝 | Transport 同时识别 extraction 与 migration 命名空间；真实 Unix Socket 测试覆盖 |
+| 中 | commit 重放再次检查后来变化的 Registry revision | 已成功接收的同一幂等命令可能在重试时被拒绝 | Registry gate 只约束首次 READY→COMMITTING；已存在 effect 允许精确重放，worker 首次 effect 前仍二次门禁 |
+
+## Legacy Code Knowledge Migration 关键维度确认
+
+- **权限与无猜测**：只接受既有 Candidate/Recipe 或显式 symbol；aliases、keywords、summary/body 和模型均不用于发明 assertion。
+- **形式知识不变**：迁移与回滚不写 Registry/Markdown；临时数据库验收对比迁移前后 KnowledgeAsset 完全相同。
+- **崩溃恢复**：目标写入/审计写入、完成状态/checkpoint 两个窗口均有重放测试；stable verification request 和 owner receipt 防止重复派生数据。
+- **回滚安全**：Recipe hash、Freshness active version/state revision/event 均需仍匹配；后续活动保留原数据并返回 `ROLLBACK_CONFLICT`。
+- **控制与隐私**：控制 API 只返回 ID、hash、计数、enum、revision 和受界 reason；不包含知识正文、prompt、环境或 CodeGraph/Codex 原始输出。
+- **能力真实性**：`LEGACY_KNOWLEDGE_MIGRATION` 只有生产 handler 注册后才报告 READY；终态失败持久化 `MIGRATION_FAILED`。
+
+## Legacy Code Knowledge Migration Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，75 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7 Gate | 60/60 通过 |
+| Vitest unit/integration | 191 files，1,647/1,647 通过 |
+| Coverage | statements 90.00%，branches 85.24%，functions 92.24%，lines 93.78% |
+| OpenSpec strict validation | `migrate-legacy-code-knowledge` 有效 |
+| 持久化回放 | target-write/checkpoint crash、terminal checkpoint crash、restart、rollback conflict 与 alert 均通过 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## Semantic Evolution and Alerts 审查结论
 

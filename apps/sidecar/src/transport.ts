@@ -131,7 +131,7 @@ function parseRequest(value: unknown): SidecarRequest {
     return parsed.data;
   }
   if (typeof type === "string" && type.startsWith("p4.")) return parseP4ConsoleRequest(value);
-  if (typeof type === "string" && type.startsWith("extraction.")) {
+  if (typeof type === "string" && (type.startsWith("extraction.") || type.startsWith("knowledge.migrations."))) {
     const parsed = parseP2ContractText(serialized, p2ControlRequestSchema);
     if (!parsed.ok) {
       const error = new Error("invalid P2 control request") as Error & { code: string };

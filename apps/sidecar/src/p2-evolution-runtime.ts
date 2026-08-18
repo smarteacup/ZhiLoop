@@ -1,13 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { EvolutionJobRuntime, type EvolutionJobCapability, type EvolutionJobProjection } from "@zhiloop/evolution-job-runtime";
+import { EvolutionJobRuntime, parseEvolutionJobInput, type EvolutionJobCapability, type EvolutionJobProjection,
+  type LegacyKnowledgeMigrationJobInput } from "@zhiloop/evolution-job-runtime";
 import { GitKnowledgeChangeSource, KnowledgeChangeIntake, type KnowledgeChangeIntakeState } from "@zhiloop/knowledge-change-intake";
-import { createKnowledgeCompileHandler, createKnowledgeRepairDraftHandler, createKnowledgeRevalidateHandler } from "@zhiloop/knowledge-evolution-jobs";
+import { createKnowledgeCompileHandler, createKnowledgeRepairDraftHandler, createKnowledgeRevalidateHandler,
+  createLegacyKnowledgeMigrationHandler } from "@zhiloop/knowledge-evolution-jobs";
 import type { FreshnessCompensationPort, LiveKnowledgeRevisionReadPort, SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
 import type { FreshnessSchedulerConfiguration } from "@zhiloop/knowledge-freshness";
 import { SqliteKnowledgeRepairDraftStore, type KnowledgeRepairDraft, type RepairDraftListRequest,
   type RepairDraftPage } from "@zhiloop/knowledge-repair-drafts";
+import { LegacyKnowledgeMigrationRollbackService, LegacyKnowledgeMigrationService,
+  SqliteLegacyKnowledgeMigrationStore, type LegacyMigrationPage, type LegacyMigrationPreview } from
+  "@zhiloop/knowledge-legacy-migration";
 import { SqliteOperationalAlertStore, type OperationalAlertInput, type OperationalAlertPage } from "@zhiloop/operational-alerts";
 
 import { P2DurableKnowledgeCompilationPort } from "./p2-evolution-jobs.js";
@@ -102,6 +107,9 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   readonly #jobs: EvolutionJobRuntime;
   readonly #verifier: ProductionFreshnessVerifier;
   readonly #repairDrafts: SqliteKnowledgeRepairDraftStore;
+  readonly #migrations: SqliteLegacyKnowledgeMigrationStore;
+  readonly #migrationService: LegacyKnowledgeMigrationService;
+  readonly #migrationRollback: LegacyKnowledgeMigrationRollbackService;
   readonly #alerts: SqliteOperationalAlertStore;
   readonly #alertConfiguration: P2EvolutionAlertConfiguration;
   readonly #roots = new Map<string, string>();
@@ -121,7 +129,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   constructor(options: {
     readonly stateDirectory: string;
     readonly freshnessStore: SqliteKnowledgeFreshnessStore;
-    readonly production: Pick<P2ProductionComposition, "verification" | "verificationStore">;
+    readonly production: Pick<P2ProductionComposition, "verification" | "verificationStore" | "registry">;
     readonly preview: P2CandidatePreviewPort;
     readonly p2Runtime: P2SidecarRuntime;
     readonly configuration?: Partial<P2EvolutionRuntimeConfiguration>;
@@ -140,6 +148,12 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     catch (error) { this.#source.close(); throw error; }
     try { this.#alerts = new SqliteOperationalAlertStore(join(options.stateDirectory, "operational-alerts.sqlite")); }
     catch (error) { this.#repairDrafts.close(); this.#source.close(); throw error; }
+    try { this.#migrations = new SqliteLegacyKnowledgeMigrationStore(join(options.stateDirectory, "legacy-knowledge-migrations.sqlite")); }
+    catch (error) { this.#alerts.close(); this.#repairDrafts.close(); this.#source.close(); throw error; }
+    this.#migrationService = new LegacyKnowledgeMigrationService({ registry: options.production.registry,
+      recipes: options.production.verificationStore, freshness: options.freshnessStore, store: this.#migrations });
+    this.#migrationRollback = new LegacyKnowledgeMigrationRollbackService({ store: this.#migrations,
+      recipes: options.production.verificationStore, freshness: options.freshnessStore });
     this.#verifier = new ProductionFreshnessVerifier(options.production.verification, (revision) => {
       if (revision.graphRevision !== undefined) {
         try { this.#intake.updateGraphRevision(revision.projectId, revision.codeRevision, revision.graphRevision); }
@@ -176,10 +190,18 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
           KNOWLEDGE_COMPILE: createKnowledgeCompileHandler(new P2DurableKnowledgeCompilationPort(options.preview, options.p2Runtime)),
           KNOWLEDGE_REPAIR_DRAFT: createKnowledgeRepairDraftHandler({ freshness: options.freshnessStore,
             verification: options.production.verificationStore, drafts: this.#repairDrafts }),
+          LEGACY_KNOWLEDGE_MIGRATION: createLegacyKnowledgeMigrationHandler({ store: this.#migrations,
+            service: this.#migrationService, registryRevision: () => options.production.registry.activeIndexVersion,
+            recipes: options.production.verificationStore, freshness: options.freshnessStore,
+            verifier: options.production.verification,
+            project: (projectId) => { const repositoryRoot = this.#roots.get(projectId);
+              return repositoryRoot === undefined ? undefined : { projectId, repositoryRoot, portable: false }; },
+            pageSize: this.#configuration.revalidationPageSize }),
         },
       });
     } catch (error) {
       this.#alerts.close();
+      this.#migrations.close();
       this.#repairDrafts.close();
       this.#source.close();
       throw error;
@@ -189,6 +211,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     catch (error) {
       this.#jobs.close();
       this.#alerts.close();
+      this.#migrations.close();
       this.#repairDrafts.close();
       this.#source.close();
       throw error;
@@ -280,6 +303,56 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   listOperationalAlerts(request: Parameters<SqliteOperationalAlertStore["list"]>[0]): OperationalAlertPage {
     this.#assertOpen(); return this.#alerts.list(request);
   }
+  previewLegacyMigration(projectId: string, createdAt = new Date().toISOString()): LegacyMigrationPreview {
+    this.#assertOpen();
+    if (!this.#roots.has(projectId)) throw new Error("LEGACY_MIGRATION_PROJECT_UNOBSERVED");
+    return this.#migrationService.dryRun({ projectId, createdAt });
+  }
+  getLegacyMigration(migrationId: string): LegacyMigrationPreview | undefined {
+    this.#assertOpen(); return this.#migrations.get(migrationId);
+  }
+  listLegacyMigrations(projectId: string, limit = 100): readonly LegacyMigrationPreview[] {
+    this.#assertOpen(); return this.#migrations.list(projectId, limit);
+  }
+  listLegacyMigrationItems(migrationId: string, limit = 100, afterOrdinal?: number): LegacyMigrationPage {
+    this.#assertOpen(); return this.#migrations.items({ migrationId, limit,
+      ...(afterOrdinal === undefined ? {} : { afterOrdinal }) });
+  }
+  commitLegacyMigration(request: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly updatedAt: string }): { readonly preview: LegacyMigrationPreview;
+      readonly job: EvolutionJobProjection } {
+    this.#assertOpen(); const current = this.#migrations.get(request.migrationId);
+    if (current === undefined) throw new Error("LEGACY_MIGRATION_NOT_FOUND");
+    if (current.status === "READY" && current.revision !== request.expectedRevision) {
+      throw new Error("LEGACY_MIGRATION_REVISION_CONFLICT");
+    }
+    if (current.status === "READY"
+      && current.sourceRegistryRevision !== this.#migrationService.ports.registry.activeIndexVersion) {
+      throw new Error("LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT");
+    }
+    const input: LegacyKnowledgeMigrationJobInput = { schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION",
+      migrationVersion: current.migrationVersion, projectId: current.projectId, migrationId: current.migrationId,
+      previewRevision: request.expectedRevision + 1 };
+    const enqueued = this.enqueue(input, this.#configuration.maxAttempts); const jobId = enqueued.job.snapshot.jobId;
+    try {
+      const preview = this.#migrations.transition({ migrationId: current.migrationId,
+        expectedRevision: request.expectedRevision, effectKey: request.idempotencyKey, status: "COMMITTING", jobId,
+        updatedAt: request.updatedAt });
+      const job = this.#jobs.get(jobId); if (job === undefined) throw new Error("LEGACY_MIGRATION_JOB_MISSING");
+      return Object.freeze({ preview, job });
+    } catch (error) {
+      const job = this.#jobs.get(jobId);
+      if (enqueued.status === "CREATED" && job !== undefined) {
+        try { this.#jobs.cancel({ jobId, expectedRevision: job.revision,
+          idempotencyKey: `orphan-migration:${request.idempotencyKey}` }); } catch { /* orphan job fails closed on preview mismatch */ }
+      }
+      throw error;
+    }
+  }
+  async rollbackLegacyMigration(request: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly updatedAt: string }): Promise<LegacyMigrationPreview> {
+    this.#assertOpen(); return await this.#migrationRollback.rollback(request);
+  }
 
   async applyConfiguration(configuration: FreshnessSchedulerConfiguration): Promise<() => Promise<void>> {
     this.#assertOpen();
@@ -306,7 +379,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     let failure: unknown;
     try { await this.#intake.stop(); } catch (error) { failure = error; }
     await this.#workerTail?.catch(() => undefined);
-    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#alerts.close(),
+    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#alerts.close(), () => this.#migrations.close(),
       () => this.#repairDrafts.close(), () => this.#source.close()]) {
       try { close(); } catch (error) { failure ??= error; }
     }
@@ -365,10 +438,23 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
           this.#project(jobId);
           if (result.status === "FAILED" && this.#alertConfiguration.enabled && this.#alertConfiguration.onPermanentJobFailure) {
             const failure = result.job.snapshot.lastFailure;
-            void this.#emitAlert({ eventId: `permanent-job:${jobId}:${result.job.snapshot.attempt}:${failure?.occurredAt ?? result.job.snapshot.updatedAt}`,
-              observedAt: failure?.occurredAt ?? result.job.snapshot.updatedAt ?? new Date().toISOString(),
-              dedupKey: `permanent-job:${jobId}`, severity: "CRITICAL", type: "PERMANENT_JOB_FAILURE",
-              entityRef: jobId, reasonCodes: [failure?.code ?? "JOB_ATTEMPTS_EXHAUSTED"] });
+            const observedAt = failure?.occurredAt ?? result.job.snapshot.updatedAt ?? new Date().toISOString();
+            let migration: LegacyMigrationPreview | undefined;
+            try { const parsed = parseEvolutionJobInput(result.job.input);
+              if (parsed.jobType === "LEGACY_KNOWLEDGE_MIGRATION") migration = this.#migrations.get(parsed.migrationId); } catch { /* invalid input already failed */ }
+            if (migration !== undefined) {
+              try { if (migration.status === "COMMITTING") this.#migrations.transition({ migrationId: migration.migrationId,
+                expectedRevision: migration.revision, effectKey: `migration-failed:${jobId}:${result.job.snapshot.attempt}`,
+                status: "FAILED", failureCode: failure?.code ?? "JOB_ATTEMPTS_EXHAUSTED", updatedAt: observedAt }); } catch { /* job failure remains authoritative */ }
+              void this.#emitAlert({ eventId: `migration-failed:${jobId}:${result.job.snapshot.attempt}:${observedAt}`,
+                observedAt, dedupKey: `migration-failed:${migration.migrationId}`, severity: "CRITICAL", type: "MIGRATION_FAILED",
+                projectId: migration.projectId, entityRef: migration.migrationId,
+                reasonCodes: [failure?.code ?? "JOB_ATTEMPTS_EXHAUSTED"] });
+            } else {
+              void this.#emitAlert({ eventId: `permanent-job:${jobId}:${result.job.snapshot.attempt}:${observedAt}`,
+                observedAt, dedupKey: `permanent-job:${jobId}`, severity: "CRITICAL", type: "PERMANENT_JOB_FAILURE",
+                entityRef: jobId, reasonCodes: [failure?.code ?? "JOB_ATTEMPTS_EXHAUSTED"] });
+            }
           }
         }
         this.#completedWorkerCycles += 1;

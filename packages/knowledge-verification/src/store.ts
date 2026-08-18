@@ -8,6 +8,8 @@ import type {
   KnowledgeVerificationRunSummary,
   KnowledgeVerificationStore,
   StoredVerificationRecipe,
+  MigrationRecipeWriteResult,
+  MigrationRecipeRollbackResult,
   SupportingProofRef,
   VerificationRecipe,
 } from "./types.js";
@@ -144,6 +146,12 @@ export class SqliteKnowledgeVerificationStore implements KnowledgeVerificationSt
           assertions_json TEXT NOT NULL, assertions_hash TEXT NOT NULL, created_at TEXT NOT NULL,
           PRIMARY KEY(asset_id,asset_version,recipe_version)
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS verification_recipe_migration_owners(
+          asset_id TEXT NOT NULL, asset_version INTEGER NOT NULL, recipe_version TEXT NOT NULL,
+          migration_id TEXT NOT NULL, assertions_hash TEXT NOT NULL, status TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          PRIMARY KEY(asset_id,asset_version,recipe_version)
+        ) STRICT;
         CREATE TABLE IF NOT EXISTS code_verification_runs(
           run_id TEXT PRIMARY KEY NOT NULL, request_id TEXT UNIQUE NOT NULL, purpose TEXT NOT NULL,
           project_id TEXT NOT NULL, subject_key TEXT NOT NULL, candidate_id TEXT NOT NULL,
@@ -196,6 +204,68 @@ export class SqliteKnowledgeVerificationStore implements KnowledgeVerificationSt
       validateRecipe(recipe);
       return Object.freeze({ ...structuredClone(recipe), assertionsHash: row.assertions_hash });
     } catch { throw new KnowledgeVerificationCorruptionError("persisted verification recipe is corrupt"); }
+  }
+
+  saveRecipeForMigration(migrationId: string, recipe: VerificationRecipe): MigrationRecipeWriteResult {
+    identity(migrationId, "migrationId"); validateRecipe(recipe);
+    const assertionsJson = bounded(recipe.assertions, MAX_RECIPE_BYTES); const assertionsHash = hash(assertionsJson);
+    const stored = Object.freeze({ ...structuredClone(recipe), assertionsHash });
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const owner = this.#database.prepare(`SELECT migration_id,assertions_hash,status FROM verification_recipe_migration_owners
+        WHERE asset_id=? AND asset_version=? AND recipe_version=?`).get(recipe.assetId, recipe.assetVersion, recipe.recipeVersion) as
+        { migration_id: string; assertions_hash: string; status: string } | undefined;
+      const existing = this.getRecipe(recipe.assetId, recipe.assetVersion, recipe.recipeVersion);
+      if (owner !== undefined && (owner.migration_id !== migrationId || owner.assertions_hash !== assertionsHash)) {
+        throw new KnowledgeVerificationConflictError("verification recipe migration ownership conflicts");
+      }
+      if (owner?.status === "ROLLED_BACK") throw new KnowledgeVerificationConflictError("verification recipe migration was rolled back");
+      if (existing !== undefined) {
+        if (existing.assertionsHash !== assertionsHash || canonical(existing.assertions) !== assertionsJson) {
+          throw new KnowledgeVerificationConflictError("verification recipe identity already exists");
+        }
+        this.#database.exec("COMMIT");
+        return { status: owner?.status === "OWNED" ? "IDEMPOTENT" : "PREEXISTING", recipe: existing };
+      }
+      this.#database.prepare(`INSERT INTO verification_recipes
+        (asset_id,asset_version,recipe_version,assertions_json,assertions_hash,created_at) VALUES(?,?,?,?,?,?)`)
+        .run(recipe.assetId, recipe.assetVersion, recipe.recipeVersion, assertionsJson, assertionsHash, recipe.createdAt);
+      this.#database.prepare(`INSERT INTO verification_recipe_migration_owners
+        (asset_id,asset_version,recipe_version,migration_id,assertions_hash,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,'OWNED',?,?)`).run(recipe.assetId, recipe.assetVersion, recipe.recipeVersion,
+          migrationId, assertionsHash, recipe.createdAt, recipe.createdAt);
+      this.#database.exec("COMMIT"); return { status: "CREATED", recipe: stored };
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+
+  rollbackRecipeForMigration(request: { readonly migrationId: string; readonly assetId: string;
+    readonly assetVersion: number; readonly recipeVersion: string; readonly assertionsHash: string;
+    readonly updatedAt: string }): MigrationRecipeRollbackResult {
+    identity(request.migrationId, "migrationId"); identity(request.assetId, "assetId");
+    identity(request.recipeVersion, "recipeVersion");
+    if (!Number.isSafeInteger(request.assetVersion) || request.assetVersion < 1 || !/^[a-f0-9]{64}$/u.test(request.assertionsHash)
+      || !Number.isFinite(Date.parse(request.updatedAt))) throw new Error("verification recipe rollback request is invalid");
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const owner = this.#database.prepare(`SELECT migration_id,assertions_hash,status FROM verification_recipe_migration_owners
+        WHERE asset_id=? AND asset_version=? AND recipe_version=?`).get(request.assetId, request.assetVersion, request.recipeVersion) as
+        { migration_id: string; assertions_hash: string; status: string } | undefined;
+      if (owner === undefined) { this.#database.exec("COMMIT"); return { status: "NOT_OWNED" }; }
+      if (owner.migration_id !== request.migrationId || owner.assertions_hash !== request.assertionsHash) {
+        throw new KnowledgeVerificationConflictError("verification recipe migration ownership conflicts");
+      }
+      if (owner.status === "ROLLED_BACK") { this.#database.exec("COMMIT"); return { status: "IDEMPOTENT" }; }
+      const recipe = this.getRecipe(request.assetId, request.assetVersion, request.recipeVersion);
+      if (recipe === undefined || recipe.assertionsHash !== request.assertionsHash) {
+        throw new KnowledgeVerificationConflictError("verification recipe changed after migration");
+      }
+      this.#database.prepare("DELETE FROM verification_recipes WHERE asset_id=? AND asset_version=? AND recipe_version=?")
+        .run(request.assetId, request.assetVersion, request.recipeVersion);
+      this.#database.prepare(`UPDATE verification_recipe_migration_owners SET status='ROLLED_BACK',updated_at=?
+        WHERE asset_id=? AND asset_version=? AND recipe_version=?`).run(request.updatedAt, request.assetId,
+          request.assetVersion, request.recipeVersion);
+      this.#database.exec("COMMIT"); return { status: "ROLLED_BACK" };
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
   }
 
   appendRun(summary: KnowledgeVerificationRunSummary): KnowledgeVerificationRunSummary {

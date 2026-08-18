@@ -49,7 +49,7 @@
 | 语义演进裁决 | READY（默认关闭） | 只在确定性规则未决时调用一次 Codex；最多 5 个摘要目标，越界/错误/不可用保持 `PENDING` |
 | 本地运维告警 | READY | 三类生产事件写入 SQLite；按 dedupKey 冷却聚合，无 provider 时明确标记 `LOCAL_ONLY` |
 | `CODEGRAPH_INITIALIZE` | NOT_CONFIGURED | Hook/门禁绝不隐式初始化 CodeGraph |
-| `LEGACY_KNOWLEDGE_MIGRATION` | NOT_CONFIGURED | 未实现迁移 handler 前不接受操作请求 |
+| `LEGACY_KNOWLEDGE_MIGRATION` | READY | 操作员显式 dry-run 后，以 revision/idempotency 门禁提交；支持断点恢复、冲突回滚与 `MIGRATION_FAILED` 告警 |
 | 精确 Freshness 门禁 | READY | 代码/图 revision 不一致即排除；非代码知识继续；总预算不超过 200ms |
 | 自动知识发布 | NOT_CONFIGURED | Candidate Preview 后仍需显式策略提交 |
 

@@ -7,6 +7,8 @@ import {
   candidatePreviewSchema,
   extractionSnapshotCreateRequestSchema,
   extractionSnapshotSchema,
+  legacyMigrationItemSchema,
+  legacyMigrationPreviewSchema,
   knowledgeVersionRefSchema,
   parseP2ContractText,
   p2ControlRequestSchema,
@@ -116,6 +118,73 @@ describe("P2 snapshot and candidate contracts", () => {
       root: { type: "SNAPSHOT", snapshotId: "snapshot_demo_02", revision: 1 },
       limit: 101,
     }).success).toBe(false);
+  });
+
+  it("keeps legacy migration operations strict, revision-bound and body-free", () => {
+    const requestedAt = "2026-08-19T04:00:00.000Z";
+    const previewRequest = {
+      ...requestBase,
+      type: "knowledge.migrations.preview",
+      projectId: "project_demo_01",
+      requestedAt,
+    } as const;
+    expect(p2ControlRequestSchema.parse(previewRequest)).toEqual(previewRequest);
+
+    const commit = {
+      ...requestBase,
+      type: "knowledge.migrations.commit",
+      migrationId: "migration_demo_01",
+      expectedRevision: 0,
+      idempotencyKey: "migration:commit:demo-01",
+      requestedAt,
+    } as const;
+    expect(p2ControlRequestSchema.parse(commit)).toEqual(commit);
+    expect(p2ControlRequestSchema.safeParse({ ...commit, expectedRevision: -1 }).success).toBe(false);
+    expect(p2ControlRequestSchema.safeParse({ ...commit, requestedAt: "2026-08-19 12:00" }).success).toBe(false);
+    expect(p2ControlRequestSchema.safeParse({ ...commit, knowledgeBody: "must never cross control API" }).success).toBe(false);
+    expect(p2ControlRequestSchema.safeParse({ ...previewRequest, limit: 101 }).success).toBe(false);
+  });
+
+  it("validates bounded legacy migration views without knowledge prose", () => {
+    const preview = {
+      schemaVersion: 1,
+      migrationId: "migration_demo_01",
+      migrationVersion: "legacy-code-knowledge-v1",
+      projectId: "project_demo_01",
+      sourceRegistryRevision: 7,
+      status: "READY",
+      revision: 0,
+      scannedCount: 3,
+      migratableCount: 1,
+      alreadyCurrentCount: 1,
+      skippedCount: 1,
+      failedCount: 0,
+      rollbackConflictCount: 0,
+      summaryHash: hash("e"),
+      createdAt: "2026-08-19T04:00:00.000Z",
+      updatedAt: "2026-08-19T04:00:00.000Z",
+    } as const;
+    expect(legacyMigrationPreviewSchema.parse(preview)).toEqual(preview);
+    expect(legacyMigrationPreviewSchema.safeParse({ ...preview, scannedCount: 4 }).success).toBe(false);
+    const item = {
+      schemaVersion: 1,
+      migrationId: "migration_demo_01",
+      ordinal: 0,
+      assetId: "asset_demo_01",
+      assetVersion: 1,
+      assetContentHash: hash("f"),
+      assetIndexVersion: 7,
+      classification: "MIGRATABLE",
+      source: "SYMBOL_ANCHOR",
+      candidateId: "candidate_demo_01",
+      assertionsHash: hash("a"),
+      assertionKinds: ["SYMBOL_EXISTS"],
+      reasonCodes: ["EXPLICIT_SYMBOL_ANCHOR"],
+      status: "PENDING",
+      updatedAt: "2026-08-19T04:00:00.000Z",
+    } as const;
+    expect(legacyMigrationItemSchema.parse(item)).toEqual(item);
+    expect(legacyMigrationItemSchema.safeParse({ ...item, body: "private knowledge prose" }).success).toBe(false);
   });
 });
 

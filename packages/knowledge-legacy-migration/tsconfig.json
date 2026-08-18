@@ -4,12 +4,9 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
-    { "path": "../evolution-job-runtime" },
-    { "path": "../job-runtime" },
-    { "path": "../invalidation-engine" },
+    { "path": "../domain" },
     { "path": "../knowledge-freshness" },
-    { "path": "../knowledge-legacy-migration" },
-    { "path": "../knowledge-repair-drafts" },
+    { "path": "../knowledge-registry" },
     { "path": "../knowledge-verification" }
   ]
 }

@@ -414,8 +414,36 @@ export class SidecarApplication {
         },
         extraction: {
           handle: async (request) => {
-            if (p2Runtime === undefined) throw new Error("P2 runtime is not composed");
-            return await p2Runtime.handle(request);
+            switch (request.type) {
+              case "knowledge.migrations.preview":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.previewLegacyMigration(request.projectId, request.requestedAt);
+              case "knowledge.migrations.list":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return { items: p2Evolution.listLegacyMigrations(request.projectId, request.limit) };
+              case "knowledge.migrations.get": {
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                const preview = p2Evolution.getLegacyMigration(request.migrationId);
+                if (preview === undefined) throw new Error("LEGACY_MIGRATION_NOT_FOUND");
+                return preview;
+              }
+              case "knowledge.migrations.items":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.listLegacyMigrationItems(request.migrationId, request.limit, request.afterOrdinal);
+              case "knowledge.migrations.commit":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.commitLegacyMigration({ migrationId: request.migrationId,
+                  expectedRevision: request.expectedRevision, idempotencyKey: request.idempotencyKey,
+                  updatedAt: request.requestedAt });
+              case "knowledge.migrations.rollback":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return await p2Evolution.rollbackLegacyMigration({ migrationId: request.migrationId,
+                  expectedRevision: request.expectedRevision, idempotencyKey: request.idempotencyKey,
+                  updatedAt: request.requestedAt });
+              default:
+                if (p2Runtime === undefined) throw new Error("P2 runtime is not composed");
+                return await p2Runtime.handle(request);
+            }
           },
         },
       });

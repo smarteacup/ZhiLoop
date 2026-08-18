@@ -987,6 +987,12 @@ export class SidecarControlPlane {
         case "extraction.candidates.get":
         case "extraction.policy-commit.get":
         case "extraction.provenance.get":
+        case "knowledge.migrations.preview":
+        case "knowledge.migrations.list":
+        case "knowledge.migrations.get":
+        case "knowledge.migrations.items":
+        case "knowledge.migrations.commit":
+        case "knowledge.migrations.rollback":
           if (this.#extraction === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
           result = await this.#extraction.handle(request);
           break;
@@ -1019,6 +1025,20 @@ export class SidecarControlPlane {
                 error.code === "TRANSCRIPT_REPLACED" || error.code === "TRANSCRIPT_TRUNCATED" || error.code === "TRANSCRIPT_ANCHOR_MISMATCH"
               )
                 ? "STALE_REVISION"
+          : error instanceof Error && ["LEGACY_MIGRATION_NOT_FOUND"].includes(error.message)
+            ? "NOT_FOUND"
+            : error instanceof Error && [
+              "LEGACY_MIGRATION_REVISION_CONFLICT", "LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT",
+              "LEGACY_MIGRATION_SOURCE_CHANGED", "LEGACY_MIGRATION_TARGET_DRIFT",
+            ].includes(error.message)
+              ? "STALE_REVISION"
+              : error instanceof Error && [
+                "LEGACY_MIGRATION_IDEMPOTENCY_CONFLICT", "LEGACY_MIGRATION_EFFECT_CONFLICT",
+                "LEGACY_MIGRATION_STATUS_CONFLICT",
+              ].includes(error.message)
+                ? "CONFLICT"
+                : error instanceof Error && error.message.startsWith("LEGACY_MIGRATION_")
+                  ? "INVALID_REQUEST"
           : "INTERNAL_ERROR";
       return errorResponse(request.requestId, code, timestamp(this.#clock));
     }

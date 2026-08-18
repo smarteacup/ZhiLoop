@@ -175,6 +175,50 @@ describe("sidecar configuration", () => {
 });
 
 describe("sidecar service", () => {
+  it("serves bounded legacy migration status over the P2 control transport", async () => {
+    const { config } = await temporaryConfig();
+    const application = await SidecarApplication.create(config);
+    await application.start();
+    const server = await startSidecarServer(config.socketPath, application);
+    try {
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "legacy-migrations-list",
+        type: "knowledge.migrations.list",
+        projectId: "project-demo",
+        limit: 10,
+      }, 1_000))).toEqual({ items: [] });
+      expect(await requestSidecar(config.socketPath, {
+        schemaVersion: 1,
+        requestId: "legacy-migration-missing",
+        type: "knowledge.migrations.get",
+        migrationId: "migration-missing",
+      }, 1_000)).toMatchObject({ ok: false, error: { code: "NOT_FOUND", retryable: false } });
+      expect(controlResult(await requestSidecar(config.socketPath, {
+        schemaVersion: 1, requestId: "legacy-migration-items", type: "knowledge.migrations.items",
+        migrationId: "migration-missing", limit: 10,
+      }, 1_000))).toEqual({ items: [] });
+      for (const command of [
+        { requestId: "legacy-migration-commit-missing", type: "knowledge.migrations.commit",
+          migrationId: "migration-missing", expectedRevision: 0, idempotencyKey: "commit-migration-missing",
+          requestedAt: "2026-08-19T06:30:00.000Z" },
+        { requestId: "legacy-migration-rollback-missing", type: "knowledge.migrations.rollback",
+          migrationId: "migration-missing", expectedRevision: 0, idempotencyKey: "rollback-migration-missing",
+          requestedAt: "2026-08-19T06:30:00.000Z" },
+      ] as const) {
+        expect(await requestSidecar(config.socketPath, { schemaVersion: 1, ...command }, 1_000))
+          .toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      }
+      expect(await requestSidecar(config.socketPath, {
+        schemaVersion: 1, requestId: "legacy-migration-preview-unobserved", type: "knowledge.migrations.preview",
+        projectId: "project-demo", requestedAt: "2026-08-19T06:30:00.000Z",
+      }, 1_000)).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    } finally {
+      await stopSidecarServer(server, config.socketPath);
+      await application.close();
+    }
+  });
+
   it("serves strict P3 SHADOW retrieval and reports derived capabilities", async () => {
     const { config } = await temporaryConfig();
     const application = await SidecarApplication.create(config);

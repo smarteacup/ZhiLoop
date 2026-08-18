@@ -38,6 +38,34 @@ export interface FreshnessProjectionWriteResult {
   readonly anchorCount: number;
 }
 
+export interface MigrationFreshnessProjectionInput extends FreshnessProjectionInput {
+  readonly migrationId: string;
+  readonly status: "FRESH" | "CONFLICT" | "UNKNOWN";
+  readonly codeRevision: string;
+  readonly graphRevision?: string;
+  readonly verificationRunId: string;
+  readonly reasonCodes: readonly string[];
+}
+
+export interface MigrationFreshnessWriteResult {
+  readonly status: "PROJECTED" | "IDEMPOTENT" | "PREEXISTING";
+  readonly assetId: string;
+  readonly assetVersion: number;
+  readonly anchorCount: number;
+  readonly freshnessStatus: "FRESH" | "CONFLICT" | "UNKNOWN";
+}
+
+export interface MigrationFreshnessRollbackResult {
+  readonly status: "ROLLED_BACK" | "IDEMPOTENT" | "NOT_OWNED" | "CONFLICT";
+  readonly reasonCode?: "FRESHNESS_CHANGED" | "ACTIVE_VERSION_CHANGED" | "PROJECTION_CHANGED";
+}
+
+export interface MigrationFreshnessOwner {
+  readonly migrationId: string;
+  readonly payloadHash: string;
+  readonly status: "OWNED" | "ROLLED_BACK";
+}
+
 export interface AffectedKnowledgeVersion {
   readonly assetId: string;
   readonly assetVersion: number;

@@ -102,7 +102,7 @@ function project(record: DurableJobRecord): EvolutionJobProjection {
     case "CODEGRAPH_INITIALIZE":
       return Object.freeze({ ...common, projectId: input.projectId, entityRef: input.repositoryIdentity });
     case "LEGACY_KNOWLEDGE_MIGRATION":
-      return Object.freeze({ ...common, projectId: input.projectId, entityRef: `${input.migrationVersion}:${input.pageCursor}` });
+      return Object.freeze({ ...common, projectId: input.projectId, entityRef: input.migrationId });
   }
 }
 

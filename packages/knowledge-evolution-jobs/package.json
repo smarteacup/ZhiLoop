@@ -9,6 +9,7 @@
       "@zhiloop/job-runtime",
       "@zhiloop/invalidation-engine",
       "@zhiloop/knowledge-freshness",
+      "@zhiloop/knowledge-legacy-migration",
       "@zhiloop/knowledge-repair-drafts",
       "@zhiloop/knowledge-verification"
     ],
@@ -22,6 +23,7 @@
     "@zhiloop/job-runtime": "0.0.0",
     "@zhiloop/invalidation-engine": "0.0.0",
     "@zhiloop/knowledge-freshness": "0.0.0",
+    "@zhiloop/knowledge-legacy-migration": "0.0.0",
     "@zhiloop/knowledge-repair-drafts": "0.0.0",
     "@zhiloop/knowledge-verification": "0.0.0"
   },

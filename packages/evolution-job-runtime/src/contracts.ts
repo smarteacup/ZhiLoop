@@ -48,7 +48,8 @@ export interface CodeGraphInitializeJobInput extends EvolutionJobInputBase<"CODE
 export interface LegacyKnowledgeMigrationJobInput extends EvolutionJobInputBase<"LEGACY_KNOWLEDGE_MIGRATION"> {
   readonly migrationVersion: string;
   readonly projectId: string;
-  readonly pageCursor: string;
+  readonly migrationId: string;
+  readonly previewRevision: number;
 }
 
 export type EvolutionJobInput =
@@ -145,11 +146,14 @@ export function parseEvolutionJobInput(value: unknown): EvolutionJobInput {
       if (!SAFE_VERSION.test(value["adapterVersion"])) throw new Error("EVOLUTION_JOB_ADAPTER_VERSION_INVALID");
       break;
     case "LEGACY_KNOWLEDGE_MIGRATION":
-      base(value, "LEGACY_KNOWLEDGE_MIGRATION", ["migrationVersion", "projectId", "pageCursor"]);
+      base(value, "LEGACY_KNOWLEDGE_MIGRATION", ["migrationVersion", "projectId", "migrationId", "previewRevision"]);
       safeText(value["migrationVersion"], "MIGRATION_VERSION", 200);
       if (!SAFE_VERSION.test(value["migrationVersion"])) throw new Error("EVOLUTION_JOB_MIGRATION_VERSION_INVALID");
       safeId(value["projectId"], "PROJECT_ID");
-      safeId(value["pageCursor"], "PAGE_CURSOR");
+      safeId(value["migrationId"], "MIGRATION_ID");
+      if (!Number.isSafeInteger(value["previewRevision"]) || (value["previewRevision"] as number) < 0) {
+        throw new Error("EVOLUTION_JOB_PREVIEW_REVISION_INVALID");
+      }
       break;
   }
   return deepFreeze(serializeJobJson(value).value as unknown as EvolutionJobInput);
@@ -176,7 +180,7 @@ export function evolutionJobIdempotencyKey(input: EvolutionJobInput): string {
         ? [parsed.assetId, parsed.assetVersion, parsed.conflictRunId]
         : parsed.jobType === "CODEGRAPH_INITIALIZE"
           ? [parsed.projectId, parsed.repositoryIdentity, parsed.adapterVersion]
-          : [parsed.migrationVersion, parsed.projectId, parsed.pageCursor]) as JsonValue;
+          : [parsed.migrationVersion, parsed.projectId, parsed.migrationId, parsed.previewRevision]) as JsonValue;
   const digest = serializeJobJson(["evolution-job-v1", parsed.jobType, identity]).hash;
   return `evolution:${parsed.jobType.toLowerCase()}:${digest}`;
 }

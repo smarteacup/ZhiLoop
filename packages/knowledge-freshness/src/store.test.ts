@@ -57,6 +57,42 @@ function changes(overrides: Partial<KnowledgeChangeSet> = {}): KnowledgeChangeSe
 }
 
 describe("SqliteKnowledgeFreshnessStore", () => {
+  it("owns legacy migration projections transactionally and restores the prior active version", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    const third = projection({ asset: { ...projection().asset, version: 3, contentHash: "content-v3" } });
+    const migrated = { ...third, migrationId: "migration-1", status: "FRESH" as const, codeRevision: "git:head-3",
+      graphRevision: "graph-3", verificationRunId: "run-migration-1", reasonCodes: ["MIGRATION_VERIFIED"] };
+    expect(store.projectForMigration(migrated)).toMatchObject({ status: "PROJECTED", assetVersion: 3, freshnessStatus: "FRESH" });
+    expect(store.getMigrationProjectionOwner("asset-1", 3)).toMatchObject({ migrationId: "migration-1", status: "OWNED" });
+    expect(store.projectForMigration(migrated)).toMatchObject({ status: "IDEMPOTENT" });
+    expect(store.get("asset-1")?.assetVersion).toBe(3);
+    expect(store.rollbackMigrationProjection({ migrationId: "migration-1", assetId: "asset-1", assetVersion: 3,
+      updatedAt: "2026-08-19T00:03:00.000Z" })).toEqual({ status: "ROLLED_BACK" });
+    expect(store.getMigrationProjectionOwner("asset-1", 3)).toMatchObject({ migrationId: "migration-1", status: "ROLLED_BACK" });
+    expect(store.get("asset-1")?.assetVersion).toBe(1);
+    expect(store.rollbackMigrationProjection({ migrationId: "migration-1", assetId: "asset-1", assetVersion: 3,
+      updatedAt: "2026-08-19T00:03:00.000Z" })).toEqual({ status: "IDEMPOTENT" });
+  });
+
+  it("does not claim preexisting projections and preserves migrated data after later freshness activity", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    expect(store.projectForMigration({ ...projection(), migrationId: "migration-1", status: "FRESH",
+      codeRevision: "git:head-1", verificationRunId: "run-1", reasonCodes: [] })).toMatchObject({ status: "PREEXISTING" });
+    expect(store.rollbackMigrationProjection({ migrationId: "migration-1", assetId: "asset-1", assetVersion: 1,
+      updatedAt: "2026-08-19T00:03:00.000Z" })).toEqual({ status: "NOT_OWNED" });
+
+    const second = projection({ asset: { ...projection().asset, id: "asset-2", version: 2, contentHash: "content-v2" } });
+    store.projectForMigration({ ...second, migrationId: "migration-2", status: "UNKNOWN", codeRevision: "git:head-2",
+      verificationRunId: "run-2", reasonCodes: ["MIGRATION_VERIFICATION_UNKNOWN"] });
+    store.transition({ assetId: "asset-2", assetVersion: 2, expectedRevision: 0, projectId: "project-1",
+      status: "REVALIDATE", codeRevision: "git:head-3", reasonCodes: ["RELATED_TARGET_CHANGED"],
+      affectedAssertionIds: ["assertion-symbol"], updatedAt: "2026-08-19T00:04:00.000Z" });
+    expect(store.rollbackMigrationProjection({ migrationId: "migration-2", assetId: "asset-2", assetVersion: 2,
+      updatedAt: "2026-08-19T00:05:00.000Z" })).toEqual({ status: "CONFLICT", reasonCode: "FRESHNESS_CHANGED" });
+    expect(store.get("asset-2", 2)).toBeDefined();
+  });
   it("projects idempotently and resolves affected knowledge through anchors", () => {
     using store = new SqliteKnowledgeFreshnessStore(":memory:");
     expect(store.project(projection())).toMatchObject({ status: "PROJECTED", anchorCount: 1 });

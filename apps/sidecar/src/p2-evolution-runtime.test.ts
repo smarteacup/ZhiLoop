@@ -32,7 +32,8 @@ function repository(): { readonly root: string; readonly state: string } {
 
 function runtime(state: string, options: { readonly configuration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["configuration"];
   readonly alertConfiguration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["alertConfiguration"];
-  readonly onJob?: (job: EvolutionJobProjection) => void } = {}): { runtime: P2EvolutionRuntime; freshness: SqliteKnowledgeFreshnessStore } {
+  readonly onJob?: (job: EvolutionJobProjection) => void } = {}): { runtime: P2EvolutionRuntime;
+    freshness: SqliteKnowledgeFreshnessStore; setRegistryRevision: (revision: number) => void } {
   const freshness = new SqliteKnowledgeFreshnessStore(join(state, "freshness.sqlite"));
   const preview: P2CandidatePreviewPort = {
     pipelineIdentity: () => ({ compilerVersion: "compiler-v1", promptVersion: "prompt-v1",
@@ -44,9 +45,13 @@ function runtime(state: string, options: { readonly configuration?: ConstructorP
     service: () => ({ listSnapshots: () => ({ items: [] }), getSnapshot: () => undefined }),
     candidatePreviewJobForSnapshot: () => undefined,
   } as unknown as P2SidecarRuntime;
+  let registryRevision = 0;
   const production = { verification: { verifyBatch: async () => { throw new Error("unexpected verification"); } },
-    verificationStore: { getRun: () => undefined } } as unknown as Pick<P2ProductionComposition, "verification" | "verificationStore">;
-  return { freshness, runtime: new P2EvolutionRuntime({ stateDirectory: state, freshnessStore: freshness,
+    verificationStore: { getRun: () => undefined },
+    registry: { get activeIndexVersion() { return registryRevision; }, listAssets: () => [], getAsset: () => undefined } } as unknown as
+    Pick<P2ProductionComposition, "verification" | "verificationStore" | "registry">;
+  return { freshness, setRegistryRevision: (revision) => { registryRevision = revision; },
+    runtime: new P2EvolutionRuntime({ stateDirectory: state, freshnessStore: freshness,
     production, preview, p2Runtime: p2, configuration: { workerPollIntervalMs: 60_000, ...options.configuration },
     ...(options.alertConfiguration === undefined ? {} : { alertConfiguration: options.alertConfiguration }),
     ...(options.onJob === undefined ? {} : { onJob: options.onJob }) }) };
@@ -128,6 +133,73 @@ describe("P2EvolutionRuntime", () => {
     expect(JSON.stringify(alerts)).not.toMatch(/source\.ts|unexpected verification/u);
     await fixture.runtime.close();
     fixture.freshness.close();
+  });
+
+  it("runs an empty legacy migration through preview, durable commit and rollback", async () => {
+    const { root, state } = repository(); const fixture = runtime(state, { configuration: { enabled: true } });
+    fixture.runtime.observeProject("project-1", root);
+    const preview = fixture.runtime.previewLegacyMigration("project-1", "2026-08-19T06:00:00.000Z");
+    expect(preview).toMatchObject({ status: "READY", scannedCount: 0, migratableCount: 0 });
+    expect(fixture.runtime.listLegacyMigrations("project-1")).toEqual([preview]);
+    expect(fixture.runtime.listLegacyMigrationItems(preview.migrationId)).toEqual({ items: [] });
+    const committed = fixture.runtime.commitLegacyMigration({ migrationId: preview.migrationId, expectedRevision: 0,
+      idempotencyKey: "commit-migration-empty", updatedAt: "2026-08-19T06:01:00.000Z" });
+    expect(committed).toMatchObject({ preview: { status: "COMMITTING", revision: 1 },
+      job: { jobType: "LEGACY_KNOWLEDGE_MIGRATION", status: "QUEUED", entityRef: preview.migrationId } });
+    fixture.setRegistryRevision(1);
+    expect(fixture.runtime.commitLegacyMigration({ migrationId: preview.migrationId, expectedRevision: 0,
+      idempotencyKey: "commit-migration-empty", updatedAt: "2026-08-19T06:01:00.000Z" })).toEqual(committed);
+    fixture.setRegistryRevision(0);
+    await fixture.runtime.start();
+    expect(fixture.runtime.getLegacyMigration(preview.migrationId)).toMatchObject({ status: "COMPLETED", revision: 2 });
+    const rolledBack = await fixture.runtime.rollbackLegacyMigration({ migrationId: preview.migrationId, expectedRevision: 2,
+      idempotencyKey: "rollback-migration-empty", updatedAt: "2026-08-19T06:02:00.000Z" });
+    expect(rolledBack).toMatchObject({ status: "ROLLED_BACK", rollbackConflictCount: 0 });
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("marks a terminal legacy migration failed and persists a sanitized migration alert", async () => {
+    const { root, state } = repository();
+    const fixture = runtime(state, { configuration: { enabled: true, maxAttempts: 1 }, alertConfiguration: {
+      enabled: true, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false,
+    } });
+    fixture.runtime.observeProject("project-1", root);
+    const preview = fixture.runtime.previewLegacyMigration("project-1", "2026-08-19T06:10:00.000Z");
+    fixture.runtime.commitLegacyMigration({ migrationId: preview.migrationId, expectedRevision: preview.revision,
+      idempotencyKey: "commit-migration-terminal-failure", updatedAt: "2026-08-19T06:11:00.000Z" });
+    fixture.setRegistryRevision(1);
+    await fixture.runtime.start();
+    expect(fixture.runtime.getLegacyMigration(preview.migrationId)).toMatchObject({ status: "FAILED",
+      failureCode: "LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT" });
+    const alerts = fixture.runtime.listOperationalAlerts({ limit: 10 }).items;
+    expect(alerts).toEqual([expect.objectContaining({ type: "MIGRATION_FAILED", severity: "CRITICAL",
+      projectId: "project-1", entityRef: preview.migrationId, reasonCodes: ["LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT"] })]);
+    expect(JSON.stringify(alerts)).not.toMatch(/source\.ts|unexpected verification|knowledgeBody|rawPrompt/u);
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("fails closed for unobserved projects, stale previews and unknown migration commands", async () => {
+    const { root, state } = repository(); const fixture = runtime(state, { configuration: { enabled: false } });
+    expect(() => fixture.runtime.previewLegacyMigration("project-1", "2026-08-19T06:20:00.000Z"))
+      .toThrow("LEGACY_MIGRATION_PROJECT_UNOBSERVED");
+    fixture.runtime.observeProject("project-1", root);
+    const preview = fixture.runtime.previewLegacyMigration("project-1", "2026-08-19T06:20:00.000Z");
+    fixture.setRegistryRevision(1);
+    expect(() => fixture.runtime.commitLegacyMigration({ migrationId: preview.migrationId, expectedRevision: 0,
+      idempotencyKey: "commit-stale-registry", updatedAt: "2026-08-19T06:21:00.000Z" }))
+      .toThrow("LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT");
+    fixture.setRegistryRevision(0);
+    expect(() => fixture.runtime.commitLegacyMigration({ migrationId: preview.migrationId, expectedRevision: 1,
+      idempotencyKey: "commit-stale-preview", updatedAt: "2026-08-19T06:21:00.000Z" }))
+      .toThrow("LEGACY_MIGRATION_REVISION_CONFLICT");
+    expect(() => fixture.runtime.commitLegacyMigration({ migrationId: "migration-missing", expectedRevision: 0,
+      idempotencyKey: "commit-missing-preview", updatedAt: "2026-08-19T06:21:00.000Z" }))
+      .toThrow("LEGACY_MIGRATION_NOT_FOUND");
+    await expect(fixture.runtime.rollbackLegacyMigration({ migrationId: "migration-missing", expectedRevision: 0,
+      idempotencyKey: "rollback-missing-preview", updatedAt: "2026-08-19T06:21:00.000Z" }))
+      .rejects.toThrow("LEGACY_MIGRATION_NOT_FOUND");
+    expect(() => fixture.runtime.listLegacyMigrations("project-1", 0)).toThrow("LEGACY_MIGRATION_LIST_LIMIT_INVALID");
+    await fixture.runtime.close(); fixture.freshness.close();
   });
 
   it("projects durable enqueue and operator cancellation without exposing payloads", async () => {

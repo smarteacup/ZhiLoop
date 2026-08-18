@@ -100,7 +100,8 @@ describe("Evolution job contracts", () => {
         assetVersion: 1, conflictRunId: "conflict-1" },
       { schemaVersion: 1, jobType: "CODEGRAPH_INITIALIZE", projectId: "p", repositoryRoot: "/repo",
         repositoryIdentity: sha("d"), adapterVersion: "0.9.4" },
-      { schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1", projectId: "p", pageCursor: "0" },
+      { schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1", projectId: "p",
+        migrationId: "migration-1", previewRevision: 0 },
     ];
     for (const input of inputs) {
       expect(parseEvolutionJobInput(input)).toEqual(input);
@@ -128,9 +129,11 @@ describe("Evolution job contracts", () => {
       [{ schemaVersion: 1, jobType: "CODEGRAPH_INITIALIZE", projectId: "p", repositoryRoot: "/repo",
         repositoryIdentity: "bad", adapterVersion: "1" }, "REPOSITORY_IDENTITY_INVALID"],
       [{ schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "bad version",
-        projectId: "p", pageCursor: "0" }, "MIGRATION_VERSION_INVALID"],
+        projectId: "p", migrationId: "migration-1", previewRevision: 0 }, "MIGRATION_VERSION_INVALID"],
       [{ schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1",
-        projectId: "p", pageCursor: ".." }, "PAGE_CURSOR_INVALID"],
+        projectId: "p", migrationId: "..", previewRevision: 0 }, "MIGRATION_ID_INVALID"],
+      [{ schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1",
+        projectId: "p", migrationId: "migration-1", previewRevision: -1 }, "PREVIEW_REVISION_INVALID"],
     ];
     for (const [input, code] of invalid) expect(() => parseEvolutionJobInput(input)).toThrow(code);
   });
@@ -172,7 +175,8 @@ describe("EvolutionJobRuntime", () => {
         assetVersion: 2, conflictRunId: "conflict-1" },
       { schemaVersion: 1, jobType: "CODEGRAPH_INITIALIZE", projectId: "p", repositoryRoot: "/repo",
         repositoryIdentity: sha("d"), adapterVersion: "0.9.4" },
-      { schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1", projectId: "p", pageCursor: "cursor-1" },
+      { schemaVersion: 1, jobType: "LEGACY_KNOWLEDGE_MIGRATION", migrationVersion: "v1", projectId: "p",
+        migrationId: "migration-1", previewRevision: 0 },
     ];
     const handler: JobHandler = async (context) => { context.saveCheckpoint({ phase: "lowercase-is-not-public" }, 0.5); };
     const handlers = Object.fromEntries(inputs.map((input) => [input.jobType, handler]));
@@ -185,7 +189,7 @@ describe("EvolutionJobRuntime", () => {
       const ids = inputs.map((input) => subject.enqueue(input, 2).job.snapshot.jobId);
       for (let index = 0; index < ids.length; index += 1) await subject.runOnce();
       expect(ids.map((id) => subject.get(id)?.entityRef)).toEqual([
-        "session:session-1:1-10", "git:head:dirty", "asset-1@2", sha("d"), "v1:cursor-1",
+        "session:session-1:1-10", "git:head:dirty", "asset-1@2", sha("d"), "migration-1",
       ]);
       expect(ids.map((id) => subject.get(id)?.checkpointPhase)).toEqual([undefined, undefined, undefined, undefined, undefined]);
       expect(subject.get("missing")).toBeUndefined();

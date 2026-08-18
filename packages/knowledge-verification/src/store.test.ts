@@ -34,6 +34,35 @@ function run(overrides: Partial<KnowledgeVerificationRunSummary> = {}): Knowledg
 }
 
 describe("SqliteKnowledgeVerificationStore", () => {
+  it("owns migration recipes transactionally and rolls back only the exact owner", () => {
+    using store = new SqliteKnowledgeVerificationStore(":memory:");
+    const value = { assetId: "asset-migration", assetVersion: 1, recipeVersion: "evidence-recipe-v1",
+      assertions: [assertion], createdAt: time };
+    const created = store.saveRecipeForMigration("migration-1", value);
+    expect(created.status).toBe("CREATED");
+    expect(store.saveRecipeForMigration("migration-1", value).status).toBe("IDEMPOTENT");
+    expect(() => store.saveRecipeForMigration("migration-2", value)).toThrow(KnowledgeVerificationConflictError);
+    expect(store.rollbackRecipeForMigration({ migrationId: "migration-1", assetId: value.assetId,
+      assetVersion: 1, recipeVersion: value.recipeVersion, assertionsHash: created.recipe.assertionsHash,
+      updatedAt: "2026-08-19T00:02:00.000Z" })).toEqual({ status: "ROLLED_BACK" });
+    expect(store.getRecipe(value.assetId, 1, value.recipeVersion)).toBeUndefined();
+    expect(store.rollbackRecipeForMigration({ migrationId: "migration-1", assetId: value.assetId,
+      assetVersion: 1, recipeVersion: value.recipeVersion, assertionsHash: created.recipe.assertionsHash,
+      updatedAt: "2026-08-19T00:02:00.000Z" })).toEqual({ status: "IDEMPOTENT" });
+    expect(() => store.saveRecipeForMigration("migration-1", value)).toThrow(KnowledgeVerificationConflictError);
+  });
+
+  it("does not claim or delete a preexisting recipe for a migration", () => {
+    using store = new SqliteKnowledgeVerificationStore(":memory:");
+    const value = { assetId: "asset-existing", assetVersion: 1, recipeVersion: "evidence-recipe-v1",
+      assertions: [assertion], createdAt: time };
+    const existing = store.saveRecipe(value);
+    expect(store.saveRecipeForMigration("migration-1", value).status).toBe("PREEXISTING");
+    expect(store.rollbackRecipeForMigration({ migrationId: "migration-1", assetId: value.assetId,
+      assetVersion: 1, recipeVersion: value.recipeVersion, assertionsHash: existing.assertionsHash,
+      updatedAt: "2026-08-19T00:02:00.000Z" })).toEqual({ status: "NOT_OWNED" });
+    expect(store.getRecipe(value.assetId, 1, value.recipeVersion)).toEqual(existing);
+  });
   it("persists 0600 recipes and runs across restart with idempotent identical writes", () => {
     const filename = temporary();
     let store = new SqliteKnowledgeVerificationStore(filename);

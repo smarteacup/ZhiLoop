@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CONTROL_API_SCHEMA_VERSION, MAX_CONTROL_MESSAGE_BYTES } from "./constants.js";
 import {
   idempotencyKeySchema,
+  jobSnapshotSchema,
   knowledgeVersionRefSchema,
   requestIdSchema,
   sessionIdSchema,
@@ -25,6 +26,7 @@ const isoTimestampSchema = z.string().min(20).max(40).refine(
 const versionLabelSchema = z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u);
 const sourceSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const positiveRevisionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const nonnegativeRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export const SNAPSHOT_COMPLETENESS = ["PARTIAL_SNAPSHOT", "COMPLETE_SNAPSHOT"] as const;
 export const CANDIDATE_POLICY_DECISIONS = [
@@ -381,6 +383,128 @@ export const extractionProvenanceGetRequestSchema = z.strictObject({
   afterEdgeId: safeArtifactIdSchema.optional(),
 });
 
+export const LEGACY_MIGRATION_STATUSES = [
+  "READY", "COMMITTING", "COMPLETED", "FAILED", "ROLLING_BACK", "ROLLED_BACK", "ROLLBACK_CONFLICT",
+] as const;
+export const LEGACY_MIGRATION_CLASSIFICATIONS = ["MIGRATABLE", "ALREADY_CURRENT", "SKIPPED"] as const;
+export const LEGACY_MIGRATION_SOURCES = ["FRESHNESS", "RECIPE", "SYMBOL_ANCHOR", "NONE"] as const;
+export const LEGACY_MIGRATION_ITEM_STATUSES = [
+  "PENDING", "MIGRATED", "SKIPPED", "FAILED", "ROLLED_BACK", "ROLLBACK_CONFLICT",
+] as const;
+
+/** Bounded operator view. Knowledge bodies and raw verification output are intentionally absent. */
+export const legacyMigrationPreviewSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  migrationId: safeArtifactIdSchema,
+  migrationVersion: versionLabelSchema,
+  projectId: safeArtifactIdSchema,
+  sourceRegistryRevision: nonnegativeRevisionSchema,
+  status: z.enum(LEGACY_MIGRATION_STATUSES),
+  revision: nonnegativeRevisionSchema,
+  scannedCount: nonnegativeRevisionSchema,
+  migratableCount: nonnegativeRevisionSchema,
+  alreadyCurrentCount: nonnegativeRevisionSchema,
+  skippedCount: nonnegativeRevisionSchema,
+  failedCount: nonnegativeRevisionSchema,
+  rollbackConflictCount: nonnegativeRevisionSchema,
+  summaryHash: sha256Schema,
+  createdAt: isoTimestampSchema,
+  updatedAt: isoTimestampSchema,
+  jobId: safeArtifactIdSchema.optional(),
+  failureCode: versionLabelSchema.optional(),
+}).superRefine((value, context) => {
+  if (value.migratableCount + value.alreadyCurrentCount + value.skippedCount !== value.scannedCount) {
+    context.addIssue({ code: "custom", path: ["scannedCount"], message: "migration counters do not sum to scannedCount" });
+  }
+});
+
+export const legacyMigrationItemSchema = z.strictObject({
+  schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
+  migrationId: safeArtifactIdSchema,
+  ordinal: nonnegativeRevisionSchema,
+  assetId: safeArtifactIdSchema,
+  assetVersion: positiveRevisionSchema,
+  assetContentHash: sha256Schema,
+  assetIndexVersion: positiveRevisionSchema,
+  classification: z.enum(LEGACY_MIGRATION_CLASSIFICATIONS),
+  source: z.enum(LEGACY_MIGRATION_SOURCES),
+  candidateId: safeArtifactIdSchema.optional(),
+  assertionsHash: sha256Schema.optional(),
+  assertionKinds: z.array(versionLabelSchema).max(1_000),
+  reasonCodes: z.array(versionLabelSchema).min(1).max(32),
+  status: z.enum(LEGACY_MIGRATION_ITEM_STATUSES),
+  verificationRunId: safeArtifactIdSchema.optional(),
+  freshnessStatus: z.enum(["FRESH", "CONFLICT", "UNKNOWN"]).optional(),
+  createdRecipe: z.boolean().optional(),
+  createdFreshness: z.boolean().optional(),
+  updatedAt: isoTimestampSchema,
+}).superRefine((value, context) => {
+  const hasEvidenceIdentity = value.candidateId !== undefined && value.assertionsHash !== undefined;
+  if ((value.classification === "MIGRATABLE") !== hasEvidenceIdentity) {
+    context.addIssue({ code: "custom", path: ["classification"], message: "migratable items require evidence identity" });
+  }
+});
+
+export const legacyMigrationPageSchema = z.strictObject({
+  items: z.array(legacyMigrationItemSchema).max(100),
+  nextOrdinal: nonnegativeRevisionSchema.optional(),
+});
+
+export const legacyMigrationsListSchema = z.strictObject({
+  items: z.array(legacyMigrationPreviewSchema).max(100),
+});
+
+export const legacyMigrationCommitResultSchema = z.strictObject({
+  preview: legacyMigrationPreviewSchema,
+  job: jobSnapshotSchema,
+});
+
+export const legacyMigrationPreviewRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.migrations.preview"),
+  projectId: safeArtifactIdSchema,
+  requestedAt: isoTimestampSchema,
+});
+
+export const legacyMigrationsListRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.migrations.list"),
+  projectId: safeArtifactIdSchema,
+  limit: z.number().int().positive().max(100),
+});
+
+export const legacyMigrationGetRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.migrations.get"),
+  migrationId: safeArtifactIdSchema,
+});
+
+export const legacyMigrationItemsRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.migrations.items"),
+  migrationId: safeArtifactIdSchema,
+  limit: z.number().int().positive().max(100),
+  afterOrdinal: nonnegativeRevisionSchema.optional(),
+});
+
+const legacyMigrationCommandShape = {
+  ...p2RequestBase,
+  migrationId: safeArtifactIdSchema,
+  expectedRevision: nonnegativeRevisionSchema,
+  idempotencyKey: idempotencyKeySchema,
+  requestedAt: isoTimestampSchema,
+};
+
+export const legacyMigrationCommitRequestSchema = z.strictObject({
+  ...legacyMigrationCommandShape,
+  type: z.literal("knowledge.migrations.commit"),
+});
+
+export const legacyMigrationRollbackRequestSchema = z.strictObject({
+  ...legacyMigrationCommandShape,
+  type: z.literal("knowledge.migrations.rollback"),
+});
+
 export const p2ControlRequestSchema = z.discriminatedUnion("type", [
   extractionSnapshotCreateRequestSchema,
   candidatePreviewRequestSchema,
@@ -390,6 +514,12 @@ export const p2ControlRequestSchema = z.discriminatedUnion("type", [
   extractionCandidatesGetRequestSchema,
   extractionPolicyCommitGetRequestSchema,
   extractionProvenanceGetRequestSchema,
+  legacyMigrationPreviewRequestSchema,
+  legacyMigrationsListRequestSchema,
+  legacyMigrationGetRequestSchema,
+  legacyMigrationItemsRequestSchema,
+  legacyMigrationCommitRequestSchema,
+  legacyMigrationRollbackRequestSchema,
 ]);
 
 export type ExtractionSnapshot = z.infer<typeof extractionSnapshotSchema>;
@@ -399,6 +529,9 @@ export type CandidatePreview = z.infer<typeof candidatePreviewSchema>;
 export type ProvenanceNode = z.infer<typeof provenanceNodeSchema>;
 export type ProvenanceEdge = z.infer<typeof provenanceEdgeSchema>;
 export type BidirectionalProvenance = z.infer<typeof bidirectionalProvenanceSchema>;
+export type LegacyMigrationPreviewView = z.infer<typeof legacyMigrationPreviewSchema>;
+export type LegacyMigrationItemView = z.infer<typeof legacyMigrationItemSchema>;
+export type LegacyMigrationPageView = z.infer<typeof legacyMigrationPageSchema>;
 export type P2ControlRequest = z.infer<typeof p2ControlRequestSchema>;
 
 export type P2ContractParseResult<T> =

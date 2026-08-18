@@ -10,6 +10,7 @@ import type {
   UserCommitmentAmbiguity,
   UserCommitmentSignal,
 } from "@zhiloop/knowledge-compiler";
+import type { EvolutionDecision, KnowledgeEvolutionSemanticPort } from "@zhiloop/knowledge-evolution";
 import type { IncrementalIndexResult } from "@zhiloop/knowledge-indexer";
 import type { ProjectionWriteResult } from "@zhiloop/knowledge-registry";
 import type {
@@ -27,6 +28,7 @@ export const WORKER_STAGES = [
   "EPISODE_BUILD",
   "COMPILE",
   "USER_COMMITMENT",
+  "EVOLUTION_MATCH",
   "CANDIDATE_POLICY",
   "MARKDOWN_PUBLISH",
   "REGISTRY_PROJECT",
@@ -87,10 +89,16 @@ export interface IncrementalIndexPort {
   syncAsset(assetId: string): IncrementalIndexResult | Promise<IncrementalIndexResult>;
 }
 
+export interface KnowledgeEvolutionLookupPort {
+  search(queries: readonly string[], limit: number): readonly KnowledgeAsset[] | Promise<readonly KnowledgeAsset[]>;
+}
+
 export interface KnowledgeWorkerPorts {
   readonly ledger: LedgerSnapshotPort;
   readonly compiler: KnowledgeExtractionPort;
   readonly evidence: EvidenceVerificationPort;
+  readonly evolution: KnowledgeEvolutionLookupPort;
+  readonly evolutionSemantic?: KnowledgeEvolutionSemanticPort;
   readonly markdown: MarkdownKnowledgePort;
   readonly registry: RegistryProjectionPort;
   readonly index: IncrementalIndexPort;
@@ -125,6 +133,12 @@ export interface CandidatePolicyRecord {
   readonly scope: ScopeResolution;
   readonly verificationResults: readonly VerificationResult[];
   readonly decision: EvidencePolicyDecision;
+}
+
+export interface CandidateEvolutionRecord {
+  readonly candidate: KnowledgeCandidate;
+  readonly scope: ScopeResolution;
+  readonly decision: EvolutionDecision;
 }
 
 export interface PublicationOutboxItem {
@@ -173,6 +187,7 @@ export interface KnowledgeWorkerPayload {
   readonly candidates?: readonly KnowledgeCandidate[];
   readonly candidateProvenance?: readonly CandidateCompilationProvenance[];
   readonly userCommitments?: UserCommitmentCompilation;
+  readonly evolution?: readonly CandidateEvolutionRecord[];
   readonly policies?: readonly CandidatePolicyRecord[];
   readonly outbox?: readonly PublicationOutboxItem[];
 }

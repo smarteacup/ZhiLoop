@@ -102,6 +102,7 @@ function validateInput(input: EvidencePolicyInput): boolean {
     )) return false;
   }
   return (input.conflictIds ?? []).every((id) => id.trim().length > 0 && id.length <= 500 && !/[\0\r\n]/.test(id))
+    && (input.contentRevisionRequested === undefined || typeof input.contentRevisionRequested === "boolean")
     && input.projectSpecificSignals.every((signal) => REASON_CODE.test(signal))
     && (input.verifiedProjects ?? []).every((item) =>
       item.subjectKey === input.candidate.subjectKey
@@ -182,6 +183,7 @@ function applyTarget(
   reasons: Set<string>,
   scope: KnowledgeScope,
   interaction: "NONE" | "ASK_USER",
+  contentRevisionAllowed = false,
 ): EvidencePolicyDecision {
   const path = transitionPath(input.currentStatus, targetStatus);
   if (path === undefined) {
@@ -203,12 +205,12 @@ function applyTarget(
     from = to;
   }
   return decision(input, {
-    action: path.length === 0 ? "KEEP" : "APPLY",
+    action: path.length === 0 && !contentRevisionAllowed ? "KEEP" : "APPLY",
     interaction,
     targetStatus,
     transitionPath: path,
     effectiveScope: scope,
-    shouldPublish: PUBLISHABLE.has(targetStatus) && path.length > 0,
+    shouldPublish: PUBLISHABLE.has(targetStatus) && (path.length > 0 || contentRevisionAllowed),
     evidenceIds: evidenceIds(input),
     reasonCodes: [...reasons],
   });
@@ -316,6 +318,11 @@ export function evaluateEvidencePolicy(input: EvidencePolicyInput): EvidencePoli
       reasonCodes: [...reasons],
     });
   }
+  const contentRevisionAllowed = input.contentRevisionRequested === true
+    && (accepted || (required.length > 0 && required.every((kind) => supported(input, kind))));
+  if (input.contentRevisionRequested === true) {
+    reasons.add(contentRevisionAllowed ? "CONTENT_REVISION_EVIDENCE_SUPPORTED" : "CONTENT_REVISION_EVIDENCE_INCOMPLETE");
+  }
   if (input.adoptionAmbiguous === true && targetStatus === "PROPOSED") {
     const global = effectiveGlobalScope(input, reasons, false);
     reasons.add("ADOPTION_REQUIRES_CONFIRMATION");
@@ -331,5 +338,5 @@ export function evaluateEvidencePolicy(input: EvidencePolicyInput): EvidencePoli
     });
   }
   const global = effectiveGlobalScope(input, reasons, PUBLISHABLE.has(targetStatus));
-  return applyTarget(input, targetStatus, reasons, global.scope, global.interaction);
+  return applyTarget(input, targetStatus, reasons, global.scope, global.interaction, contentRevisionAllowed);
 }

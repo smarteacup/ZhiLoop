@@ -144,6 +144,25 @@ describe("evaluateEvidencePolicy", () => {
     ))).toMatchObject({ action: "KEEP", transitionPath: [], shouldPublish: false });
   });
 
+  it("publishes a same-status content revision only with fresh supporting Evidence", () => {
+    const accepted = assertion("USER_ACCEPTED");
+    const supportedRevision = evaluateEvidencePolicy(input(
+      candidate("DECISION", [accepted]),
+      [verification(accepted, "SUPPORTED")],
+      { currentStatus: "ACCEPTED", contentRevisionRequested: true },
+    ));
+    expect(supportedRevision).toMatchObject({ action: "APPLY", targetStatus: "ACCEPTED", shouldPublish: true });
+    expect(supportedRevision.reasonCodes).toContain("CONTENT_REVISION_EVIDENCE_SUPPORTED");
+
+    const unsupportedRevision = evaluateEvidencePolicy(input(
+      candidate("DECISION"),
+      [],
+      { currentStatus: "ACCEPTED", contentRevisionRequested: true },
+    ));
+    expect(unsupportedRevision).toMatchObject({ action: "KEEP", targetStatus: "ACCEPTED", shouldPublish: false });
+    expect(unsupportedRevision.reasonCodes).toContain("CONTENT_REVISION_EVIDENCE_INCOMPLETE");
+  });
+
   it("asks once when supported user decisions conflict", () => {
     const accepted = assertion("USER_ACCEPTED", "accept");
     const rejected = assertion("USER_REJECTED", "reject");

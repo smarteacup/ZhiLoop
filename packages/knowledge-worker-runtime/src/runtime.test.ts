@@ -365,11 +365,15 @@ function fixture(overrides: Partial<KnowledgeWorkerPorts> = {}): {
   const markdown = new MemoryMarkdown();
   const registry = new MemoryRegistry();
   const index = new MemoryIndex(markdown);
+  const evolution = {
+    search: async (_queries: readonly string[], limit: number) =>
+      [...markdown.current.values()].slice(0, limit).map((record) => record.asset),
+  };
   return {
     markdown,
     registry,
     index,
-    ports: { ledger, compiler: compiler(), evidence: evidence(), markdown, registry, index, ...overrides },
+    ports: { ledger, compiler: compiler(), evidence: evidence(), evolution, markdown, registry, index, ...overrides },
   };
 }
 
@@ -404,6 +408,12 @@ describe("KnowledgeWorkerRuntime", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-worker-"));
     tempDirectories.push(directory);
     const setup = fixture();
+    const search = setup.ports.evolution.search;
+    let evolutionCalls = 0;
+    setup.ports.evolution.search = async (...args) => {
+      evolutionCalls += 1;
+      return search(...args);
+    };
     const databasePath = path.join(directory, "worker.sqlite");
     const store = new SqliteKnowledgeWorkerCheckpointStore(databasePath);
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store, () => new Date("2026-08-01T10:00:00.000Z"));
@@ -427,6 +437,7 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.markdown.publishCalls).toBe(1);
     expect(setup.registry.calls).toBe(1);
     expect(setup.index.calls).toBe(1);
+    expect(evolutionCalls).toBe(1);
   });
 
   it("persists a publication-free preview boundary and resumes the same work after commit", async () => {
@@ -563,6 +574,7 @@ describe("KnowledgeWorkerRuntime", () => {
     };
     const stages = structuredClone(initial.stages) as Record<string, unknown>;
     delete stages["USER_COMMITMENT"];
+    delete stages["EVOLUTION_MATCH"];
     for (const stage of ["CANDIDATE_POLICY", "MARKDOWN_PUBLISH", "REGISTRY_PROJECT", "INCREMENTAL_INDEX"]) {
       stages[stage] = { status: "PENDING", attempts: 0 };
     }
@@ -597,9 +609,37 @@ describe("KnowledgeWorkerRuntime", () => {
       expect.objectContaining({ kind: "USER_REJECTED", parameters: { statementRef: correctedRef } }),
     );
     expect(migrated.payload.candidateProvenance).toHaveLength(1);
+    expect(migrated.payload.evolution?.[0]?.decision).toMatchObject({ status: "DECIDED", action: "STORE" });
+    expect(migrated.payload.policies?.[0]?.decision).toMatchObject({
+      targetStatus: "PROPOSED", interaction: "ASK_USER", shouldPublish: false,
+    });
+    expect(migrated.payload.outbox).toEqual([]);
     const replay = await runtime.run(request());
     expect(replay.revision).toBe(migrated.revision);
     expect(replay.stages.USER_COMMITMENT.attempts).toBe(1);
+    expect(replay.stages.EVOLUTION_MATCH.attempts).toBe(1);
+  });
+
+  it("adds evolution audit data to a legacy policy checkpoint without rewriting its outbox", async () => {
+    const setup = fixture();
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+    const initial = await runtime.run(request());
+    const stages = structuredClone(initial.stages) as Record<string, unknown>;
+    delete stages["EVOLUTION_MATCH"];
+    const payload = Object.fromEntries(Object.entries(initial.payload).filter(([key]) => key !== "evolution")) as
+      KnowledgeWorkerCheckpoint["payload"];
+    store.checkpoint = {
+      ...initial,
+      status: "RUNNING",
+      stages: stages as KnowledgeWorkerCheckpoint["stages"],
+      payload,
+    };
+
+    const migrated = await runtime.run(request());
+    expect(migrated.payload.evolution).toHaveLength(1);
+    expect(migrated.payload.outbox).toEqual(initial.payload.outbox);
+    expect(migrated.stages.CANDIDATE_POLICY.attempts).toBe(initial.stages.CANDIDATE_POLICY.attempts);
   });
 
   it("fails closed for missing or malformed publication authority", async () => {
@@ -776,7 +816,7 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.index.calls).toBe(2);
   });
 
-  it("uses stable subject-kind-scope asset identity to create a contiguous version chain", async () => {
+  it("skips an unchanged knowledge body instead of creating a status-only version", async () => {
     const setup = fixture();
     setup.ports.compiler.extract = compiler({ implementation: true, withSymbol: true }).extract;
     const verify = evidence().verify;
@@ -804,16 +844,54 @@ describe("KnowledgeWorkerRuntime", () => {
     );
 
     expect(first.payload.outbox?.[0]?.asset).toMatchObject({ version: 1, status: "ACCEPTED" });
+    expect(second.payload.evolution?.[0]?.decision).toMatchObject({
+      status: "DECIDED",
+      action: "SKIP",
+      targetKnowledgeVersions: [{ id: first.payload.outbox?.[0]?.asset.id, version: 1 }],
+    });
+    expect(second.payload.policies?.[0]?.decision.targetStatus).toBe("IMPLEMENTED");
+    expect(second.payload.outbox).toEqual([]);
+    expect(setup.markdown.current.values().next().value?.asset.version).toBe(1);
+  });
+
+  it("publishes an evidence-backed supplement as the next lineage version", async () => {
+    const setup = fixture();
+    const baseCompiler = compiler();
+    const first = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
+      request({ workId: "supplement-v1" }),
+      publicationOptions("supplement-v1-commit"),
+    );
+    setup.ports.compiler.extract = async (input) => {
+      const output = await baseCompiler.extract(input);
+      return {
+        ...output,
+        candidates: output.candidates.map((draft) => ({
+          ...draft,
+          body: `${draft.body} 新增边界：索引失败不回滚 Markdown。`,
+        })),
+      };
+    };
+    const second = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
+      request({ workId: "supplement-v2" }),
+      publicationOptions("supplement-v2-commit"),
+    );
+
+    expect(second.payload.evolution?.[0]?.decision).toMatchObject({ status: "DECIDED", action: "SUPPLEMENT" });
     expect(second.payload.outbox?.[0]?.asset).toMatchObject({
       id: first.payload.outbox?.[0]?.asset.id,
       version: 2,
-      status: "IMPLEMENTED",
+      relations: [{
+        type: "DERIVED_FROM",
+        targetId: first.payload.outbox?.[0]?.asset.id,
+        targetVersion: 1,
+        reason: "EVOLUTION_SUPPLEMENT",
+      }],
     });
-    expect(setup.markdown.current.values().next().value?.asset.version).toBe(2);
   });
 
   it.each([
     ["LEDGER_READ", "ledger"],
+    ["EVOLUTION_MATCH", "evolution"],
     ["CANDIDATE_POLICY", "evidence"],
     ["MARKDOWN_PUBLISH", "markdown"],
     ["REGISTRY_PROJECT", "registry"],
@@ -822,6 +900,7 @@ describe("KnowledgeWorkerRuntime", () => {
     const setup = fixture();
     const retryable = (): never => { throw Object.assign(new Error(`${boundary} unavailable`), { retryable: true }); };
     if (boundary === "ledger") setup.ports.ledger.loadSnapshot = async () => retryable();
+    if (boundary === "evolution") setup.ports.evolution.search = async () => retryable();
     if (boundary === "evidence") setup.ports.evidence.verify = async () => retryable();
     if (boundary === "markdown") setup.markdown.fail = retryable;
     if (boundary === "registry") setup.registry.fail = retryable;
@@ -922,6 +1001,22 @@ describe("KnowledgeWorkerRuntime", () => {
     );
     expect(ledgerLimited.status).toBe("FAILED");
     expect(ledgerLimited.stages.LEDGER_READ.error?.code).toBe("LEDGER_BATCH_LIMIT_EXCEEDED");
+
+    const evolutionLimited = fixture();
+    const seeded = await new KnowledgeWorkerRuntime(evolutionLimited.ports, new MemoryCheckpointStore()).run(
+      request({ workId: "evolution-seed" }),
+      publicationOptions("evolution-seed-commit"),
+    );
+    const current = seeded.payload.outbox?.[0]?.asset;
+    if (current === undefined) throw new Error("expected seeded asset");
+    evolutionLimited.ports.evolution.search = async () => Array.from({ length: 6 }, () => current);
+    const overLimit = await new KnowledgeWorkerRuntime(evolutionLimited.ports, new MemoryCheckpointStore()).run(
+      request({ workId: "evolution-limited" }),
+      publicationOptions("evolution-limited-commit"),
+    );
+    expect(overLimit.status).toBe("FAILED");
+    expect(overLimit.stages.EVOLUTION_MATCH.error?.code).toBe("EVOLUTION_DECISION_INVALID");
+    expect(overLimit.stages.EVOLUTION_MATCH.error?.message).toBe("EVOLUTION_TARGET_LIMIT_EXCEEDED");
 
     const publishing = fixture();
     publishing.ports.compiler.extract = compiler({

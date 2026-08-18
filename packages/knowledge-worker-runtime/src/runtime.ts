@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 
 import { normalizeConversations } from "@zhiloop/conversation-normalizer";
-import type { Episode, EvidenceRef, KnowledgeAsset, KnowledgeCandidate, KnowledgeScope, KnowledgeStatus } from "@zhiloop/domain";
+import type {
+  Episode,
+  EvidenceRef,
+  KnowledgeAsset,
+  KnowledgeCandidate,
+  KnowledgeRelation,
+  KnowledgeScope,
+  KnowledgeStatus,
+} from "@zhiloop/domain";
 import { buildEpisodes } from "@zhiloop/episode-builder";
 import { evaluateEvidencePolicy } from "@zhiloop/evidence-policy";
 import {
@@ -15,6 +23,7 @@ import {
   type UserCommitmentAmbiguity,
   type UserCommitmentSignal,
 } from "@zhiloop/knowledge-compiler";
+import { decideKnowledgeEvolution, type EvolutionDecision } from "@zhiloop/knowledge-evolution";
 import { calculateKnowledgeContentHash } from "@zhiloop/markdown-repository";
 import { resolveKnowledgeScope } from "@zhiloop/scope-resolver";
 
@@ -23,6 +32,7 @@ import {
   WORKER_STAGES,
   type CandidateCompilationProvenance,
   type CandidateCorrectionDraft,
+  type CandidateEvolutionRecord,
   type CandidatePolicyRecord,
   type IndexRebuildResult,
   type KnowledgeExecutionMode,
@@ -388,15 +398,62 @@ function assetIdentity(candidate: KnowledgeCandidate, scope: KnowledgeScope): st
   return hash({ identityVersion: 1, subjectKey: candidate.subjectKey, kind: candidate.kind, scope });
 }
 
+function evolutionQueries(candidate: KnowledgeCandidate): readonly string[] {
+  return [...new Set([candidate.subjectKey, candidate.title, ...candidateSymbols(candidate)])]
+    .filter((value) => value.trim().length > 0 && /[\p{L}\p{N}_.$:-]/u.test(value))
+    .slice(0, 5)
+    .map((value) => value.slice(0, 512));
+}
+
+function evolutionTargetIds(decision: EvolutionDecision): readonly string[] {
+  return [...new Set(decision.targetKnowledgeVersions.map((target) => target.id))].sort();
+}
+
+function evolutionAllowsPublication(decision: EvolutionDecision): boolean {
+  const allowed = new Set(["STORE", "SUPPLEMENT", "SUPERSEDE", "SCOPE_SPLIT"]);
+  return decision.status === "DECIDED"
+    && !decision.requiresConfirmation
+    && allowed.has(decision.action);
+}
+
+function mergeEvidence(base: readonly EvidenceRef[], fresh: readonly EvidenceRef[]): readonly EvidenceRef[] {
+  const values = new Map(base.map((item) => [item.evidenceId, item]));
+  for (const item of fresh) values.set(item.evidenceId, item);
+  return [...values.values()].sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
+}
+
+function evolutionRelations(
+  decision: EvolutionDecision,
+  base: KnowledgeAsset | undefined,
+): readonly KnowledgeRelation[] {
+  const relations = [...(base?.relations ?? [])];
+  if (decision.status !== "DECIDED") return relations;
+  const type = decision.action === "SUPERSEDE"
+    ? "SUPERSEDES"
+    : decision.action === "SUPPLEMENT"
+      ? "DERIVED_FROM"
+      : decision.action === "SCOPE_SPLIT"
+        ? "RELATED_TO"
+        : undefined;
+  if (type === undefined) return relations;
+  for (const target of decision.targetKnowledgeVersions) {
+    relations.push({ type, targetId: target.id, targetVersion: target.version, reason: `EVOLUTION_${decision.action}` });
+  }
+  const unique = new Map(relations.map((relation) => [canonical(relation), relation]));
+  return [...unique.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, relation]) => relation);
+}
+
 function buildAsset(
   policy: CandidatePolicyRecord,
+  evolution: CandidateEvolutionRecord,
+  previous: KnowledgeAsset | undefined,
   assetId: string,
   version: number,
   createdAt: string,
   updatedAt: string,
 ): KnowledgeAsset {
   const candidate = policy.candidate;
-  const base: KnowledgeAsset = {
+  const draft: KnowledgeAsset = {
     schemaVersion: 1,
     id: assetId,
     subjectKey: candidate.subjectKey,
@@ -407,21 +464,22 @@ function buildAsset(
     title: candidate.title,
     summary: candidate.summary,
     body: candidate.body,
-    aliases: [],
-    keywords: [...new Set(candidate.subjectKey.split("."))],
-    applicability: [],
-    nonApplicability: [],
-    symbols: candidateSymbols(candidate),
-    relations: [],
-    evidence: evidenceRefs(policy),
+    aliases: [...(previous?.aliases ?? [])],
+    keywords: [...new Set([...(previous?.keywords ?? []), ...candidate.subjectKey.split(".")])].sort(),
+    applicability: [...(previous?.applicability ?? [])],
+    nonApplicability: [...(previous?.nonApplicability ?? [])],
+    symbols: [...new Set([...(previous?.symbols ?? []), ...candidateSymbols(candidate)])].sort(),
+    relations: evolutionRelations(evolution.decision, previous),
+    evidence: mergeEvidence(previous?.evidence ?? [], evidenceRefs(policy)),
     confidence: candidate.confidence,
-    sourceEpisodes: candidate.sourceEpisodes,
+    sourceEpisodes: [...new Set([...(previous?.sourceEpisodes ?? []), ...candidate.sourceEpisodes])].sort() as unknown as
+      KnowledgeAsset["sourceEpisodes"],
     contentHash: "",
     correlationId: candidate.correlationId,
     createdAt,
     updatedAt,
   };
-  return { ...base, contentHash: calculateKnowledgeContentHash(base) };
+  return { ...draft, contentHash: calculateKnowledgeContentHash(draft) };
 }
 
 export class KnowledgeWorkerRuntime {
@@ -500,8 +558,8 @@ export class KnowledgeWorkerRuntime {
       if (options.retryFailed !== true) return checkpoint;
       const failedStage = WORKER_STAGES.find((stage) =>
         modeAllowsStage(mode, stage)
-        && checkpoint?.stages[stage].status === "FAILED"
-        && checkpoint.stages[stage].error?.retryable === true);
+        && checkpoint?.stages[stage]?.status === "FAILED"
+        && checkpoint.stages[stage]?.error?.retryable === true);
       if (failedStage === undefined) return checkpoint;
       const previous = checkpoint.stages[failedStage];
       checkpoint = this.#persist(checkpoint, {
@@ -695,12 +753,11 @@ export class KnowledgeWorkerRuntime {
       }
     })) return checkpoint;
 
-    if (!await execute("CANDIDATE_POLICY", async () => {
+    if (!await execute("EVOLUTION_MATCH", async () => {
       const candidates = checkpoint?.payload.candidates;
-      if (candidates === undefined) throw new KnowledgeWorkerError("MISSING_CANDIDATE_CHECKPOINT", "candidate checkpoint is missing", false);
-      const policies: CandidatePolicyRecord[] = [];
-      const outbox: PublicationOutboxItem[] = [];
-      const claimedAssetIds = new Map<string, string>();
+      if (candidates === undefined) throw new KnowledgeWorkerError("MISSING_EVOLUTION_INPUT", "evolution input checkpoint is missing", false);
+      const correctionDrafts = checkpoint?.payload.userCommitments?.correctionDrafts ?? [];
+      const records: CandidateEvolutionRecord[] = [];
       for (const candidate of candidates) {
         const scope = resolveKnowledgeScope({
           candidate,
@@ -708,16 +765,90 @@ export class KnowledgeWorkerRuntime {
           ...(request.allowGlobal === undefined ? {} : { allowGlobal: request.allowGlobal }),
           ...(request.projectTerms === undefined ? {} : { projectTerms: request.projectTerms }),
         });
+        const exactId = assetIdentity(candidate, scope.scope);
+        const exact = await external("EVOLUTION_EXACT_READ_FAILED", () => this.#ports.markdown.readCurrent(exactId));
+        if (!exact.ok && exact.error.code !== "NOT_FOUND") {
+          throw new KnowledgeWorkerError("EVOLUTION_EXACT_READ_INVALID", exact.error.message, false);
+        }
+        const retrievedTargets = await external("EVOLUTION_LOOKUP_FAILED", () =>
+          this.#ports.evolution.search(evolutionQueries(candidate), 5));
+        try {
+          const decision = await decideKnowledgeEvolution({
+            candidate,
+            proposedScope: scope.scope,
+            ...(exact.ok ? { exactTarget: exact.value.asset } : {}),
+            retrievedTargets,
+            correctionRefs: correctionDrafts
+              .filter((draft) => draft.candidateId === candidate.candidateId)
+              .map((draft) => ({
+                candidateId: draft.candidateId,
+                relationHint: draft.relationHint,
+                originalRef: draft.originalRef,
+                correctedRef: draft.correctedRef,
+              })),
+          }, this.#ports.evolutionSemantic);
+          records.push({ candidate, scope, decision });
+        } catch (error) {
+          throw new KnowledgeWorkerError(
+            "EVOLUTION_DECISION_INVALID",
+            error instanceof Error ? error.message : "knowledge evolution decision failed",
+            false,
+            { cause: error },
+          );
+        }
+      }
+      checkpoint = this.#persist(checkpoint as KnowledgeWorkerCheckpoint, {
+        payload: {
+          ...(checkpoint as KnowledgeWorkerCheckpoint).payload,
+          evolution: records.sort((left, right) => left.candidate.candidateId.localeCompare(right.candidate.candidateId)),
+        },
+      });
+    })) return checkpoint;
+
+    if (!await execute("CANDIDATE_POLICY", async () => {
+      const evolutionRecords = checkpoint?.payload.evolution;
+      if (evolutionRecords === undefined) throw new KnowledgeWorkerError("MISSING_EVOLUTION_CHECKPOINT", "evolution checkpoint is missing", false);
+      const policies: CandidatePolicyRecord[] = [];
+      const outbox: PublicationOutboxItem[] = [];
+      const claimedAssetIds = new Map<string, string>();
+      for (const evolution of evolutionRecords) {
+        const { candidate, scope, decision: evolutionDecision } = evolution;
         const verificationResults = await external("EVIDENCE_VERIFICATION_FAILED", () =>
           this.#ports.evidence.verify(candidate, request.project, (checkpoint as KnowledgeWorkerCheckpoint).createdAt));
-        const preliminaryAssetId = assetIdentity(candidate, scope.scope);
-        let current = await external("MARKDOWN_CURRENT_READ_FAILED", () =>
-          this.#ports.markdown.readCurrent(preliminaryAssetId));
-        if (!current.ok && current.error.code !== "NOT_FOUND") {
-          throw new KnowledgeWorkerError("MARKDOWN_CURRENT_INVALID", current.error.message, false);
+        const targetRef = evolutionDecision.targetKnowledgeVersions[0];
+        let target: KnowledgeAsset | undefined;
+        if (targetRef !== undefined) {
+          const currentTarget = await external("EVOLUTION_TARGET_READ_FAILED", () =>
+            this.#ports.markdown.readCurrent(targetRef.id));
+          if (!currentTarget.ok) {
+            throw new KnowledgeWorkerError(
+              currentTarget.error.code === "NOT_FOUND" ? "EVOLUTION_TARGET_STALE" : "EVOLUTION_TARGET_READ_INVALID",
+              currentTarget.error.message,
+              currentTarget.error.code === "NOT_FOUND",
+            );
+          }
+          if (currentTarget.value.asset.version !== targetRef.version) {
+            throw new KnowledgeWorkerError("EVOLUTION_TARGET_STALE", `evolution target ${targetRef.id} changed version`, true);
+          }
+          target = currentTarget.value.asset;
         }
-        const currentStatus: KnowledgeStatus = current.ok ? current.value.asset.status : "PROPOSED";
-        let record: CandidatePolicyRecord = {
+        const continuesLineage = evolutionDecision.status === "DECIDED"
+          && (evolutionDecision.action === "SUPPLEMENT" || evolutionDecision.action === "SUPERSEDE"
+            || evolutionDecision.action === "CONTRADICT" || evolutionDecision.action === "SKIP");
+        const currentStatus: KnowledgeStatus = continuesLineage && target !== undefined ? target.status : "PROPOSED";
+        const supportedRejection = candidate.assertions.some((assertion) =>
+          assertion.kind === "USER_REJECTED"
+          && verificationResults.some((result) => result.assertionId === assertion.assertionId && result.status === "SUPPORTED"));
+        const revisionRequested = evolutionDecision.status === "DECIDED"
+          && (evolutionDecision.action === "SUPPLEMENT" || evolutionDecision.action === "SUPERSEDE");
+        const restrictiveTargetIds = evolutionDecision.status === "PENDING"
+          || (evolutionDecision.requiresConfirmation && !supportedRejection)
+          || (evolutionDecision.status === "DECIDED" && evolutionDecision.action === "CONTRADICT" && !supportedRejection)
+          ? (evolutionTargetIds(evolutionDecision).length > 0
+              ? evolutionTargetIds(evolutionDecision)
+              : [`evolution:${candidate.candidateId}`])
+          : [];
+        const record: CandidatePolicyRecord = {
           candidate,
           currentStatus,
           scope,
@@ -734,39 +865,19 @@ export class KnowledgeWorkerRuntime {
             projectSpecificSignals: scope.projectSpecificSignals,
             verificationResults,
             verificationPolicy: request.verificationPolicy,
+            ...(restrictiveTargetIds.length === 0 ? {} : { conflictIds: restrictiveTargetIds }),
+            ...(evolutionDecision.status === "PENDING" ? { adoptionAmbiguous: true } : {}),
+            ...(revisionRequested ? { contentRevisionRequested: true } : {}),
           }),
         };
-        const effectiveAssetId = assetIdentity(candidate, record.decision.effectiveScope);
-        if (effectiveAssetId !== preliminaryAssetId) {
-          current = await external("MARKDOWN_CURRENT_READ_FAILED", () =>
-            this.#ports.markdown.readCurrent(effectiveAssetId));
-          if (!current.ok && current.error.code !== "NOT_FOUND") {
-            throw new KnowledgeWorkerError("MARKDOWN_CURRENT_INVALID", current.error.message, false);
-          }
-          const effectiveCurrentStatus: KnowledgeStatus = current.ok ? current.value.asset.status : "PROPOSED";
-          record = {
-            ...record,
-            currentStatus: effectiveCurrentStatus,
-            decision: evaluateEvidencePolicy({
-              candidate,
-              currentStatus: effectiveCurrentStatus,
-              resolvedScope: scope.scope,
-              projectScope: {
-                level: "PROJECT",
-                projectId: request.project.projectId,
-                ...(request.project.repositoryRemote === undefined
-                  ? {}
-                  : { repositoryRemote: request.project.repositoryRemote }),
-              },
-              projectSpecificSignals: scope.projectSpecificSignals,
-              verificationResults,
-              verificationPolicy: request.verificationPolicy,
-            }),
-          };
-        }
         policies.push(record);
-        if (record.decision.shouldPublish) {
-          const assetId = assetIdentity(candidate, record.decision.effectiveScope);
+        const stableScope = canonical(record.decision.effectiveScope) === canonical(evolutionDecision.proposedScope);
+        if (record.decision.shouldPublish && stableScope && evolutionAllowsPublication(evolutionDecision)) {
+          const extendsLineage = evolutionDecision.status === "DECIDED"
+            && (evolutionDecision.action === "SUPPLEMENT" || evolutionDecision.action === "SUPERSEDE");
+          const assetId = extendsLineage && target !== undefined
+            ? target.id
+            : assetIdentity(candidate, record.decision.effectiveScope);
           const claimedBy = claimedAssetIds.get(assetId);
           if (claimedBy !== undefined && claimedBy !== candidate.candidateId) {
             throw new KnowledgeWorkerError(
@@ -776,11 +887,20 @@ export class KnowledgeWorkerRuntime {
             );
           }
           claimedAssetIds.set(assetId, candidate.candidateId);
+          const current = await external("MARKDOWN_CURRENT_READ_FAILED", () => this.#ports.markdown.readCurrent(assetId));
+          if (!current.ok && current.error.code !== "NOT_FOUND") {
+            throw new KnowledgeWorkerError("MARKDOWN_CURRENT_INVALID", current.error.message, false);
+          }
+          if (extendsLineage && (!current.ok || target === undefined || current.value.asset.version !== target.version)) {
+            throw new KnowledgeWorkerError("EVOLUTION_TARGET_STALE", `lineage ${assetId} changed before publication planning`, true);
+          }
           const version = current.ok ? current.value.asset.version + 1 : 1;
           outbox.push({
             candidateId: candidate.candidateId,
             asset: buildAsset(
               record,
+              evolution,
+              extendsLineage ? target : undefined,
               assetId,
               version,
               current.ok ? current.value.asset.createdAt : candidate.createdAt,

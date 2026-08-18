@@ -22,6 +22,8 @@ export interface EvidencePolicyInput {
   readonly userExplicitlyApprovedGlobal?: boolean;
   readonly conflictIds?: readonly string[];
   readonly adoptionAmbiguous?: boolean;
+  /** A content revision may publish without a status transition only when this run has fresh supporting Evidence. */
+  readonly contentRevisionRequested?: boolean;
 }
 
 export type EvidencePolicyAction = "APPLY" | "KEEP" | "ASK_USER";

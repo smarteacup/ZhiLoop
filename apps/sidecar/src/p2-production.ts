@@ -263,6 +263,17 @@ export class P2ProductionComposition {
       ledger: ledgerPort,
       compiler,
       evidence,
+      evolution: {
+        search: (queries, limit) => {
+          const assets = new Map<string, KnowledgeAsset>();
+          for (const query of queries.slice(0, 5)) {
+            for (const result of this.registry.search(query, { limit, includeInactive: true })) {
+              assets.set(result.asset.id, result.asset);
+            }
+          }
+          return [...assets.values()].sort((left, right) => left.id.localeCompare(right.id)).slice(0, limit);
+        },
+      },
       markdown: this.markdown,
       registry: this.registry,
       index: this.index,

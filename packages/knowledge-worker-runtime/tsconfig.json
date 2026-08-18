@@ -17,6 +17,7 @@
     { "path": "../evidence-engine" },
     { "path": "../evidence-policy" },
     { "path": "../knowledge-compiler" },
+    { "path": "../knowledge-evolution" },
     { "path": "../knowledge-indexer" },
     { "path": "../knowledge-registry" },
     { "path": "../markdown-repository" },

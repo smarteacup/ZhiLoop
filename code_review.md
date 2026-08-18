@@ -2,16 +2,52 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M3 用户承诺编译） | 累计 |
+| 指标 | 本轮（M4 知识演进决策） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 4 |
-| 风险发现 | 6 | 29 |
-| 高风险 | 3 | 14 |
-| 中风险 | 3 | 13 |
-| 低风险 | 0 | 2 |
-| 已修复 | 6 | 29 |
+| Review 次数 | 1 | 5 |
+| 风险发现 | 7 | 36 |
+| 高风险 | 4 | 18 |
+| 中风险 | 2 | 15 |
+| 低风险 | 1 | 3 |
+| 已修复 | 7 | 36 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 15 分 10 秒 | 已知耗时 45 分 03 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 18 分 25 秒 | 已知耗时 1 小时 03 分 28 秒（首轮历史报告未记录耗时） |
+
+## M4 审查结论
+
+M4 新增了独立 `knowledge-evolution` 领域包，将 Candidate 与当前知识的关系编译为 `STORE/SUPPLEMENT/SUPERSEDE/CONTRADICT/SCOPE_SPLIT/SKIP` 或显式 `PENDING`。决策在 Evidence Policy 之前持久化，但只能限制发布，不能提升状态或放大 Scope。7 个审查问题全部修复，无未解决风险。
+
+## M4 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | Evidence Policy 原来只在状态迁移时发布 | 同状态的真实内容修订永久无法生效；若 Worker 直接绕过又会继承旧授权 | 新增 `contentRevisionRequested`，只有本轮用户接受或必需 Evidence 全部支持才允许无状态迁移的新版本；正反测试 |
+| 高 | 不同 Scope 最初一律判为 `SCOPE_SPLIT` | 项目知识可被自动放大为 TEAM/GLOBAL | 只允许同级隔离 Scope 或可证明更窄的层级；放大结果改为 `PENDING` |
+| 高 | 已 `VERIFIED` 目标的补充最初可直接自动发布 | 新正文可不当继承旧版本的高权威状态 | VERIFIED 的 SUPPLEMENT 和 IMPLEMENTED/VERIFIED 的 SUPERSEDE 均设置 `requiresConfirmation`，传入 Policy 冲突门禁 |
+| 高 | `CONTRADICT` 的 conflict IDs 最初先于已验证的 `USER_REJECTED` 生效 | 用户已明确拒绝仍被要求再次确认，且无法记录 REJECTED 结果 | Worker 识别本轮已 SUPPORTED 的拒绝 Evidence，对该路径不重复施加冲突门禁，仍不生成 outbox |
+| 中 | 把 subject、title、summary 拼成一条 FTS 查询 | Registry 的 AND token 语义使召回近似退化为全字段完全命中 | 改为最多 5 个受控查询，Adapter 去重后仍最多返回 5 条；FTS 排名不直接作为关系证据 |
+| 中 | 旧 checkpoint 缺失 `EVOLUTION_MATCH` 时，`retryFailed` 路径直接读 `.status` | 升级后的显式恢复可抛 TypeError，无法执行新 stage | 改为缺失安全访问；普通旧 checkpoint 续跑测试与全量回归通过 |
+| 低 | 新包初次纳入全局覆盖率后分支为 84.94% | 达不到既定质量 Gate | 补充 Scope 层级、alias/symbol、无效语义裁决和损坏输入分支；全局恢复到 85.07% |
+
+## M4 关键维度确认
+
+- **匹配顺序**：先读 `subjectKey + kind + scope` 精确身份，再执行最多 5 个受控 FTS 查询，最终候选不超过 5 条；精确身份永远优先。
+- **未决边界**：相似但无法确定关系时持久化 `PENDING`，不伪装为 STORE/SKIP；可选语义端口最多调用一次且只能选已给定目标。
+- **发布矩阵**：CONTRADICT、SKIP、PENDING 无 outbox；其他决策仍必须通过 Evidence Policy、Scope 恒等和授权门禁。
+- **版本边界**：SUPPLEMENT/SUPERSEDE 只写当前 lineage 的紧邻下一版；目标版本在决策后变化则返回可重试 `EVOLUTION_TARGET_STALE`。
+- **数据边界**：新版本保留 aliases、applicability、symbols、Evidence 和 source Episodes，同时增加 DERIVED_FROM/SUPERSEDES/RELATED_TO 关系。
+
+## M4 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，61 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 155 files，1360/1360 通过 |
+| Coverage | statements 90.29%，branches 85.07%，functions 91.94%，lines 93.81% |
+| OpenSpec strict validation | `decide-knowledge-evolution` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M3 审查结论
 

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import type { LedgerEventRecord } from "@zhiloop/conversation-ledger";
-import type { EventEnvelope, KnowledgeAsset, KnowledgeCandidate } from "@zhiloop/domain";
+import type { Episode, EventEnvelope, KnowledgeAsset, KnowledgeCandidate, KnowledgeKind } from "@zhiloop/domain";
 import type { VerificationResult } from "@zhiloop/evidence-engine";
 import type { IncrementalIndexResult } from "@zhiloop/knowledge-indexer";
 import type { ProjectionWriteResult } from "@zhiloop/knowledge-registry";
@@ -50,7 +50,7 @@ function ledgerRecords(): readonly LedgerEventRecord[] {
     {
       eventType: "user.prompted" as const,
       turnId: "turn-1",
-      payload: { kind: "user-prompt", prompt: "记录已经确认的运行时设计" },
+      payload: { kind: "user-prompt", prompt: "采用当前运行时设计方案" },
     },
     {
       eventType: "turn.stopped" as const,
@@ -84,6 +84,66 @@ function ledgerRecords(): readonly LedgerEventRecord[] {
       insertedAt: occurredAt,
     };
   });
+}
+
+function commitmentLedgerRecords(statementText: string): readonly LedgerEventRecord[] {
+  const fixtures = [
+    { eventType: "session.started" as const, payload: { kind: "session-started" }, cwd: "/workspace/repo" },
+    {
+      eventType: "user.prompted" as const,
+      turnId: "turn-1",
+      payload: { kind: "user-prompt", prompt: "选择运行时设计" },
+    },
+    {
+      eventType: "turn.stopped" as const,
+      turnId: "turn-1",
+      payload: { kind: "turn-stopped", stopHookActive: false, lastAssistantMessage: "建议使用可恢复阶段机" },
+    },
+    {
+      eventType: "user.prompted" as const,
+      turnId: "turn-2",
+      payload: { kind: "user-prompt", prompt: statementText },
+    },
+    {
+      eventType: "turn.stopped" as const,
+      turnId: "turn-2",
+      payload: { kind: "turn-stopped", stopHookActive: false, lastAssistantMessage: "收到" },
+    },
+    { eventType: "session.ended" as const, payload: { kind: "session-ended" } },
+  ];
+  return fixtures.map((fixture, index): LedgerEventRecord => {
+    const occurredAt = new Date(Date.UTC(2026, 7, 2, 8, 0, index)).toISOString();
+    const event: EventEnvelope = {
+      schemaVersion: 1,
+      eventId: sha256(`commitment-event:${statementText}:${index}`),
+      source: "codex-hook",
+      sourceItemId: `commitment-source-${index}`,
+      eventType: fixture.eventType,
+      sessionId: "session-1",
+      ...(fixture.turnId === undefined ? {} : { turnId: fixture.turnId }),
+      occurredAt,
+      ...(fixture.cwd === undefined ? {} : { cwd: fixture.cwd }),
+      contentHash: sha256(`commitment-content:${statementText}:${index}`),
+      correlationId: sha256("session-1"),
+      payload: fixture.payload,
+    };
+    return {
+      sequence: index + 1,
+      event,
+      storedPayloadHash: sha256(JSON.stringify(event.payload)),
+      redactionCount: 0,
+      payloadPurged: false,
+      insertedAt: occurredAt,
+    };
+  });
+}
+
+function snapshotLedger(records: readonly LedgerEventRecord[]): LedgerSnapshotPort {
+  const contentHash = sha256(JSON.stringify(records));
+  return {
+    loadSnapshot: async () => ({ snapshotId: "snapshot-1", sourceVersion: "v1", contentHash, records }),
+    inspectSnapshot: async () => ({ snapshotId: "snapshot-1", sourceVersion: "v1", contentHash }),
+  };
 }
 
 class MemoryCheckpointStore implements KnowledgeWorkerCheckpointStore {
@@ -203,26 +263,38 @@ function candidateDraft(input: KnowledgeExtractionInput, options: {
   readonly subjectKey?: string;
   readonly implementation?: boolean;
   readonly withSymbol?: boolean;
+  readonly kind?: KnowledgeKind;
+  readonly includeAcceptance?: boolean;
+  readonly trustedTest?: boolean;
 } = {}) {
   return {
     subjectKey: options.subjectKey ?? "project.runtime.behavior",
-    kind: options.implementation === true ? "IMPLEMENTATION" : "FACT",
+    kind: options.kind ?? (options.implementation === true ? "IMPLEMENTATION" : "FACT"),
     scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["PROJECT_BOUND"] },
     title: "运行时设计",
     summary: "运行时采用可恢复阶段机",
     body: "Markdown 是权威来源，Registry 和索引由 outbox 推进。",
     confidence: 0.95,
     assertions: [
-      { kind: "USER_ACCEPTED", parameters: { statementRef: input.goalRef } },
+      ...(options.trustedTest === true
+        ? [{ kind: "TEST_PASSED", parameters: { testId: `test-${options.subjectKey ?? "runtime"}` } }]
+        : options.includeAcceptance === false ? [] : [{ kind: "USER_ACCEPTED", parameters: { statementRef: input.goalRef } }]),
       ...(options.withSymbol === true
         ? [{ kind: "SYMBOL_EXISTS", parameters: { projectId: "project-1", symbol: "KnowledgeWorkerRuntime" } }]
         : []),
     ],
-    evidenceHints: [],
+    evidenceHints: [{ type: "USER_STATEMENT", sourceRef: input.goalRef, projectId: "project-1" }],
   };
 }
 
-function compiler(options: { readonly implementation?: boolean; readonly withSymbol?: boolean; readonly count?: number } = {}) {
+function compiler(options: {
+  readonly implementation?: boolean;
+  readonly withSymbol?: boolean;
+  readonly count?: number;
+  readonly kind?: KnowledgeKind;
+  readonly includeAcceptance?: boolean;
+  readonly trustedTest?: boolean;
+} = {}) {
   return {
     extract: async (input: KnowledgeExtractionInput) => ({
       schemaVersion: 1,
@@ -230,6 +302,9 @@ function compiler(options: { readonly implementation?: boolean; readonly withSym
         subjectKey: index === 0 ? "project.runtime.behavior" : `project.runtime.behavior-${index}`,
         ...(options.implementation === undefined ? {} : { implementation: options.implementation }),
         ...(options.withSymbol === undefined ? {} : { withSymbol: options.withSymbol }),
+        ...(options.kind === undefined ? {} : { kind: options.kind }),
+        ...(options.includeAcceptance === undefined ? {} : { includeAcceptance: options.includeAcceptance }),
+        ...(options.trustedTest === undefined ? {} : { trustedTest: options.trustedTest }),
       })),
     }),
   };
@@ -239,7 +314,9 @@ function evidence(): EvidenceVerificationPort {
   return {
     verify: async (candidate: KnowledgeCandidate, project, requestedAt): Promise<readonly VerificationResult[]> =>
       candidate.assertions.map((assertion) => {
-        const type = assertion.kind === "SYMBOL_EXISTS" ? "CODE_SYMBOL" as const : "USER_STATEMENT" as const;
+        const type = assertion.kind === "SYMBOL_EXISTS"
+          ? "CODE_SYMBOL" as const
+          : assertion.kind === "TEST_PASSED" ? "TEST_RESULT" as const : "USER_STATEMENT" as const;
         return {
         assertionId: assertion.assertionId,
         assertionKind: assertion.kind,
@@ -304,6 +381,7 @@ function request(overrides: Partial<KnowledgeWorkerRunRequest> = {}): KnowledgeW
     project: { projectId: "project-1", repositoryRoot: "/workspace/repo", portable: false },
     compilerVersion: "compiler-v1",
     promptVersion: "prompt-v1",
+    policyHash: "policy-v1",
     verificationPolicy: DEFAULT_CONFIGURATION.verification,
     extraction: { maxAttempts: 1, perAttemptTimeoutMs: 1_000 },
     ...overrides,
@@ -374,6 +452,154 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.markdown.publishCalls).toBe(1);
     expect(setup.registry.calls).toBe(1);
     expect(setup.index.calls).toBe(1);
+  });
+
+  it.each([
+    ["按这个做", "USER_ACCEPTED"],
+    ["不要使用运行时设计", "USER_REJECTED"],
+  ] as const)("applies a uniquely targeted user commitment before policy: %s", async (statementText, expectedKind) => {
+    const records = commitmentLedgerRecords(statementText);
+    const setup = fixture({ ledger: snapshotLedger(records) });
+    setup.ports.compiler.extract = compiler({ kind: "DESIGN", includeAcceptance: false }).extract;
+    const checkpoint = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(request());
+
+    expect(checkpoint.status).toBe("AWAITING_COMMIT");
+    expect(checkpoint.stages.USER_COMMITMENT).toMatchObject({ status: "SUCCEEDED", attempts: 1 });
+    expect(checkpoint.payload.userCommitments?.ambiguities).toEqual([]);
+    expect(checkpoint.payload.userCommitments?.signals).toEqual([
+      expect.objectContaining({ kind: expectedKind, candidateIds: [checkpoint.payload.candidates?.[0]?.candidateId] }),
+    ]);
+    expect(checkpoint.payload.candidates?.[0]?.assertions).toEqual([
+      expect.objectContaining({ kind: expectedKind, parameters: { statementRef: records[3]?.event.eventId } }),
+    ]);
+    expect(checkpoint.payload.candidateProvenance?.[0]).toMatchObject({
+      candidateId: checkpoint.payload.candidates?.[0]?.candidateId,
+      episodeId: checkpoint.payload.episodes?.[0]?.episodeId,
+      compilerVersion: "compiler-v1",
+      promptVersion: "prompt-v1",
+      policyHash: "policy-v1",
+    });
+    expect(checkpoint.payload.candidateProvenance?.[0]?.inputHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(Object.keys(checkpoint.payload.candidateProvenance?.[0] ?? {}).sort()).toEqual([
+      "builderVersion",
+      "candidateId",
+      "compilerVersion",
+      "episodeId",
+      "extractionKey",
+      "inputHash",
+      "policyHash",
+      "promptVersion",
+    ]);
+  });
+
+  it("keeps an ambiguous commitment visible without enriching either candidate", async () => {
+    const records = commitmentLedgerRecords("按这个做");
+    const setup = fixture({ ledger: snapshotLedger(records) });
+    setup.ports.compiler.extract = compiler({ kind: "DESIGN", includeAcceptance: false, count: 2 }).extract;
+    const checkpoint = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(request());
+
+    expect(checkpoint.payload.userCommitments?.signals).toEqual([]);
+    expect(checkpoint.payload.userCommitments?.ambiguities).toEqual([
+      expect.objectContaining({
+        kind: "USER_ACCEPTED",
+        statementRef: records[3]?.event.eventId,
+        candidateIds: checkpoint.payload.candidates?.map(({ candidateId }) => candidateId).sort(),
+      }),
+    ]);
+    expect(checkpoint.payload.candidates?.every((candidate) =>
+      candidate.assertions.every((assertion) => assertion.kind !== "USER_ACCEPTED"))).toBe(true);
+  });
+
+  it("removes model-asserted commitment when the user did not make that commitment", async () => {
+    const records = commitmentLedgerRecords("继续分析边界条件");
+    const setup = fixture({ ledger: snapshotLedger(records) });
+    setup.ports.compiler.extract = compiler({ kind: "DESIGN", includeAcceptance: true }).extract;
+    const checkpoint = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(request());
+
+    expect(checkpoint.payload.userCommitments).toMatchObject({ signals: [], ambiguities: [] });
+    expect(checkpoint.payload.candidates?.[0]?.assertions).toEqual([]);
+    expect(checkpoint.payload.candidates?.[0]?.evidenceHints).toHaveLength(1);
+    expect(checkpoint.payload.outbox).toEqual([]);
+  });
+
+  it("upgrades a legacy compiled checkpoint and preserves a correction as an evolution draft", async () => {
+    const setup = fixture();
+    setup.ports.compiler.extract = compiler({ kind: "DESIGN", includeAcceptance: false }).extract;
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+    const initial = await runtime.run(request());
+    const sourceEpisode = initial.payload.episodes?.[0];
+    const sourceCandidate = initial.payload.candidates?.[0];
+    const sourceLedger = initial.payload.ledger;
+    const sourceNormalization = initial.payload.normalization;
+    const sourceEpisodeBuild = initial.payload.episodeBuild;
+    if (sourceEpisode === undefined || sourceCandidate === undefined || sourceLedger === undefined
+      || sourceNormalization === undefined || sourceEpisodeBuild === undefined) {
+      throw new Error("fixture did not compile an Episode");
+    }
+    const correctedRef = "event-user-correction";
+    const occurredAt = "2026-08-01T08:05:00.000Z";
+    const correctionEpisode: Episode = {
+      ...sourceEpisode,
+      turnIds: [...sourceEpisode.turnIds, "turn-correction"],
+      userStatements: [...sourceEpisode.userStatements, {
+        turnId: "turn-correction",
+        sourceEventId: correctedRef,
+        kind: "CORRECTION",
+        statement: "不是这个意思，改用有界队列",
+        occurredAt,
+      }],
+      userCorrections: [...sourceEpisode.userCorrections, {
+        correctionId: "correction-1",
+        turnId: "turn-correction",
+        originalRef: sourceEpisode.goalRef,
+        originalStatement: sourceEpisode.goal,
+        correctedRef,
+        correctedStatement: "不是这个意思，改用有界队列",
+        occurredAt,
+      }],
+      evidenceRefs: [...sourceEpisode.evidenceRefs, correctedRef],
+      updatedAt: occurredAt,
+    };
+    const stages = structuredClone(initial.stages) as Record<string, unknown>;
+    delete stages["USER_COMMITMENT"];
+    for (const stage of ["CANDIDATE_POLICY", "MARKDOWN_PUBLISH", "REGISTRY_PROJECT", "INCREMENTAL_INDEX"]) {
+      stages[stage] = { status: "PENDING", attempts: 0 };
+    }
+    store.checkpoint = {
+      ...initial,
+      status: "RUNNING",
+      stages: stages as KnowledgeWorkerCheckpoint["stages"],
+      payload: {
+        ledger: sourceLedger,
+        normalization: sourceNormalization,
+        episodeBuild: sourceEpisodeBuild,
+        episodes: [correctionEpisode],
+        candidates: [sourceCandidate],
+      },
+    };
+
+    const migrated = await runtime.run(request());
+    expect(migrated.payload.userCommitments?.signals.map(({ kind }) => kind).sort()).toEqual([
+      "CORRECTION",
+      "USER_ACCEPTED",
+      "USER_REJECTED",
+    ]);
+    expect(migrated.payload.userCommitments?.correctionDrafts).toEqual([
+      expect.objectContaining({
+        candidateId: sourceCandidate.candidateId,
+        relationHint: "CONTRADICTS",
+        originalRef: sourceEpisode.goalRef,
+        correctedRef,
+      }),
+    ]);
+    expect(migrated.payload.candidates?.[0]?.assertions).toContainEqual(
+      expect.objectContaining({ kind: "USER_REJECTED", parameters: { statementRef: correctedRef } }),
+    );
+    expect(migrated.payload.candidateProvenance).toHaveLength(1);
+    const replay = await runtime.run(request());
+    expect(replay.revision).toBe(migrated.revision);
+    expect(replay.stages.USER_COMMITMENT.attempts).toBe(1);
   });
 
   it("fails closed for missing or malformed publication authority", async () => {
@@ -664,6 +890,12 @@ describe("KnowledgeWorkerRuntime", () => {
     await expect(runtime.run(request({ promptVersion: "prompt-v2" }), publicationOptions())).rejects.toMatchObject({
       code: "WORK_IDENTITY_CONFLICT",
     });
+    await expect(runtime.run(request({ policyHash: "policy-v2" }), publicationOptions())).rejects.toMatchObject({
+      code: "WORK_IDENTITY_CONFLICT",
+    });
+    await expect(new KnowledgeWorkerRuntime(fixture().ports, new MemoryCheckpointStore()).run(
+      request({ workId: "invalid-policy", policyHash: "" }),
+    )).rejects.toMatchObject({ code: "INVALID_POLICY_HASH", retryable: false });
   });
 
   it("detects index version inconsistency and supports bounded rebuild", async () => {
@@ -692,7 +924,12 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(ledgerLimited.stages.LEDGER_READ.error?.code).toBe("LEDGER_BATCH_LIMIT_EXCEEDED");
 
     const publishing = fixture();
-    publishing.ports.compiler.extract = compiler({ count: 2 }).extract;
+    publishing.ports.compiler.extract = compiler({
+      count: 2,
+      kind: "IMPLEMENTATION",
+      includeAcceptance: false,
+      withSymbol: true,
+    }).extract;
     const publishLimited = await new KnowledgeWorkerRuntime(publishing.ports, new MemoryCheckpointStore()).run(
       request({ workId: "publish-limited", limits: { maxPublishItems: 1 } }),
       publicationOptions(),

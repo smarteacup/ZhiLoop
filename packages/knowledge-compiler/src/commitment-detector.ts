@@ -63,7 +63,7 @@ interface CandidateProfile {
 
 const LEADING_ACKNOWLEDGEMENT = "(?:(?:好(?:的)?|可以|确认|没问题)[\\s，,:：]+)?";
 const ACCEPTANCE = new RegExp(
-  `^${LEADING_ACKNOWLEDGEMENT}(?:按这个做|就按这个(?:做|方案)?|(?:采用|同意|确认采用)[^。；;\\n]{0,40}(?:方案|设计|实现)|可以实施|照此执行|approved?|proceed with this|use this approach)`,
+  `^${LEADING_ACKNOWLEDGEMENT}(?:按这个做|就按这个(?:做|方案)?|确认(?:采用|使用)[^。；;\\n]{1,80}|(?:采用|同意|确认采用)[^。；;\\n]{0,40}(?:方案|设计|实现)|可以实施|照此执行|approved?|proceed with this|use this approach)`,
   "iu",
 );
 const REJECTION = new RegExp(

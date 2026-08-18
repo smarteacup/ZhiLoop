@@ -106,6 +106,15 @@ describe("detectUserCommitments", () => {
     expect(result.ambiguities).toEqual([]);
   });
 
+  it("recognizes a direct confirmation-to-use statement without requiring a design suffix", () => {
+    const acceptance = statement("event-accept", "确认使用可恢复 outbox", "2026-08-01T08:01:00.000Z");
+    const result = detectUserCommitments(episode([acceptance]), [candidate("outbox", "Use a durable outbox")]);
+    expect(result.signals).toEqual([
+      expect.objectContaining({ kind: "USER_ACCEPTED", candidateIds: ["outbox"], statementRef: "event-accept" }),
+    ]);
+    expect(result.ambiguities).toEqual([]);
+  });
+
   it("does not auto-confirm multiple proposals without a unique target", () => {
     const acceptance = statement("event-accept", "按这个做", "2026-08-01T08:01:00.000Z");
     const result = detectUserCommitments(episode([acceptance]), [

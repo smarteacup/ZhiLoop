@@ -1,16 +1,28 @@
 import { createHash } from "node:crypto";
 
 import { normalizeConversations } from "@zhiloop/conversation-normalizer";
-import type { EvidenceRef, KnowledgeAsset, KnowledgeCandidate, KnowledgeScope, KnowledgeStatus } from "@zhiloop/domain";
+import type { Episode, EvidenceRef, KnowledgeAsset, KnowledgeCandidate, KnowledgeScope, KnowledgeStatus } from "@zhiloop/domain";
 import { buildEpisodes } from "@zhiloop/episode-builder";
 import { evaluateEvidencePolicy } from "@zhiloop/evidence-policy";
-import { runKnowledgeExtraction, toKnowledgeExtractionInput } from "@zhiloop/knowledge-compiler";
+import {
+  applyUserCommitments,
+  detectUserCommitments,
+  knowledgeExtractionInputHash,
+  knowledgeExtractionKey,
+  runKnowledgeExtraction,
+  toKnowledgeExtractionInput,
+  type KnowledgeExtractionRequest,
+  type UserCommitmentAmbiguity,
+  type UserCommitmentSignal,
+} from "@zhiloop/knowledge-compiler";
 import { calculateKnowledgeContentHash } from "@zhiloop/markdown-repository";
 import { resolveKnowledgeScope } from "@zhiloop/scope-resolver";
 
 import { KnowledgeWorkerError } from "./errors.js";
 import {
   WORKER_STAGES,
+  type CandidateCompilationProvenance,
+  type CandidateCorrectionDraft,
   type CandidatePolicyRecord,
   type IndexRebuildResult,
   type KnowledgeExecutionMode,
@@ -79,6 +91,12 @@ function limits(input: Partial<KnowledgeWorkerLimits> | undefined): KnowledgeWor
 }
 
 function identity(request: KnowledgeWorkerRunRequest, resolvedLimits: KnowledgeWorkerLimits): string {
+  if (typeof request.policyHash !== "string"
+    || request.policyHash.trim().length === 0
+    || request.policyHash.length > 512
+    || /[\0\r\n]/u.test(request.policyHash)) {
+    throw new KnowledgeWorkerError("INVALID_POLICY_HASH", "policyHash must contain 1 to 512 safe characters", false);
+  }
   return hash({
     workId: request.workId,
     snapshot: request.snapshot,
@@ -86,6 +104,7 @@ function identity(request: KnowledgeWorkerRunRequest, resolvedLimits: KnowledgeW
     project: request.project,
     compilerVersion: request.compilerVersion,
     promptVersion: request.promptVersion,
+    policyHash: request.policyHash,
     verificationPolicy: request.verificationPolicy,
     allowGlobal: request.allowGlobal === true,
     projectTerms: request.projectTerms ?? [],
@@ -95,6 +114,142 @@ function identity(request: KnowledgeWorkerRunRequest, resolvedLimits: KnowledgeW
       perAttemptTimeoutMs: request.extraction.perAttemptTimeoutMs,
       retryDelayMs: request.extraction.retryDelayMs,
     },
+  });
+}
+
+function extractionRequest(
+  episode: Episode,
+  request: KnowledgeWorkerRunRequest,
+  requestedAt: string,
+): KnowledgeExtractionRequest {
+  return {
+    input: toKnowledgeExtractionInput(episode),
+    compilerVersion: request.compilerVersion,
+    promptVersion: request.promptVersion,
+    requestedAt,
+    correlationId: `${request.workId}:${episode.episodeId}`,
+  };
+}
+
+function candidateProvenance(
+  candidateId: string,
+  extraction: Pick<
+    CandidateCompilationProvenance,
+    "extractionKey" | "inputHash" | "episodeId" | "builderVersion" | "compilerVersion" | "promptVersion"
+  >,
+  policyHash: string,
+): CandidateCompilationProvenance {
+  return Object.freeze({
+    candidateId,
+    extractionKey: extraction.extractionKey,
+    inputHash: extraction.inputHash,
+    episodeId: extraction.episodeId,
+    builderVersion: extraction.builderVersion,
+    compilerVersion: extraction.compilerVersion,
+    promptVersion: extraction.promptVersion,
+    policyHash,
+  });
+}
+
+function backfillCandidateProvenance(
+  candidates: readonly KnowledgeCandidate[],
+  episodes: readonly Episode[],
+  request: KnowledgeWorkerRunRequest,
+  requestedAt: string,
+): readonly CandidateCompilationProvenance[] {
+  const byEpisode = new Map(episodes.map((episode) => [episode.episodeId, episode]));
+  return candidates.map((candidate) => {
+    const localEpisodes = candidate.sourceEpisodes.map((episodeId) => byEpisode.get(episodeId)).filter((episode) => episode !== undefined);
+    const localEpisode = localEpisodes[0];
+    if (localEpisodes.length !== 1 || localEpisode === undefined) {
+      throw new KnowledgeWorkerError(
+        "CANDIDATE_PROVENANCE_UNRESOLVED",
+        `candidate ${candidate.candidateId} does not resolve to exactly one compiled Episode`,
+        false,
+      );
+    }
+    const source = extractionRequest(localEpisode, request, requestedAt);
+    return candidateProvenance(candidate.candidateId, {
+      extractionKey: knowledgeExtractionKey(source),
+      inputHash: knowledgeExtractionInputHash(source),
+      episodeId: source.input.episodeId,
+      builderVersion: source.input.builderVersion,
+      compilerVersion: source.compilerVersion,
+      promptVersion: source.promptVersion,
+    }, request.policyHash);
+  }).sort((left, right) => left.candidateId.localeCompare(right.candidateId));
+}
+
+function compileUserCommitments(
+  episodes: readonly Episode[],
+  candidates: readonly KnowledgeCandidate[],
+): {
+  readonly candidates: readonly KnowledgeCandidate[];
+  readonly signals: readonly UserCommitmentSignal[];
+  readonly ambiguities: readonly UserCommitmentAmbiguity[];
+  readonly correctionDrafts: readonly CandidateCorrectionDraft[];
+} {
+  // Model output may cite a user statement, but only the deterministic
+  // commitment detector is allowed to classify it as accepted or rejected.
+  const neutralCandidates = candidates.map((candidate) => ({
+    ...structuredClone(candidate),
+    assertions: candidate.assertions.filter((assertion) =>
+      assertion.kind !== "USER_ACCEPTED" && assertion.kind !== "USER_REJECTED"),
+  }) as KnowledgeCandidate);
+  const signals = new Map<string, UserCommitmentSignal>();
+  const ambiguities = new Map<string, UserCommitmentAmbiguity>();
+  for (const episode of [...episodes].sort((left, right) => left.episodeId.localeCompare(right.episodeId))) {
+    const detection = detectUserCommitments(episode, neutralCandidates);
+    for (const signal of detection.signals) {
+      const existing = signals.get(signal.signalId);
+      if (existing !== undefined && canonical(existing) !== canonical(signal)) {
+        throw new KnowledgeWorkerError("USER_COMMITMENT_COLLISION", `signal ${signal.signalId} is inconsistent`, false);
+      }
+      signals.set(signal.signalId, signal);
+    }
+    for (const ambiguity of detection.ambiguities) {
+      ambiguities.set(hash({ identityVersion: 1, episodeId: episode.episodeId, ambiguity }), ambiguity);
+    }
+  }
+  const stableSignals = [...signals.values()].sort((left, right) => left.signalId.localeCompare(right.signalId));
+  const stableAmbiguities = [...ambiguities.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, ambiguity]) => ambiguity);
+  const enriched = applyUserCommitments(neutralCandidates, { signals: stableSignals, ambiguities: stableAmbiguities });
+  for (const candidate of enriched) {
+    if (candidate.assertions.length === 0 && candidate.evidenceHints.length === 0) {
+      throw new KnowledgeWorkerError(
+        "CANDIDATE_GROUNDING_REMOVED",
+        `candidate ${candidate.candidateId} has no trusted grounding after commitment validation`,
+        false,
+      );
+    }
+  }
+  const correctionDrafts: CandidateCorrectionDraft[] = [];
+  for (const signal of stableSignals.filter((item) => item.kind === "CORRECTION")) {
+    if (signal.originalRef === undefined || signal.originalStatement === undefined
+      || signal.correctedRef === undefined || signal.correctedStatement === undefined) {
+      throw new KnowledgeWorkerError("USER_COMMITMENT_INVALID", `correction signal ${signal.signalId} is incomplete`, false);
+    }
+    for (const candidateId of [...signal.candidateIds].sort()) {
+      correctionDrafts.push(Object.freeze({
+        draftId: hash({ identityVersion: 1, signalId: signal.signalId, candidateId, relationHint: "CONTRADICTS" }),
+        signalId: signal.signalId,
+        candidateId,
+        relationHint: "CONTRADICTS",
+        originalRef: signal.originalRef,
+        originalStatement: signal.originalStatement,
+        correctedRef: signal.correctedRef,
+        correctedStatement: signal.correctedStatement,
+        occurredAt: signal.occurredAt,
+      }));
+    }
+  }
+  return Object.freeze({
+    candidates: enriched,
+    signals: Object.freeze(stableSignals),
+    ambiguities: Object.freeze(stableAmbiguities),
+    correctionDrafts: Object.freeze(correctionDrafts),
   });
 }
 
@@ -461,14 +616,13 @@ export class KnowledgeWorkerRuntime {
       const episodes = checkpoint?.payload.episodes;
       if (episodes === undefined) throw new KnowledgeWorkerError("MISSING_EPISODE_CHECKPOINT", "episode checkpoint is missing", false);
       const compiled: KnowledgeCandidate[] = [];
+      const provenance = new Map<string, CandidateCompilationProvenance>();
       for (const episode of episodes) {
-        const result = await runKnowledgeExtraction({
-          input: toKnowledgeExtractionInput(episode),
-          compilerVersion: request.compilerVersion,
-          promptVersion: request.promptVersion,
-          requestedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
-          correlationId: `${request.workId}:${episode.episodeId}`,
-        }, this.#ports.compiler, request.extraction);
+        const result = await runKnowledgeExtraction(
+          extractionRequest(episode, request, (checkpoint as KnowledgeWorkerCheckpoint).createdAt),
+          this.#ports.compiler,
+          request.extraction,
+        );
         if (result.status !== "SUCCEEDED") {
           throw new KnowledgeWorkerError(
             `COMPILER_${result.reason}`,
@@ -476,15 +630,69 @@ export class KnowledgeWorkerRuntime {
             result.status === "RETRYABLE",
           );
         }
-        compiled.push(...result.candidates);
+        for (const candidate of result.candidates) {
+          const record = candidateProvenance(candidate.candidateId, result, request.policyHash);
+          const existing = provenance.get(candidate.candidateId);
+          if (existing !== undefined && canonical(existing) !== canonical(record)) {
+            throw new KnowledgeWorkerError(
+              "CANDIDATE_PROVENANCE_COLLISION",
+              `candidate ${candidate.candidateId} has conflicting compilation provenance`,
+              false,
+            );
+          }
+          provenance.set(candidate.candidateId, record);
+          compiled.push(candidate);
+        }
         if (compiled.length > resolvedLimits.maxCandidates) {
           throw new KnowledgeWorkerError("CANDIDATE_BATCH_LIMIT_EXCEEDED", "candidate batch limit exceeded", false);
         }
       }
       const candidates = deduplicateCandidates(compiled);
       checkpoint = this.#persist(checkpoint as KnowledgeWorkerCheckpoint, {
-        payload: { ...(checkpoint as KnowledgeWorkerCheckpoint).payload, candidates },
+        payload: {
+          ...(checkpoint as KnowledgeWorkerCheckpoint).payload,
+          candidates,
+          candidateProvenance: [...provenance.values()].sort((left, right) => left.candidateId.localeCompare(right.candidateId)),
+        },
       });
+    })) return checkpoint;
+
+    if (!await execute("USER_COMMITMENT", async () => {
+      const episodes = checkpoint?.payload.episodes;
+      const candidates = checkpoint?.payload.candidates;
+      if (episodes === undefined || candidates === undefined) {
+        throw new KnowledgeWorkerError("MISSING_COMMITMENT_INPUT", "commitment input checkpoint is missing", false);
+      }
+      let provenance = checkpoint?.payload.candidateProvenance;
+      try {
+        provenance ??= backfillCandidateProvenance(
+          candidates,
+          episodes,
+          request,
+          (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
+        );
+        const compilation = compileUserCommitments(episodes, candidates);
+        checkpoint = this.#persist(checkpoint as KnowledgeWorkerCheckpoint, {
+          payload: {
+            ...(checkpoint as KnowledgeWorkerCheckpoint).payload,
+            candidates: compilation.candidates,
+            candidateProvenance: provenance,
+            userCommitments: {
+              signals: compilation.signals,
+              ambiguities: compilation.ambiguities,
+              correctionDrafts: compilation.correctionDrafts,
+            },
+          },
+        });
+      } catch (error) {
+        if (error instanceof KnowledgeWorkerError) throw error;
+        throw new KnowledgeWorkerError(
+          "USER_COMMITMENT_INVALID",
+          error instanceof Error ? error.message : "user commitment compilation failed",
+          false,
+          { cause: error },
+        );
+      }
     })) return checkpoint;
 
     if (!await execute("CANDIDATE_POLICY", async () => {

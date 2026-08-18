@@ -2,16 +2,51 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M2 执行模式） | 累计 |
+| 指标 | 本轮（M3 用户承诺编译） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 3 |
-| 风险发现 | 8 | 23 |
-| 高风险 | 4 | 11 |
-| 中风险 | 3 | 10 |
-| 低风险 | 1 | 2 |
-| 已修复 | 8 | 23 |
+| Review 次数 | 1 | 4 |
+| 风险发现 | 6 | 29 |
+| 高风险 | 3 | 14 |
+| 中风险 | 3 | 13 |
+| 低风险 | 0 | 2 |
+| 已修复 | 6 | 29 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 15 分 34 秒 | 已知耗时 29 分 53 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 15 分 10 秒 | 已知耗时 45 分 03 秒（首轮历史报告未记录耗时） |
+
+## M3 审查结论
+
+M3 将用户在对话中的明确接受、拒绝和纠正编译为可回放的结构化结果，并把提取策略身份绑定到 Worker 不可变工作身份。审查发现的 6 个问题均已修复；模型不能自行声称获得用户授权，歧义不会被猜测解决，纠正只产生关系草案而不伪造新知识正文。
+
+## M3 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 模型原始 Candidate 可以直接带 `USER_ACCEPTED` / `USER_REJECTED` | 模型可以伪造用户授权，越过承诺检测门禁 | 编译前删除所有模型声称的用户证据，只由确定性 detector 重新添加；伪造接受测试 |
+| 高 | 删除伪造承诺后可能留下无 assertion/evidence 的 Candidate | 无根据知识仍可继续进入策略阶段 | 新增 `CANDIDATE_GROUNDING_REMOVED` fail-closed 检查；纯伪造 Candidate 回归测试 |
+| 高 | Worker 身份未包含 `policyHash` | 策略变更后可错用历史 checkpoint，结果无法证明由哪份策略生成 | 请求必须提供有界 hash，纳入 work identity 和每条 Candidate provenance；P2 Snapshot 端到端传递 |
+| 中 | Candidate provenance 最初展开完整 compiler result | 每条 provenance 重复嵌入整批 candidates，checkpoint 可二次方膨胀 | 改为 8 个必要字段的精确投影；键集合恒等测试 |
+| 中 | Detector 未命中生产对话中“确认使用…”的直接表达 | 真实 P2 会话在移除模型自声明后无法获得用户接受证据 | 扩展有界的直接确认模式；语句单测与真实 P2 Gate 均通过 |
+| 中 | 旧 checkpoint 没有新 stage 和 provenance | 升级后未完成工作可误判完成或无法续跑 | 新 stage 缺失视为 pending，且仅对单 Episode 历史工作确定性回填 provenance；完成记录保持只读 |
+
+## M3 关键维度确认
+
+- **信任边界**：用户承诺只来自 Ledger Episode 中可定位的用户轮次；模型输出只能提供待验证主张。
+- **歧义边界**：同一表达唯一命中才应用；多候选命中保留 ambiguity，不更改 Candidate，不自动发布。
+- **纠正边界**：拒绝会附加可追溯的 `CONTRADICTS` 关系草案；正文仍需后续提取和证据验证。
+- **回放边界**：承诺 signal、ambiguity、draft 都按内容排序并持久化；相同 Ledger 摘要、compiler/prompt/policy 身份必然产生相同结果。
+- **兼容边界**：旧 completed checkpoint 不改写；只对能够唯一证明来源的未完成工作回填数据。
+
+## M3 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，60 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 154 files，全部通过 |
+| Coverage | statements 90.22%，branches 85.00%，functions 91.87%，lines 93.76% |
+| OpenSpec strict validation | `compile-user-commitments` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M2 审查结论
 

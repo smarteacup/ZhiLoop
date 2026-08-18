@@ -276,6 +276,7 @@ export class P2ProductionComposition {
         project: deriveP2ProjectContext(snapshot, options.ledger, options.stateDirectory),
         compilerVersion: DEFAULT_MVP_COMPILER_VERSION,
         promptVersion: DEFAULT_MVP_PROMPT_VERSION,
+        policyHash: snapshot.policyHash,
         verificationPolicy: DEFAULT_CONFIGURATION.verification,
         extraction: { maxAttempts: 2, perAttemptTimeoutMs: options.compilerTimeoutMs, retryDelayMs: 250 },
         limits: {

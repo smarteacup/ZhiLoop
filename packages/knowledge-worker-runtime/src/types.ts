@@ -4,7 +4,12 @@ import type { Episode, KnowledgeAsset, KnowledgeCandidate, KnowledgeStatus, Proj
 import type { EpisodeBuildResult } from "@zhiloop/episode-builder";
 import type { VerificationResult } from "@zhiloop/evidence-engine";
 import type { EvidencePolicyDecision } from "@zhiloop/evidence-policy";
-import type { KnowledgeExtractionPort, KnowledgeExtractionRunOptions } from "@zhiloop/knowledge-compiler";
+import type {
+  KnowledgeExtractionPort,
+  KnowledgeExtractionRunOptions,
+  UserCommitmentAmbiguity,
+  UserCommitmentSignal,
+} from "@zhiloop/knowledge-compiler";
 import type { IncrementalIndexResult } from "@zhiloop/knowledge-indexer";
 import type { ProjectionWriteResult } from "@zhiloop/knowledge-registry";
 import type {
@@ -21,6 +26,7 @@ export const WORKER_STAGES = [
   "NORMALIZE",
   "EPISODE_BUILD",
   "COMPILE",
+  "USER_COMMITMENT",
   "CANDIDATE_POLICY",
   "MARKDOWN_PUBLISH",
   "REGISTRY_PROJECT",
@@ -105,6 +111,7 @@ export interface KnowledgeWorkerRunRequest {
   readonly project: ProjectContext;
   readonly compilerVersion: string;
   readonly promptVersion: string;
+  readonly policyHash: string;
   readonly verificationPolicy: VerificationPolicy;
   readonly extraction?: KnowledgeExtractionRunOptions;
   readonly allowGlobal?: boolean;
@@ -129,12 +136,43 @@ export interface PublicationOutboxItem {
   readonly index?: IncrementalIndexResult;
 }
 
+export interface CandidateCompilationProvenance {
+  readonly candidateId: string;
+  readonly extractionKey: string;
+  readonly inputHash: string;
+  readonly episodeId: string;
+  readonly builderVersion: string;
+  readonly compilerVersion: string;
+  readonly promptVersion: string;
+  readonly policyHash: string;
+}
+
+export interface CandidateCorrectionDraft {
+  readonly draftId: string;
+  readonly signalId: string;
+  readonly candidateId: string;
+  readonly relationHint: "CONTRADICTS";
+  readonly originalRef: string;
+  readonly originalStatement: string;
+  readonly correctedRef: string;
+  readonly correctedStatement: string;
+  readonly occurredAt: string;
+}
+
+export interface UserCommitmentCompilation {
+  readonly signals: readonly UserCommitmentSignal[];
+  readonly ambiguities: readonly UserCommitmentAmbiguity[];
+  readonly correctionDrafts: readonly CandidateCorrectionDraft[];
+}
+
 export interface KnowledgeWorkerPayload {
   readonly ledger?: LoadedLedgerSnapshot;
   readonly normalization?: ConversationNormalizationResult;
   readonly episodeBuild?: EpisodeBuildResult;
   readonly episodes?: readonly Episode[];
   readonly candidates?: readonly KnowledgeCandidate[];
+  readonly candidateProvenance?: readonly CandidateCompilationProvenance[];
+  readonly userCommitments?: UserCommitmentCompilation;
   readonly policies?: readonly CandidatePolicyRecord[];
   readonly outbox?: readonly PublicationOutboxItem[];
 }

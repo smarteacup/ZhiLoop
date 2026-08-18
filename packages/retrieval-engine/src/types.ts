@@ -73,6 +73,7 @@ export type RetrievalDiagnosticCode =
   | "SCOPE_FILTERED"
   | "TOMBSTONE_FILTERED"
   | "STALE_SOURCE_HIT"
+  | "FRESHNESS_FILTERED"
   | "STALE_VECTOR_CHUNK"
   | "VECTOR_VERSION_MISMATCH";
 

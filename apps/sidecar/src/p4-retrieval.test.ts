@@ -101,6 +101,7 @@ describe("P4RegistryRetrievalComposition", () => {
 
     await expect(composition.authority.scopeForHook(hook())).resolves.toEqual({
       sessionId: "session-1", turnId: "turn-1", projectId: "project-a", taskId: "turn-1",
+      worktree: "/workspace/project-a", branch: "main",
     });
     const forgedBase = resolveQueryContext({
       prompt: "inspect `RuntimeBeacon`",

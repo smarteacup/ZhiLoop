@@ -32,9 +32,11 @@ import {
 } from "@zhiloop/confirmation-writeback";
 import type { ClosureVerificationInput, SemanticClosurePort } from "@zhiloop/closure-verifier";
 import type { ContextOrchestratorPort } from "@zhiloop/context-orchestrator";
+import { ContextPrewarmService, SqliteContextPrewarmStore } from "@zhiloop/context-prewarm";
 import type { KnowledgeAsset, KnowledgeScope, TaskContractBlock } from "@zhiloop/domain";
 import { SqliteFeedbackStore } from "@zhiloop/feedback-engine";
 import { KnowledgeMcpService, type KnowledgeMcpBackend } from "@zhiloop/knowledge-mcp";
+import { ProjectionFreshnessGate, type FreshnessRecordReadPort } from "@zhiloop/knowledge-freshness";
 import type { QueryContext } from "@zhiloop/query-context";
 import { SqliteRuntimeAuditStore, type ClosureRunRecord } from "@zhiloop/runtime-audit-store";
 import type { StopContextDeltaPort, StopHookInput, StopContinuationResult } from "@zhiloop/stop-continuation";
@@ -43,9 +45,14 @@ import type { P2ProductionComposition } from "./p2-production.js";
 
 const ELIGIBLE = new Set(["ACCEPTED", "IMPLEMENTED", "VERIFIED"]);
 const MAX_RELATED_SCAN = 1_000;
+const MAX_PREWARM_SCAN = 10_000;
+const PREWARM_DEADLINE_MS = 50;
 
 export interface P4AuthoritativeContextPort {
-  scopeForHook(input: UserPromptSubmitInput): RolloutRequestScope | Promise<RolloutRequestScope>;
+  scopeForHook(input: UserPromptSubmitInput): (RolloutRequestScope & {
+    readonly worktree?: string;
+    readonly branch?: string;
+  }) | Promise<RolloutRequestScope & { readonly worktree?: string; readonly branch?: string }>;
   authorizeMcp(requested: QueryContext, signal: AbortSignal): QueryContext | Promise<QueryContext>;
 }
 
@@ -67,7 +74,7 @@ export interface P4ClosureEvidencePort {
 
 export interface P4ActiveSidecarDependencies {
   readonly stateDirectory: string;
-  readonly p2: Pick<P2ProductionComposition, "registry">;
+  readonly p2: Pick<P2ProductionComposition, "registry"> & { readonly freshnessStore?: FreshnessRecordReadPort };
   readonly retrieval: ActiveKnowledgeRetrievalPort;
   readonly orchestrator: ContextOrchestratorPort;
   readonly rollout: ActiveRolloutService;
@@ -281,6 +288,9 @@ export class P4ActiveSidecarRuntime {
   readonly #feedback: SqliteFeedbackStore;
   readonly #operations: SqliteActiveClosureOperationStore;
   readonly #confirmations: SqliteConfirmationWritebackRepository;
+  readonly #prewarmStore: SqliteContextPrewarmStore;
+  readonly #prewarm: ContextPrewarmService;
+  readonly #freshnessGate: ProjectionFreshnessGate | undefined;
   readonly #eligibility: RegistryEligibility;
   readonly #mcp: VersionedKnowledgeMcpRuntime;
   readonly #closure: ActiveClosureRuntime;
@@ -293,6 +303,10 @@ export class P4ActiveSidecarRuntime {
     this.#feedback = new SqliteFeedbackStore(join(dependencies.stateDirectory, "p4-feedback.sqlite"));
     this.#operations = new SqliteActiveClosureOperationStore(join(dependencies.stateDirectory, "p4-closure-operations.sqlite"));
     this.#confirmations = new SqliteConfirmationWritebackRepository(join(dependencies.stateDirectory, "p4-confirmations.sqlite"));
+    this.#prewarmStore = new SqliteContextPrewarmStore(join(dependencies.stateDirectory, "context-prewarm.sqlite"));
+    this.#prewarm = new ContextPrewarmService(this.#prewarmStore, { ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 });
+    this.#freshnessGate = dependencies.p2.freshnessStore === undefined
+      ? undefined : new ProjectionFreshnessGate(dependencies.p2.freshnessStore);
     this.#eligibility = new RegistryEligibility(dependencies.p2.registry, this.#feedback);
     const mcpService = new KnowledgeMcpService(new RegistryMcpBackend(dependencies.p2.registry, this.#eligibility));
     this.#mcp = new VersionedKnowledgeMcpRuntime({
@@ -347,6 +361,11 @@ export class P4ActiveSidecarRuntime {
     return new KnowledgeFeedbackRuntime({ store: this.#feedback, eligibility: this.#eligibility });
   }
 
+  refreshContext(sessionId: string): number {
+    this.#assertOpen();
+    return this.#prewarm.refresh(sessionId);
+  }
+
   async inspectKnowledgeEligibility(request: {
     readonly assetId: string;
     readonly version: number;
@@ -395,6 +414,7 @@ export class P4ActiveSidecarRuntime {
     this.#closed = true;
     this.#operations.close();
     this.#confirmations.close();
+    this.#prewarmStore.close();
     this.#feedback.close();
     this.#audits.close();
   }
@@ -417,7 +437,7 @@ export class P4ActiveSidecarRuntime {
         diagnostic: `${timedOut ? "CAPTURE_TIMEOUT" : "CAPTURE_FAILED"}:${safeError(error)}`,
       };
     }
-    let authority: RolloutRequestScope;
+    let authority: Awaited<ReturnType<P4AuthoritativeContextPort["scopeForHook"]>>;
     try {
       authority = await withinRemainingDeadline(
         async () => await this.#dependencies.authority.scopeForHook(input),
@@ -433,6 +453,41 @@ export class P4ActiveSidecarRuntime {
         status: timedOut ? "TIMEOUT" : "ERROR",
         diagnostic: `${timedOut ? "SCOPE_AUTHORITY_TIMEOUT" : "SCOPE_AUTHORITY_FAILED"}:${safeError(error)}`,
       };
+    }
+    try {
+      const injection = this.#dependencies.injectionPolicy?.() ?? structuredClone(DEFAULT_CONFIGURATION.injection);
+      const registryRevision = this.#dependencies.p2.registry.activeIndexVersion;
+      const prewarmStartedAt = performance.now();
+      await withinRemainingDeadline(
+        async () => await this.#prewarm.prepare({
+          sessionId: input.session_id,
+          projectId: authority.projectId ?? "UNSCOPED",
+          worktree: authority.worktree ?? input.cwd,
+          branch: authority.branch ?? "UNKNOWN",
+          knowledgeRegistryRevision: String(registryRevision),
+          retrievalPolicyHash: digest("prewarm-retrieval-policy", DEFAULT_CONFIGURATION.retrieval),
+          injectionPolicyHash: digest("prewarm-injection-policy", injection),
+          scopeHash: digest("prewarm-scope", { projectId: authority.projectId }),
+          observedAt: this.#now().toISOString(),
+        }, () => {
+          const assets: KnowledgeAsset[] = [];
+          for (let offset = 0; offset < MAX_PREWARM_SCAN; offset += 1_000) {
+            if (performance.now() - prewarmStartedAt >= PREWARM_DEADLINE_MS) throw new Error("CONTEXT_PREWARM_SCAN_TIMEOUT");
+            const page = this.#dependencies.p2.registry.listAssets({ limit: 1_000, offset });
+            assets.push(...page.map((item) => item.asset));
+            if (page.length < 1_000) break;
+            if (offset + page.length >= MAX_PREWARM_SCAN) throw new Error("CONTEXT_PREWARM_SCAN_LIMIT_EXCEEDED");
+          }
+          if (this.#dependencies.p2.registry.activeIndexVersion !== registryRevision) {
+            throw new Error("CONTEXT_PREWARM_REGISTRY_DRIFT");
+          }
+          return assets;
+        }),
+        Math.min(PREWARM_DEADLINE_MS, deadlineMs - (performance.now() - startedAt)),
+        "context prewarm",
+      );
+    } catch {
+      // Prewarm is an optimization. Retrieval remains authoritative and fail-open.
     }
     let decision;
     try { decision = this.#dependencies.rollout.decision(authority); }
@@ -453,11 +508,29 @@ export class P4ActiveSidecarRuntime {
         const current = (candidate: { readonly asset: KnowledgeAsset }): boolean => currentKeys.has(
           `${candidate.asset.id}@${candidate.asset.version}:${candidate.asset.contentHash}`,
         );
+        const currentCandidates = result.candidates.filter(current);
+        const freshness = this.#freshnessGate === undefined || authority.projectId === undefined
+          ? undefined : this.#freshnessGate.inspect(authority.projectId, currentCandidates.map((candidate) => candidate.asset));
+        const freshVersions = freshness === undefined ? undefined : new Set(freshness.eligibleAssetVersions);
+        const admitted = (candidate: { readonly asset: KnowledgeAsset }): boolean => current(candidate)
+          && (freshVersions === undefined || freshVersions.has(`${candidate.asset.id}@${candidate.asset.version}`));
         return {
           ...result,
-          retrieval: { ...result.retrieval, items: result.retrieval.items.filter(current) },
-          rerank: { ...result.rerank, items: result.rerank.items.filter(current) },
-          candidates: result.candidates.filter(current),
+          retrieval: {
+            ...result.retrieval,
+            items: result.retrieval.items.filter(admitted),
+            diagnostics: [
+              ...result.retrieval.diagnostics,
+              ...(freshness?.decisions.filter((item) => !item.eligible).map((item) => ({
+                code: "FRESHNESS_FILTERED" as const,
+                channel: "EXACT" as const,
+                message: item.reasonCode,
+                assetId: item.assetId,
+              })) ?? []),
+            ],
+          },
+          rerank: { ...result.rerank, items: result.rerank.items.filter(admitted) },
+          candidates: currentCandidates.filter(admitted),
         };
       },
     };

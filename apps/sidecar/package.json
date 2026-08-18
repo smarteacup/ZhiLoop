@@ -29,6 +29,7 @@
     "@zhiloop/configuration-service": "0.0.0",
     "@zhiloop/conversation-ledger": "0.0.0",
     "@zhiloop/context-orchestrator": "0.0.0",
+    "@zhiloop/context-prewarm": "0.0.0",
     "@zhiloop/confirmation-writeback": "0.0.0",
     "@zhiloop/daemon": "0.0.0",
     "@zhiloop/hook-runtime": "0.0.0",

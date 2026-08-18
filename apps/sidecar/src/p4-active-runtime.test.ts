@@ -63,7 +63,7 @@ function retrieval(value = asset(), delay = 0): ActiveKnowledgeRetrievalPort {
       rerank: { applied: false, originalRank: 1, reasonCodes: ["DETERMINISTIC_ORDER"] },
     };
     return {
-      runId: "run-1", traceId: "trace-1", queryContext: query(request.prompt),
+      runId: `run-${request.turnId}`, traceId: `trace-${request.turnId}`, queryContext: query(request.prompt, "project-a", request.turnId),
       retrieval: { items: [{ asset: value, rank: 1, score: 1, scopeMatched: true, contributions: candidate.contributions }], diagnostics: [] },
       rerank: { items: [candidate], diagnostics: [] }, candidates: [candidate],
     };
@@ -107,7 +107,7 @@ async function resources(overrides: Partial<P4ActiveSidecarDependencies> = {}) {
   const dependencies: P4ActiveSidecarDependencies = {
     stateDirectory: path.join(directory, "state"), p2: { registry: projection }, retrieval: retrieval(), orchestrator: new ContextOrchestrator(), rollout: roll,
     authority: {
-      scopeForHook: (input) => ({ sessionId: input.session_id, turnId: input.turn_id, projectId: "project-a", taskId: "turn-1" }),
+      scopeForHook: (input) => ({ sessionId: input.session_id, turnId: input.turn_id, projectId: "project-a", taskId: input.turn_id }),
       authorizeMcp: () => query("authoritative MCP query"),
     },
     captureUserPrompt: () => { order.push("capture"); },
@@ -132,6 +132,8 @@ describe("P4ActiveSidecarRuntime", () => {
     const first = await runtime.handleHook(hook());
     expect(values.order).toEqual(["capture"]); expect(first).toMatchObject({ status: "INJECTED", captureCompleted: true, attemptId: expect.stringMatching(/^injection-/u) }); expect(first.hookOutput).toContain("additionalContext");
     expect(runtime.consoleDependencies().audits.listInjections("session-1").items).toMatchObject([{ status: "INJECTED", revision: 1 }]);
+    expect(runtime.refreshContext("session-1")).toBe(1);
+    expect(runtime.refreshContext("session-1")).toBe(0);
     runtime.close();
     runtime = await P4ActiveSidecarRuntime.create(values.dependencies);
     expect(await runtime.handleHook(hook())).toMatchObject({ status: "INJECTED" });
@@ -148,6 +150,15 @@ describe("P4ActiveSidecarRuntime", () => {
     expect(JSON.stringify(gray)).not.toContain("additionalContext"); runtime.close(); values.projection.close();
   });
 
+  it("reuses one stable prewarm entry across turns in the same session", async () => {
+    const values = await resources();
+    const runtime = await P4ActiveSidecarRuntime.create(values.dependencies);
+    await runtime.handleHook(hook());
+    await runtime.handleHook({ ...hook(), turn_id: "turn-2" });
+    expect(runtime.refreshContext("session-1")).toBe(1);
+    runtime.close(); values.projection.close();
+  });
+
   it("fails open on timeout and excludes stale, out-of-scope, or unsupported Evidence", async () => {
     const timeout = await resources({ retrieval: retrieval(asset(), 30), userPromptDeadlineMs: 5 });
     let runtime = await P4ActiveSidecarRuntime.create(timeout.dependencies); let result = await runtime.handleHook(hook()); expect(result).toMatchObject({ status: "TIMEOUT" }); expect(result).not.toHaveProperty("hookOutput"); runtime.close(); timeout.projection.close();
@@ -157,6 +168,19 @@ describe("P4ActiveSidecarRuntime", () => {
     runtime = await P4ActiveSidecarRuntime.create(scoped.dependencies); result = await runtime.handleHook(hook()); expect(result).toMatchObject({ status: "NO_CONTEXT" }); expect(result).not.toHaveProperty("hookOutput"); runtime.close(); scoped.projection.close();
     const unsupported = await resources({ retrieval: retrieval(asset({ evidence: [{ evidenceId: "evidence-1", verdict: "INCONCLUSIVE" }] })) });
     runtime = await P4ActiveSidecarRuntime.create(unsupported.dependencies); result = await runtime.handleHook(hook()); expect(result).toMatchObject({ status: "NO_CONTEXT" }); expect(result).not.toHaveProperty("hookOutput"); runtime.close(); unsupported.projection.close();
+  });
+
+  it("excludes final code candidates when the freshness projection is missing", async () => {
+    const values = await resources();
+    forceDecision(values.rollout, { stateRevision: 2, policyRevision: 2, mode: "ACTIVE", reasonCode: "ACTIVE_CANARY_INCLUDED" });
+    const runtime = await P4ActiveSidecarRuntime.create({
+      ...values.dependencies,
+      p2: { registry: values.projection, freshnessStore: { get: () => undefined } },
+    });
+    await expect(runtime.handleHook(hook())).resolves.toMatchObject({ status: "NO_CONTEXT", captureCompleted: true });
+    const attempt = runtime.consoleDependencies().audits.listInjections("session-1").items[0];
+    expect(attempt?.envelope.items).toEqual([]);
+    runtime.close(); values.projection.close();
   });
 
   it("bounds capture and scope authority inside the same UserPrompt deadline", async () => {

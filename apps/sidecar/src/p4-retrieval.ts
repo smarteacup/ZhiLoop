@@ -89,6 +89,8 @@ export class P4RegistryRetrievalComposition implements P4AuthoritativeContextPor
       turnId: input.turn_id,
       projectId: project.projectId,
       taskId: input.turn_id,
+      worktree: project.repositoryRoot ?? canonicalCwd(input.cwd),
+      branch: project.branch ?? "UNKNOWN",
     });
   }
 

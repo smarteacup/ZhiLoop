@@ -2,16 +2,56 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M6 知识保鲜） | 累计 |
+| 指标 | 本轮（M7 预热与注入门禁） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 7 |
-| 风险发现 | 8 | 50 |
-| 高风险 | 4 | 25 |
-| 中风险 | 3 | 20 |
-| 低风险 | 1 | 5 |
-| 已修复 | 8 | 50 |
+| Review 次数 | 1 | 8 |
+| 风险发现 | 10 | 60 |
+| 高风险 | 4 | 29 |
+| 中风险 | 5 | 25 |
+| 低风险 | 1 | 6 |
+| 已修复 | 10 | 60 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 16 分 00 秒 | 已知耗时 1 小时 27 分 03 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 17 分 00 秒 | 已知耗时 1 小时 44 分 03 秒（首轮历史报告未记录耗时） |
+
+## M7 审查结论
+
+M7 新增稳定 L1 会话目录缓存，并在 P4 最终候选进入 Context Envelope 前执行版本化 Freshness 门禁。缓存失败只退化为实时召回；无法证明新鲜的代码知识被排除但不阻塞 Codex。10 个问题全部修复，无未解决风险。
+
+## M7 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 首版 Scope hash 包含 turn/task identity | 同一会话每个 Turn 都生成新键，预热完全无法命中 | Scope identity 收敛为稳定项目边界；跨 Turn 只保留一个条目的集成测试 |
+| 高 | Registry revision 在扫描前读取但扫描后不复核 | 并发发布可把新旧混合目录写到旧 revision 键下 | 扫描前后 revision 恒等检查；漂移时放弃缓存并实时召回 |
+| 高 | 同步 Registry 全量扫描没有独立预算和完整性上限 | 预热优化可吃满 500ms Hook deadline，反向阻塞主链 | 独立 50ms 预算、逐页时钟检查、10,000 条硬上限；超限 fail-open |
+| 高 | Freshness 许可最初只按 asset ID 回传 | 同 ID 的旧/新版本同时出现时可互相借用许可 | 许可键改为 `assetId@version`，同时核对 contentHash/project；跨版本测试 |
+| 中 | 过期条目用相同依赖键重建时被视为冲突 | TTL 到期后会永久 miss 并持续报错 | 事务内只允许替换已过期条目；活跃同键异载荷仍失败关闭 |
+| 中 | 多进程并发填充同一键时输家直接失败 | 并发首个 Prompt 产生不必要降级 | 冲突后重读胜者；存在即返回 HIT，不存在或其他错误继续抛出 |
+| 中 | 超预算的首个高权威条目会 `break` 整个选择 | 后续可容纳的短规则/目录项全部丢失 | 超预算单项改为跳过，只有 item 上限才停止；边界测试 |
+| 中 | Loader 重复返回同一资产会重复占预算 | 目录容量和 Token 估算失真 | 在排序前按 `id@version` 确定性去重 |
+| 中 | SQLite `put` 信任 TypeScript 对象且损坏 JSON 可触发非领域异常 | 内部错误调用或数据库损坏难以诊断 | 写前和读后共用严格结构/隐私字段校验及内容哈希；损坏测试 |
+| 低 | 权威 Scope 新增 worktree/branch 后旧精确对象断言失败 | 合同测试噪声掩盖真实回归 | 更新契约期望并保留 forged boundary 测试 |
+
+## M7 关键维度确认
+
+- **隐私**：缓存只有 ID、版本、Scope、标题、摘要、权威和 `ckl.get` 动作；正文、Symbol、Evidence、Episode 和 CodeGraph 输出不落库。
+- **身份**：键覆盖 session/project/worktree/branch/Registry revision/两类 Policy hash/Scope hash，代码 revision 明确不进入稳定目录键。
+- **延迟**：预热是 50ms 内的 best effort；任何超时、扫描上限、revision 漂移或存储故障均回到实时 Retrieval。
+- **注入**：只对 Eligibility 后的最终候选检查 Freshness；非代码历史知识不受影响，代码类 UNKNOWN/CONFLICT/REVALIDATE 不进入 Envelope。
+- **生命周期**：Sidecar 独占 `context-prewarm.sqlite`，支持显式 session refresh，关闭时释放连接。
+
+## M7 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，65 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 162 files，1390/1390 通过 |
+| Coverage | statements 90.14%，branches 85.11%，functions 91.81%，lines 93.69% |
+| 新包覆盖率 | prewarm branches 96.22%，store branches 94.73% |
+| OpenSpec strict validation | `prewarm-and-gate-context` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M6 审查结论
 

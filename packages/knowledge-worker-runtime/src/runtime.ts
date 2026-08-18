@@ -393,8 +393,12 @@ function evidenceRefs(policy: CandidatePolicyRecord): readonly EvidenceRef[] {
 }
 
 function candidateSymbols(candidate: KnowledgeCandidate): readonly string[] {
-  return [...new Set(candidate.assertions.flatMap((assertion) =>
-    assertion.kind === "SYMBOL_EXISTS" ? [assertion.parameters.symbol] : []))].sort();
+  return [...new Set(candidate.assertions.flatMap((assertion) => {
+    if (assertion.kind === "SYMBOL_EXISTS") return [assertion.parameters.symbol];
+    if (assertion.kind === "CALL_PATH_EXISTS") return [assertion.parameters.from, assertion.parameters.to];
+    if (assertion.kind === "IMPACT_CONTAINS") return [assertion.parameters.symbol, assertion.parameters.impactedSymbol];
+    return [];
+  }))].sort();
 }
 
 function assetIdentity(candidate: KnowledgeCandidate, scope: KnowledgeScope): string {
@@ -816,8 +820,16 @@ export class KnowledgeWorkerRuntime {
       const claimedAssetIds = new Map<string, string>();
       for (const evolution of evolutionRecords) {
         const { candidate, scope, decision: evolutionDecision } = evolution;
+        const snapshot = checkpoint?.payload.ledger;
+        if (snapshot === undefined) throw new KnowledgeWorkerError("MISSING_EVIDENCE_SNAPSHOT", "evidence snapshot checkpoint is missing", false);
         const verificationResults = await external("EVIDENCE_VERIFICATION_FAILED", () =>
-          this.#ports.evidence.verify(candidate, request.project, (checkpoint as KnowledgeWorkerCheckpoint).createdAt));
+          this.#ports.evidence.verify({
+            candidate,
+            project: request.project,
+            requestedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
+            purpose: "CANDIDATE",
+            snapshot,
+          }));
         const targetRef = evolutionDecision.targetKnowledgeVersions[0];
         let target: KnowledgeAsset | undefined;
         if (targetRef !== undefined) {

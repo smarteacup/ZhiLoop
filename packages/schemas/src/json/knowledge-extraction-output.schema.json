@@ -40,6 +40,8 @@
             "USER_ACCEPTED",
             "USER_REJECTED",
             "SYMBOL_EXISTS",
+            "CALL_PATH_EXISTS",
+            "IMPACT_CONTAINS",
             "FILE_CONTAINS",
             "DEPENDENCY_PRESENT",
             "CONFIG_EQUALS",
@@ -73,6 +75,37 @@
                 "projectId": { "type": "string", "minLength": 1, "maxLength": 500 },
                 "symbol": { "type": "string", "minLength": 1, "maxLength": 1000 },
                 "path": { "type": "string", "minLength": 1, "maxLength": 4096 }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "CALL_PATH_EXISTS" },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["projectId", "from", "to"],
+              "properties": {
+                "projectId": { "type": "string", "minLength": 1, "maxLength": 500 },
+                "from": { "type": "string", "minLength": 1, "maxLength": 1000 },
+                "to": { "type": "string", "minLength": 1, "maxLength": 1000 },
+                "maxDepth": { "type": "integer", "minimum": 1, "maximum": 32 }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "IMPACT_CONTAINS" },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["projectId", "symbol", "impactedSymbol"],
+              "properties": {
+                "projectId": { "type": "string", "minLength": 1, "maxLength": 500 },
+                "symbol": { "type": "string", "minLength": 1, "maxLength": 1000 },
+                "impactedSymbol": { "type": "string", "minLength": 1, "maxLength": 1000 }
               }
             }
           }
@@ -176,6 +209,8 @@
           "enum": [
             "USER_STATEMENT",
             "CODE_SYMBOL",
+            "CODE_RELATION",
+            "CODE_IMPACT",
             "FILE_CONTENT",
             "DEPENDENCY",
             "CONFIGURATION",

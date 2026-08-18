@@ -20,7 +20,17 @@ class ScriptedProcess implements CodeGraphProcessPort {
 }
 
 const project = { projectRoot: "/workspace/repo", projectFingerprint: "head-1" };
-const statusReady = JSON.stringify({ initialized: true, fileCount: 12 });
+const statusReady = JSON.stringify({
+  initialized: true,
+  fileCount: 12,
+  nodeCount: 120,
+  edgeCount: 240,
+  dbSizeBytes: 4_096,
+  backend: "node-sqlite",
+  nodesByKind: { function: 60, class: 20 },
+  languages: ["typescript"],
+  pendingChanges: { added: 0, modified: 0, removed: 0 },
+});
 const symbol = JSON.stringify([{ node: {
   id: "private-node-id",
   name: "Runtime",
@@ -51,7 +61,7 @@ describe("CodeGraphCliAdapter", () => {
     ] });
     const process = new ScriptedProcess([
       result("0.9.4\n"), result(statusReady), result(symbol),
-      result(symbol), result(relation),
+      result("0.9.4\n"), result(statusReady), result(symbol), result(relation),
     ]);
     const adapter = new CodeGraphCliAdapter(process, { capabilityTtlMs: 10_000, clock: () => 1 });
     await adapter.findSymbols(project, { symbol: "Runtime" });
@@ -60,6 +70,38 @@ describe("CodeGraphCliAdapter", () => {
     const callers = await adapter.callers(project, "Runtime", 1);
     expect(callers.facts).toHaveLength(1);
     expect(process.calls.filter((call) => call.args[0] === "query")).toHaveLength(2);
+  });
+
+  it("derives an index revision and rejects a status with pending changes", async () => {
+    const ready = new ScriptedProcess([result("0.9.4\n"), result(statusReady)]);
+    expect(await new CodeGraphCliAdapter(ready).capabilities(project)).toMatchObject({
+      status: "READY", indexRevision: expect.stringMatching(/^cg_[a-f0-9]{64}$/u),
+    });
+    const staleStatus = JSON.stringify({ ...JSON.parse(statusReady), pendingChanges: { added: 0, modified: 1, removed: 0 } });
+    const stale = new ScriptedProcess([result("0.9.4\n"), result(staleStatus)]);
+    expect(await new CodeGraphCliAdapter(stale).capabilities(project)).toMatchObject({
+      status: "UNAVAILABLE", reasonCode: "CODEGRAPH_INDEX_STALE", indexRevision: expect.stringMatching(/^cg_/u),
+    });
+  });
+
+  it("finds and caches a call path through strictly bounded callee traversal", async () => {
+    const first = JSON.stringify({ callees: [{ name: "Middle", kind: "function", filePath: "src/middle.ts", startLine: 2 }] });
+    const second = JSON.stringify({ callees: [{ name: "Target", kind: "function", filePath: "src/target.ts", startLine: 3 }] });
+    const process = new ScriptedProcess([result("0.9.4\n"), result(statusReady), result(first), result(second)]);
+    const adapter = new CodeGraphCliAdapter(process, { timeoutMs: 1_000 });
+    const output = await adapter.trace(project, "Start", "Target", 4, 10);
+    expect(output).toMatchObject({ capability: { status: "READY" }, facts: [{
+      from: "Start", to: "Target", symbols: ["Start", "Middle", "Target"], paths: ["src/middle.ts", "src/target.ts"],
+    }] });
+    await adapter.trace(project, "Start", "Target", 4, 10);
+    expect(process.calls.filter((call) => call.args[0] === "callees")).toHaveLength(2);
+  });
+
+  it("returns bounded UNKNOWN capability when depth prevents a conclusive path result", async () => {
+    const first = JSON.stringify({ callees: [{ name: "Middle", kind: "function", filePath: "src/middle.ts", startLine: 2 }] });
+    const process = new ScriptedProcess([result("0.9.4\n"), result(statusReady), result(first)]);
+    const output = await new CodeGraphCliAdapter(process, { timeoutMs: 1_000 }).trace(project, "Start", "Target", 1, 10);
+    expect(output).toMatchObject({ capability: { status: "UNAVAILABLE", reasonCode: "CODEGRAPH_TRACE_BOUNDED" }, bounded: true, facts: [] });
   });
 
   it("reports not configured and incompatible without querying facts", async () => {

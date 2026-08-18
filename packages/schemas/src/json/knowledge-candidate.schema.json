@@ -86,6 +86,8 @@
               "USER_ACCEPTED",
               "USER_REJECTED",
               "SYMBOL_EXISTS",
+              "CALL_PATH_EXISTS",
+              "IMPACT_CONTAINS",
               "FILE_CONTAINS",
               "DEPENDENCY_PRESENT",
               "CONFIG_EQUALS",
@@ -120,6 +122,37 @@
                   "projectId": { "type": "string", "minLength": 1 },
                   "symbol": { "type": "string", "minLength": 1 },
                   "path": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "CALL_PATH_EXISTS" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["projectId", "from", "to"],
+                "properties": {
+                  "projectId": { "type": "string", "minLength": 1 },
+                  "from": { "type": "string", "minLength": 1 },
+                  "to": { "type": "string", "minLength": 1 },
+                  "maxDepth": { "type": "integer", "minimum": 1, "maximum": 32 }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "kind": { "const": "IMPACT_CONTAINS" },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["projectId", "symbol", "impactedSymbol"],
+                "properties": {
+                  "projectId": { "type": "string", "minLength": 1 },
+                  "symbol": { "type": "string", "minLength": 1 },
+                  "impactedSymbol": { "type": "string", "minLength": 1 }
                 }
               }
             }
@@ -226,6 +259,8 @@
             "enum": [
               "USER_STATEMENT",
               "CODE_SYMBOL",
+              "CODE_RELATION",
+              "CODE_IMPACT",
               "FILE_CONTENT",
               "DEPENDENCY",
               "CONFIGURATION",

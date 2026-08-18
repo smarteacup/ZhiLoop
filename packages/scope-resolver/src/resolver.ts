@@ -4,6 +4,8 @@ import type { ScopeResolution, ScopeResolutionInput } from "./types.js";
 
 const PROJECT_ASSERTIONS = new Set([
   "SYMBOL_EXISTS",
+  "CALL_PATH_EXISTS",
+  "IMPACT_CONTAINS",
   "FILE_CONTAINS",
   "DEPENDENCY_PRESENT",
   "CONFIG_EQUALS",
@@ -12,6 +14,8 @@ const PROJECT_ASSERTIONS = new Set([
 ]);
 const PROJECT_EVIDENCE = new Set([
   "CODE_SYMBOL",
+  "CODE_RELATION",
+  "CODE_IMPACT",
   "FILE_CONTENT",
   "DEPENDENCY",
   "CONFIGURATION",
@@ -55,14 +59,25 @@ interface SymbolInputs {
 }
 
 function symbolInputs(candidate: KnowledgeCandidate, project: ProjectContext): SymbolInputs {
-  const symbolAssertions = candidate.assertions.filter((assertion) => assertion.kind === "SYMBOL_EXISTS");
-  const values = [...(candidate.scopeHint.symbols ?? []), ...symbolAssertions.map((assertion) => assertion.parameters.symbol)];
+  const symbolAssertions = candidate.assertions.flatMap((assertion): readonly { readonly projectId: string; readonly symbol: string }[] => {
+    if (assertion.kind === "SYMBOL_EXISTS") return [{ projectId: assertion.parameters.projectId, symbol: assertion.parameters.symbol }];
+    if (assertion.kind === "CALL_PATH_EXISTS") return [
+      { projectId: assertion.parameters.projectId, symbol: assertion.parameters.from },
+      { projectId: assertion.parameters.projectId, symbol: assertion.parameters.to },
+    ];
+    if (assertion.kind === "IMPACT_CONTAINS") return [
+      { projectId: assertion.parameters.projectId, symbol: assertion.parameters.symbol },
+      { projectId: assertion.parameters.projectId, symbol: assertion.parameters.impactedSymbol },
+    ];
+    return [];
+  });
+  const values = [...(candidate.scopeHint.symbols ?? []), ...symbolAssertions.map((assertion) => assertion.symbol)];
   const normalized = values.map((item) => typeof item === "string" ? item.trim() : "");
   return {
     symbols: [...new Set(normalized.filter((item) => SAFE_SYMBOL.test(item)))],
     invalid: (candidate.scopeHint.level === "SYMBOL" && values.length === 0)
       || normalized.some((item) => !SAFE_SYMBOL.test(item)),
-    assertionProjectConflict: symbolAssertions.some((assertion) => assertion.parameters.projectId !== project.projectId),
+    assertionProjectConflict: symbolAssertions.some((assertion) => assertion.projectId !== project.projectId),
   };
 }
 

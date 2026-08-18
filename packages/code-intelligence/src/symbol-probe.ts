@@ -18,6 +18,10 @@ function safe(value: string): boolean {
   return value.trim().length > 0 && value.length <= 1_000 && !/[\0\r\n]/u.test(value);
 }
 
+function target(assertion: SymbolAssertion): string {
+  return `symbol:${assertion.parameters.projectId}:${assertion.parameters.symbol}${assertion.parameters.path === undefined ? "" : `:${assertion.parameters.path}`}`;
+}
+
 export function createCodeIntelligenceSymbolProbe(
   port: CodeIntelligencePort,
   options: SymbolProbeOptions,
@@ -31,7 +35,7 @@ export function createCodeIntelligenceSymbolProbe(
           status: "UNKNOWN",
           sourceRef: `project:${context.project.projectId}`,
           observedAt: context.requestedAt,
-          target: `symbol:${assertion.parameters.symbol}`,
+          target: target(assertion),
           reasonCode: "CODE_INTELLIGENCE_PROJECT_UNAVAILABLE",
         };
       }
@@ -44,9 +48,9 @@ export function createCodeIntelligenceSymbolProbe(
       if (result.capability.status !== "READY") {
         return {
           status: "UNKNOWN",
-          sourceRef: `codegraph:${fingerprint}:capability`,
+          sourceRef: `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:capability`,
           observedAt: context.requestedAt,
-          target: `symbol:${assertion.parameters.symbol}`,
+          target: target(assertion),
           reasonCode: REASONS[result.capability.status],
         };
       }
@@ -58,16 +62,16 @@ export function createCodeIntelligenceSymbolProbe(
           status: "REFUTED",
           sourceRef: `codegraph:${fingerprint}:query`,
           observedAt: context.requestedAt,
-          target: `symbol:${assertion.parameters.symbol}`,
+          target: target(assertion),
           reasonCode: REASONS.READY,
           details: { symbol: assertion.parameters.symbol },
         };
       }
       return {
         status: "SUPPORTED",
-        sourceRef: `codegraph:${fingerprint}:${match.path}:${match.startLine}`,
+        sourceRef: `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:${match.path}:${match.startLine}`,
         observedAt: context.requestedAt,
-        target: `symbol:${assertion.parameters.symbol}`,
+        target: target(assertion),
         reasonCode: "CODEGRAPH_SYMBOL_FOUND",
         details: {
           symbol: match.symbol,

@@ -8,6 +8,8 @@ import { createKnowledgeFingerprint, deriveFingerprintTargets, evaluateInvalidat
 const at = "2026-08-01T13:00:00.000Z";
 const assertions = [
   assertion("SYMBOL_EXISTS", { projectId: "project-1", symbol: "OrderService", path: "src/order.ts" }),
+  assertion("CALL_PATH_EXISTS", { projectId: "project-1", from: "OrderService", to: "OrderRepository", maxDepth: 8 }),
+  assertion("IMPACT_CONTAINS", { projectId: "project-1", symbol: "OrderService", impactedSymbol: "OrderController" }),
   assertion("FILE_CONTAINS", { path: "src/config.ts", expected: "enabled", matchMode: "EXACT" }),
   assertion("CONFIG_EQUALS", { key: "feature.enabled", expected: "true", path: "config/app.yml" }),
   assertion("DEPENDENCY_PRESENT", { name: "vitest", manifestPath: "package.json" }),
@@ -16,9 +18,13 @@ const assertions = [
 const source = candidate(assertions);
 const observations = [
   observed(assertions[0], "SYMBOL", "OrderService", "src/order.ts"),
-  observed(assertions[1], "PATH", "src/config.ts", "src/config.ts"),
-  observed(assertions[2], "CONFIG", "feature.enabled", "config/app.yml"),
-  observed(assertions[3], "DEPENDENCY", "vitest", "package.json"),
+  observed(assertions[1], "SYMBOL", "OrderService"),
+  observed(assertions[1], "SYMBOL", "OrderRepository"),
+  observed(assertions[2], "SYMBOL", "OrderService"),
+  observed(assertions[2], "SYMBOL", "OrderController"),
+  observed(assertions[3], "PATH", "src/config.ts", "src/config.ts"),
+  observed(assertions[4], "CONFIG", "feature.enabled", "config/app.yml"),
+  observed(assertions[5], "DEPENDENCY", "vitest", "package.json"),
 ] as const;
 const fingerprint = createKnowledgeFingerprint(source, "project-1", observations);
 
@@ -57,8 +63,12 @@ function supported(assertionId: string): VerificationResult {
 }
 
 describe("fingerprints", () => {
-  it("derives only path, symbol, config, and dependency targets", () => {
-    expect(deriveFingerprintTargets(source).map((item) => item.kind)).toEqual(["CONFIG", "DEPENDENCY", "PATH", "SYMBOL"]);
+  it("derives path, relation endpoint, impact endpoint, config, and dependency targets", () => {
+    expect(deriveFingerprintTargets(source).map((item) => item.kind)).toEqual([
+      "SYMBOL", "SYMBOL", "CONFIG", "DEPENDENCY", "PATH", "SYMBOL", "SYMBOL", "SYMBOL",
+    ]);
+    expect(deriveFingerprintTargets(source).filter((item) => item.assertionId === assertions[1].assertionId)
+      .map((item) => item.key)).toEqual(["OrderRepository", "OrderService"]);
     expect(deriveFingerprintTargets(source)).toEqual(deriveFingerprintTargets(source));
   });
 
@@ -70,9 +80,9 @@ describe("fingerprints", () => {
 
   it("rejects missing, duplicate, forged, or unsafe observations", () => {
     expect(() => createKnowledgeFingerprint(source, "project-1", observations.slice(1))).toThrow("incomplete");
-    expect(() => createKnowledgeFingerprint(source, "project-1", [...observations.slice(0, 3), observations[0]])).toThrow("unique");
+    expect(() => createKnowledgeFingerprint(source, "project-1", [...observations.slice(0, -1), observations[0]])).toThrow("unique");
     expect(() => createKnowledgeFingerprint(source, "project-1", [{ ...observations[0], key: "Other" }, ...observations.slice(1)])).toThrow("does not match");
-    const unsafe = candidate([{ ...assertions[1], parameters: { ...assertions[1].parameters, path: "../secret" } } as KnowledgeAssertion]);
+    const unsafe = candidate([{ ...assertions[3], parameters: { ...assertions[3].parameters, path: "../secret" } } as KnowledgeAssertion]);
     expect(() => deriveFingerprintTargets(unsafe)).toThrow("invalid");
   });
 });
@@ -85,20 +95,22 @@ describe("evaluateInvalidation", () => {
   });
 
   it.each([
-    ["changedPaths", "src/config.ts", assertions[1].assertionId],
-    ["changedSymbols", "OrderService", assertions[0].assertionId],
-    ["changedConfigs", "feature.enabled", assertions[2].assertionId],
-    ["changedDependencies", "vitest", assertions[3].assertionId],
-  ] as const)("marks related %s changes STALE when revalidation is unavailable", (field, value, assertionId) => {
+    ["changedPaths", "src/config.ts", [assertions[3].assertionId]],
+    ["changedSymbols", "OrderService", [assertions[1].assertionId, assertions[2].assertionId, assertions[0].assertionId].sort()],
+    ["changedSymbols", "OrderRepository", [assertions[1].assertionId]],
+    ["changedSymbols", "OrderController", [assertions[2].assertionId]],
+    ["changedConfigs", "feature.enabled", [assertions[4].assertionId]],
+    ["changedDependencies", "vitest", [assertions[5].assertionId]],
+  ] as const)("marks related %s changes STALE when revalidation is unavailable", (field, value, assertionIds) => {
     const result = evaluateInvalidation({ candidate: source, currentStatus: "VERIFIED", fingerprint,
       changes: changes({ [field]: [value] }) });
-    expect(result).toMatchObject({ action: "MARK_STALE", targetStatus: "STALE", preserveBody: true, affectedAssertionIds: [assertionId] });
+    expect(result).toMatchObject({ action: "MARK_STALE", targetStatus: "STALE", preserveBody: true, affectedAssertionIds: assertionIds });
   });
 
   it("refreshes the fingerprint when every affected target remains supported", () => {
     const result = evaluateInvalidation({ candidate: source, currentStatus: "VERIFIED", fingerprint,
       changes: changes({ changedPaths: ["src/config.ts"], changedDependencies: ["vitest"] }),
-      revalidationResults: [supported(assertions[1].assertionId), supported(assertions[3].assertionId)] });
+      revalidationResults: [supported(assertions[3].assertionId), supported(assertions[5].assertionId)] });
     expect(result).toMatchObject({ action: "REFRESH_FINGERPRINT", targetStatus: "VERIFIED" });
   });
 
@@ -122,7 +134,7 @@ describe("evaluateInvalidation", () => {
   });
 
   it("does not refresh on forged, duplicate, or cross-project SUPPORT results", () => {
-    const valid = supported(assertions[1].assertionId);
+    const valid = supported(assertions[3].assertionId);
     const withoutEvidence = Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "evidence")) as unknown as VerificationResult;
     for (const revalidationResults of [
       [withoutEvidence as VerificationResult],

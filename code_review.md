@@ -2,16 +2,51 @@
 
 ## 审查统计
 
-| 指标 | 本轮（0.4.0 生产闭环完成度复核） | 累计 |
+| 指标 | 本轮（Production Evidence Hub） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 11 |
-| 风险发现 | 8 | 85 |
-| 高风险 | 4 | 40 |
-| 中风险 | 4 | 37 |
+| Review 次数 | 1 | 12 |
+| 风险发现 | 5 | 90 |
+| 高风险 | 1 | 41 |
+| 中风险 | 4 | 41 |
 | 低风险 | 0 | 8 |
-| 已修复 | 1 | 78 |
-| 未解决 | 7 | 7 |
-| 本轮耗时 | 31 分 00 秒 | 已知耗时 2 小时 42 分 03 秒（首轮历史报告未记录耗时） |
+| 已修复 | 7（含上轮 2 个生产缺口销项） | 85 |
+| 未解决 | 0 | 5 |
+| 本轮耗时 | 约 52 分钟 | 已知耗时约 3 小时 34 分钟（首轮历史报告未记录耗时） |
+
+## Production Evidence Hub 审查结论
+
+Candidate 初次验证与 Freshness 复验现已共用同一个生产验证服务，上一轮的“合成 Evidence”和“Freshness 仅支持 Symbol”两个高风险缺口完成销项。本轮检查覆盖正确性、删除/兼容影响、并发、SQLite、性能、隐私、配置和故障语义；新增发现 5 个问题并全部修复。自动发布仍保持显式 Commit 门禁，CodeGraph 不可用或版本漂移时不发布。
+
+## Production Evidence Hub 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | Snapshot 将泛化工具状态 `completed` 解释为命令/测试成功 | 工具结束但测试失败时可能生成错误支持证据并越过发布门禁 | 仅接受退出码 0、`success=true` 或明确 `ok/passed/success/succeeded`；`completed` 回归为 `UNKNOWN` |
+| 中 | Freshness 对受影响知识逐项串行复验 | 大批次延迟按知识数线性增长，容易超过调度周期 | 改为最多 4 路有界并发；失败后停止领取新项；并发峰值和失败降级测试 |
+| 中 | 启动与配置热更新各自复制验证服务构造逻辑 | 两条路径的 Cross-project/CodeGraph/超时配置可能漂移 | 合并到单一 `createVerification`，热更新 validate-then-swap 并可回滚 |
+| 中 | Git HEAD 与 porcelain 状态串行采集 | 全仓并发压力下更容易跨越超时或扩大版本变化窗口 | 使用 argv-only `Promise.all` 并行采集；前后版本围栏仍保持整批拒绝 |
+| 中 | 新增生产验证包最初未进入全仓 coverage include | 全仓覆盖率可绿但遗漏核心安全解析和持久化分支 | 将两个新包和 P2 生产组装纳入覆盖统计，补路径/解析/降级/损坏/生命周期测试并达到全局门槛 |
+
+## Production Evidence Hub 关键维度确认
+
+- **正确性与失败语义**：每个选中 Assertion 恰好一个结果；必需证据未知/错误、代码或图版本漂移时整批失败关闭。Freshness 服务故障只让后台进入 `DEGRADED` 并保留 ChangeSet，不改正文。
+- **兼容与删除影响**：删除 `evidenceFor` 合成实现后，Worker Port 统一改为版本化请求对象；所有旧调用、Fixture、Schema、策略与无效输入测试已迁移，P0～P7 未回归。
+- **并发与性能**：Freshness Scheduler 保持项目单飞，内部最多 4 路复验；CodeGraph traversal 同时受深度、visited、process、结果、输出和 deadline 限制。
+- **SQLite 与恢复**：独立 `knowledge-verification.sqlite` 使用 0600、WAL/FULL、STRICT、canonical hash、幂等冲突和损坏拒绝；Recipe 先写、Freshness 投影失败后重放仍幂等。
+- **隐私**：Run Summary 不保存 Candidate 正文、文件内容、命令文本或输出；Evidence sourceRef 只含相对路径、摘要、版本和事件身份。
+- **配置与生命周期**：验证超时由 CodeGraph query timeout 有界推导；更新先构造新实例、后切换引用，失败回滚；Sidecar 先停止消费者再关闭 Store。
+
+## Production Evidence Hub Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，68 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7 Gate | 57/57 通过 |
+| Vitest unit/integration | 176 files，1505/1505 通过 |
+| Coverage（含新包和生产组装） | statements 90.00%，branches 85.05%，functions 91.89%，lines 93.76% |
+| OpenSpec strict validation | `compose-production-evidence-hub` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## 0.4.0 生产闭环完成度复核结论
 

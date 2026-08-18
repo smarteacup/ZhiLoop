@@ -2,10 +2,13 @@ import type { AssertionKind, KnowledgeAssertion } from "@zhiloop/domain";
 
 import type { AssertionVerifier, VerificationContext, VerificationResult } from "./types.js";
 import {
+  createCallPathVerifier,
   createCommandVerifier,
   createConfigVerifier,
   createDependencyVerifier,
+  createCrossProjectVerifier,
   createFileVerifier,
+  createImpactVerifier,
   createSymbolVerifier,
   createTestVerifier,
   createUserVerifier,
@@ -17,11 +20,14 @@ const EVIDENCE_TYPE_BY_ASSERTION: Partial<Record<AssertionKind, string>> = {
   USER_ACCEPTED: "USER_STATEMENT",
   USER_REJECTED: "USER_STATEMENT",
   SYMBOL_EXISTS: "CODE_SYMBOL",
+  CALL_PATH_EXISTS: "CODE_RELATION",
+  IMPACT_CONTAINS: "CODE_IMPACT",
   FILE_CONTAINS: "FILE_CONTENT",
   DEPENDENCY_PRESENT: "DEPENDENCY",
   CONFIG_EQUALS: "CONFIGURATION",
   COMMAND_SUCCEEDED: "COMMAND_RESULT",
   TEST_PASSED: "TEST_RESULT",
+  CROSS_PROJECT_VERIFIED: "CROSS_PROJECT",
 };
 
 function freeze<T>(value: T, seen = new WeakSet<object>()): T {
@@ -168,10 +174,13 @@ export function createMvpVerifierRegistry(): VerifierRegistry {
   return new VerifierRegistry([
     createUserVerifier(),
     createSymbolVerifier(),
+    createCallPathVerifier(),
+    createImpactVerifier(),
     createFileVerifier(),
     createDependencyVerifier(),
     createConfigVerifier(),
     createCommandVerifier(),
     createTestVerifier(),
+    createCrossProjectVerifier(),
   ]);
 }

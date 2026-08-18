@@ -83,6 +83,14 @@ export type KnowledgeAssertionDraft =
       readonly parameters: { readonly projectId: string; readonly symbol: string; readonly path?: string };
     }
   | {
+      readonly kind: "CALL_PATH_EXISTS";
+      readonly parameters: { readonly projectId: string; readonly from: string; readonly to: string; readonly maxDepth?: number };
+    }
+  | {
+      readonly kind: "IMPACT_CONTAINS";
+      readonly parameters: { readonly projectId: string; readonly symbol: string; readonly impactedSymbol: string };
+    }
+  | {
       readonly kind: "FILE_CONTAINS";
       readonly parameters: {
         readonly path: string;

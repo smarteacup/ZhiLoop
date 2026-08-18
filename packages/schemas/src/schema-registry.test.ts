@@ -244,6 +244,27 @@ describe("schema registry", () => {
     expect(nestedExtension.ok).toBe(false);
   });
 
+  it("validates bounded call-path and impact assertions", () => {
+    for (const assertion of [
+      { kind: "CALL_PATH_EXISTS", parameters: { projectId: "project-1", from: "OrderController", to: "OrderRepository", maxDepth: 8 } },
+      { kind: "IMPACT_CONTAINS", parameters: { projectId: "project-1", symbol: "OrderService", impactedSymbol: "OrderController" } },
+    ]) {
+      expect(parseKnowledgeCandidate({
+        ...candidateFixture,
+        assertions: [{ assertionId: `assertion-${assertion.kind}`, candidateId: candidateFixture.candidateId,
+          ...assertion, createdAt: candidateFixture.createdAt }],
+        evidenceHints: [],
+      }).ok).toBe(true);
+    }
+    expect(parseKnowledgeCandidate({
+      ...candidateFixture,
+      assertions: [{ assertionId: "assertion-call", candidateId: candidateFixture.candidateId,
+        kind: "CALL_PATH_EXISTS", parameters: { projectId: "project-1", from: "A", to: "B", maxDepth: 33 },
+        createdAt: candidateFixture.createdAt }],
+      evidenceHints: [],
+    }).ok).toBe(false);
+  });
+
   it("rejects an Assertion that belongs to another Candidate", () => {
     const result = parseKnowledgeCandidate({
       ...candidateFixture,

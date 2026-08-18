@@ -2,6 +2,8 @@ export const ASSERTION_KINDS = [
   "USER_ACCEPTED",
   "USER_REJECTED",
   "SYMBOL_EXISTS",
+  "CALL_PATH_EXISTS",
+  "IMPACT_CONTAINS",
   "FILE_CONTAINS",
   "DEPENDENCY_PRESENT",
   "CONFIG_EQUALS",
@@ -25,6 +27,14 @@ export type KnowledgeAssertion =
   | AssertionBase<
       "SYMBOL_EXISTS",
       { readonly projectId: string; readonly symbol: string; readonly path?: string }
+    >
+  | AssertionBase<
+      "CALL_PATH_EXISTS",
+      { readonly projectId: string; readonly from: string; readonly to: string; readonly maxDepth?: number }
+    >
+  | AssertionBase<
+      "IMPACT_CONTAINS",
+      { readonly projectId: string; readonly symbol: string; readonly impactedSymbol: string }
     >
   | AssertionBase<
       "FILE_CONTAINS",
@@ -58,6 +68,8 @@ export type KnowledgeAssertion =
 export const EVIDENCE_TYPES = [
   "USER_STATEMENT",
   "CODE_SYMBOL",
+  "CODE_RELATION",
+  "CODE_IMPACT",
   "FILE_CONTENT",
   "DEPENDENCY",
   "CONFIGURATION",
@@ -92,4 +104,3 @@ export interface EvidenceRef {
   readonly evidenceId: string;
   readonly verdict: EvidenceVerdict;
 }
-

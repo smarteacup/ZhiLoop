@@ -22,6 +22,7 @@ function port(status: CodeIntelligenceCapabilityStatus, facts: Awaited<ReturnTyp
     findSymbols: async () => ({ capability, facts }),
     callers: async () => ({ capability, facts: [] }),
     impact: async () => ({ capability, facts: [] }),
+    trace: async () => ({ capability, facts: [] }),
   };
 }
 
@@ -40,7 +41,7 @@ describe("Code intelligence symbol probe", () => {
     const result = await probe.observe(assertion as never, context);
     expect(result).toMatchObject({
       status: "SUPPORTED",
-      sourceRef: "codegraph:git-head-1:src/runtime.ts:10",
+      sourceRef: "codegraph:git-head-1:revision-unavailable:src/runtime.ts:10",
       reasonCode: "CODEGRAPH_SYMBOL_FOUND",
       details: { path: "src/runtime.ts", startLine: 10 },
     });

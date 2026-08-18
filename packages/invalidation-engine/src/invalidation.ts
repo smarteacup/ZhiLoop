@@ -25,21 +25,27 @@ function safePath(value: string): boolean {
     && !value.includes("\\") && !value.split("/").some((part) => part === "" || part === "." || part === "..");
 }
 
-function target(assertion: KnowledgeAssertion): FingerprintTarget | undefined {
+function targets(assertion: KnowledgeAssertion): readonly FingerprintTarget[] {
   switch (assertion.kind) {
     case "SYMBOL_EXISTS":
-      return { assertionId: assertion.assertionId, kind: "SYMBOL", key: assertion.parameters.symbol,
-        ...(assertion.parameters.path === undefined ? {} : { path: assertion.parameters.path }) };
+      return [{ assertionId: assertion.assertionId, kind: "SYMBOL", key: assertion.parameters.symbol,
+        ...(assertion.parameters.path === undefined ? {} : { path: assertion.parameters.path }) }];
+    case "CALL_PATH_EXISTS":
+      return [assertion.parameters.from, assertion.parameters.to]
+        .map((key) => ({ assertionId: assertion.assertionId, kind: "SYMBOL" as const, key }));
+    case "IMPACT_CONTAINS":
+      return [assertion.parameters.symbol, assertion.parameters.impactedSymbol]
+        .map((key) => ({ assertionId: assertion.assertionId, kind: "SYMBOL" as const, key }));
     case "FILE_CONTAINS":
-      return { assertionId: assertion.assertionId, kind: "PATH", key: assertion.parameters.path, path: assertion.parameters.path };
+      return [{ assertionId: assertion.assertionId, kind: "PATH", key: assertion.parameters.path, path: assertion.parameters.path }];
     case "CONFIG_EQUALS":
-      return { assertionId: assertion.assertionId, kind: "CONFIG", key: assertion.parameters.key,
-        ...(assertion.parameters.path === undefined ? {} : { path: assertion.parameters.path }) };
+      return [{ assertionId: assertion.assertionId, kind: "CONFIG", key: assertion.parameters.key,
+        ...(assertion.parameters.path === undefined ? {} : { path: assertion.parameters.path }) }];
     case "DEPENDENCY_PRESENT":
-      return { assertionId: assertion.assertionId, kind: "DEPENDENCY", key: assertion.parameters.name,
-        ...(assertion.parameters.manifestPath === undefined ? {} : { path: assertion.parameters.manifestPath }) };
+      return [{ assertionId: assertion.assertionId, kind: "DEPENDENCY", key: assertion.parameters.name,
+        ...(assertion.parameters.manifestPath === undefined ? {} : { path: assertion.parameters.manifestPath }) }];
     default:
-      return undefined;
+      return [];
   }
 }
 
@@ -49,11 +55,16 @@ function validateTarget(item: FingerprintTarget): boolean {
 }
 
 export function deriveFingerprintTargets(candidate: KnowledgeCandidate): readonly FingerprintTarget[] {
-  const targets = candidate.assertions.map(target).filter((item): item is FingerprintTarget => item !== undefined);
-  if (targets.some((item) => !validateTarget(item)) || new Set(targets.map((item) => item.assertionId)).size !== targets.length) {
+  const resolved = candidate.assertions.flatMap(targets);
+  const identities = resolved.map((item) => JSON.stringify([item.assertionId, item.kind, item.key, item.path ?? null]));
+  if (resolved.some((item) => !validateTarget(item)) || new Set(identities).size !== resolved.length) {
     throw new Error("Candidate contains invalid or duplicate fingerprint targets");
   }
-  return freeze(targets.sort((left, right) => left.assertionId.localeCompare(right.assertionId)));
+  return freeze(resolved.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+}
+
+function targetIdentity(item: FingerprintTarget): string {
+  return JSON.stringify([item.assertionId, item.kind, item.key, item.path ?? null]);
 }
 
 function hash(value: string): string {
@@ -73,10 +84,10 @@ export function createKnowledgeFingerprint(
 ): KnowledgeFingerprint {
   const targets = deriveFingerprintTargets(candidate);
   if (!SAFE_TEXT.test(projectId) || observations.length !== targets.length) throw new Error("Fingerprint input is incomplete");
-  const byAssertion = new Map(observations.map((item) => [item.assertionId, item]));
-  if (byAssertion.size !== observations.length) throw new Error("Fingerprint observations must be unique");
+  const byTarget = new Map(observations.map((item) => [targetIdentity(item), item]));
+  if (byTarget.size !== observations.length) throw new Error("Fingerprint observations must be unique");
   const entries = targets.map((expected) => {
-    const item = byAssertion.get(expected.assertionId);
+    const item = byTarget.get(targetIdentity(expected));
     if (item === undefined || item.kind !== expected.kind || item.key !== expected.key || item.path !== expected.path
       || !SAFE_DIGEST.test(item.digest) || !SAFE_TEXT.test(item.sourceRef) || !Number.isFinite(Date.parse(item.observedAt))) {
       throw new Error("Fingerprint observation does not match target");
@@ -138,8 +149,8 @@ export function evaluateInvalidation(input: InvalidationInput): InvalidationDeci
     || input.fingerprint.projectId !== input.changes.projectId || !validChangeSet(input.changes) || !validFingerprint(input)) {
     return output(input, { action: "UNCHANGED", targetStatus: input.currentStatus, affectedAssertionIds: [], reasonCodes: ["INVALID_CHANGESET_OR_FINGERPRINT"] });
   }
-  const affectedIds = input.fingerprint.entries.filter((entry) => affected(entry, input.changes))
-    .map((entry) => entry.assertionId).sort();
+  const affectedIds = [...new Set(input.fingerprint.entries.filter((entry) => affected(entry, input.changes))
+    .map((entry) => entry.assertionId))].sort();
   if (affectedIds.length === 0) {
     return output(input, { action: "UNCHANGED", targetStatus: input.currentStatus, affectedAssertionIds: [], reasonCodes: ["NO_RELEVANT_CHANGE"] });
   }

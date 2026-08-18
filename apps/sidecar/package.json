@@ -43,6 +43,7 @@
     "@zhiloop/knowledge-compilation-scheduler": "0.0.0",
     "@zhiloop/knowledge-governance-service": "0.0.0",
     "@zhiloop/knowledge-indexer": "0.0.0",
+    "@zhiloop/knowledge-verification": "0.0.0",
     "@zhiloop/knowledge-freshness": "0.0.0",
     "@zhiloop/knowledge-mcp": "0.0.0",
     "@zhiloop/knowledge-registry": "0.0.0",

@@ -112,6 +112,10 @@ function freshnessSchedulerConfiguration(configuration: ConsoleConfiguration) {
   });
 }
 
+function verificationTimeoutMs(configuration: ConsoleConfiguration): number {
+  return Math.min(60_000, Math.max(1_000, configuration.codeIntelligence.queryTimeoutMs * 5));
+}
+
 function consoleConfigurationHash(configuration: ConsoleConfiguration): string {
   return createHash("sha256").update(JSON.stringify(configuration)).digest("hex");
 }
@@ -322,8 +326,18 @@ export class SidecarApplication {
             if (p2Freshness === undefined) throw new Error("knowledge freshness runtime is not composed");
           },
           apply: async (next) => {
-            if (p2Freshness === undefined) throw new Error("knowledge freshness runtime is not composed");
-            return await p2Freshness.applyConfiguration(freshnessSchedulerConfiguration(next));
+            if (p2Freshness === undefined || p2Production === undefined) throw new Error("knowledge freshness runtime is not composed");
+            const rollbackVerification = p2Production.applyVerificationConfiguration({
+              codeGraphTimeoutMs: next.codeIntelligence.queryTimeoutMs,
+              timeoutMs: verificationTimeoutMs(next),
+            });
+            try {
+              const rollbackFreshness = await p2Freshness.applyConfiguration(freshnessSchedulerConfiguration(next));
+              return async () => { await rollbackFreshness(); rollbackVerification(); };
+            } catch (error) {
+              rollbackVerification();
+              throw error;
+            }
           },
         }],
       });
@@ -409,6 +423,8 @@ export class SidecarApplication {
         compilerTimeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
         compilerBatchSize: configuration.get().effective.future.compilerBatchSize,
         evolutionMaxCandidates: configuration.get().effective.evolution.maxMatchCandidates,
+        codeGraphTimeoutMs: configuration.get().effective.codeIntelligence.queryTimeoutMs,
+        verificationTimeoutMs: verificationTimeoutMs(configuration.get().effective),
         ...(config.codexQuery?.executable === undefined ? {} : { compilerExecutable: config.codexQuery.executable }),
         ...(config.codexQuery?.model === undefined ? {} : { compilerModel: config.codexQuery.model }),
         ...(config.codexQuery === undefined ? {} : { compilerIgnoreUserConfig: config.codexQuery.userConfiguration === "IGNORE" }),
@@ -416,8 +432,8 @@ export class SidecarApplication {
       p2Freshness = new P2FreshnessRuntime({
         statePath: join(dirname(config.ledgerPath), "git-freshness-baseline.sqlite"),
         store: p2Production.freshnessStore,
+        verification: p2Production.verification,
         configuration: freshnessSchedulerConfiguration(configuration.get().effective),
-        codeGraphTimeoutMs: configuration.get().effective.codeIntelligence.queryTimeoutMs,
         onState: (state) => {
           void composedApplication.#log.write({ component: "worker", code: `knowledge-freshness:${state.lastReasonCode ?? state.status}`, count: state.pendingProjects }).catch(() => undefined);
         },

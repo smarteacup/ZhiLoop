@@ -241,7 +241,8 @@ function validateGrounding(
       ) {
         diagnostics.push({ code: "UNREFERENCED_SOURCE", path: `${base}/assertions/${assertionIndex}/parameters/statementRef` });
       }
-      if (assertion.kind === "SYMBOL_EXISTS" && assertion.parameters.projectId !== expectedProject.projectId) {
+      if ((assertion.kind === "SYMBOL_EXISTS" || assertion.kind === "CALL_PATH_EXISTS" || assertion.kind === "IMPACT_CONTAINS")
+        && assertion.parameters.projectId !== expectedProject.projectId) {
         diagnostics.push({ code: "PROJECT_MISMATCH", path: `${base}/assertions/${assertionIndex}/parameters/projectId` });
       }
     }

@@ -25,6 +25,8 @@ const assertions = {
   accepted: assertion("USER_ACCEPTED", { statementRef: "event-user-1" }),
   rejected: assertion("USER_REJECTED", { statementRef: "event-user-2" }),
   symbol: assertion("SYMBOL_EXISTS", { projectId: "project-1", symbol: "KnowledgeCompiler", path: "packages/compiler/src/index.ts" }),
+  callPath: assertion("CALL_PATH_EXISTS", { projectId: "project-1", from: "KnowledgeCompiler", to: "VerifierRegistry", maxDepth: 8 }),
+  impact: assertion("IMPACT_CONTAINS", { projectId: "project-1", symbol: "KnowledgeCompiler", impactedSymbol: "VerifierRegistry" }),
   file: assertion("FILE_CONTAINS", { path: "package.json", expected: "zhiloop", matchMode: "EXACT" }),
   dependency: assertion("DEPENDENCY_PRESENT", { name: "vitest", versionConstraint: "^4", manifestPath: "package.json" }),
   config: assertion("CONFIG_EQUALS", { key: "knowledge.enabled", expected: "true", path: "config/app.yml" }),
@@ -67,14 +69,14 @@ function context(probes: VerificationContext["probes"] = {}): VerificationContex
 }
 
 describe("VerifierRegistry", () => {
-  it("registers exactly the seven MVP verifier families", () => {
+  it("registers every assertion kind", () => {
     const registry = createMvpVerifierRegistry();
     const routed = [
       "USER_ACCEPTED", "USER_REJECTED", "SYMBOL_EXISTS", "FILE_CONTAINS",
-      "DEPENDENCY_PRESENT", "CONFIG_EQUALS", "COMMAND_SUCCEEDED", "TEST_PASSED",
+      "CALL_PATH_EXISTS", "IMPACT_CONTAINS", "DEPENDENCY_PRESENT", "CONFIG_EQUALS",
+      "COMMAND_SUCCEEDED", "TEST_PASSED", "CROSS_PROJECT_VERIFIED",
     ] as const;
     for (const kind of routed) expect(registry.verifierFor(kind)?.assertionKinds).toContain(kind);
-    expect(registry.verifierFor("CROSS_PROJECT_VERIFIED")).toBeUndefined();
   });
 
   it("refuses duplicate or empty registrations", () => {
@@ -113,9 +115,9 @@ describe("VerifierRegistry", () => {
     expect(violated).toMatchObject({ status: "ERROR", reasonCodes: ["VERIFIER_CONTRACT_VIOLATION"] });
   });
 
-  it("returns UNKNOWN rather than ERROR when no verifier is registered", async () => {
+  it("returns UNKNOWN rather than ERROR when a registered source is unavailable", async () => {
     const result = await createMvpVerifierRegistry().verify(assertions.crossProject, context());
-    expect(result).toMatchObject({ status: "UNKNOWN", reasonCodes: ["NO_VERIFIER_REGISTERED"] });
+    expect(result).toMatchObject({ status: "UNKNOWN", reasonCodes: ["VERIFICATION_SOURCE_UNAVAILABLE"] });
     expect(result.evidence).toBeUndefined();
     const malformedContext = await createMvpVerifierRegistry().verify(
       assertions.crossProject,
@@ -124,27 +126,31 @@ describe("VerifierRegistry", () => {
     expect(malformedContext).toMatchObject({ status: "ERROR", reasonCodes: ["INVALID_VERIFICATION_CONTEXT"] });
   });
 
-  it("routes all seven probes and creates traceable Evidence", async () => {
+  it("routes all verifier families and creates traceable Evidence", async () => {
     const probes = {
       user: probe(observation("statement:event-user-1")),
       symbol: probe(observation("symbol:project-1:KnowledgeCompiler:packages/compiler/src/index.ts")),
+      callPath: probe(observation("call-path:project-1:KnowledgeCompiler->VerifierRegistry:8")),
+      impact: probe(observation("impact:project-1:KnowledgeCompiler->VerifierRegistry")),
       file: probe(observation("file:package.json:EXACT", "REFUTED")),
       dependency: probe(observation("dependency:vitest:package.json")),
       config: probe(observation("config:knowledge.enabled:config/app.yml")),
       command: probe(observation("command:sha256-command:0")),
       test: probe(observation("test:scope-resolver:packages/scope-resolver", "UNKNOWN")),
+      crossProject: probe(observation("cross-project:design.scope.boundary:2")),
     };
-    const selected = [assertions.accepted, assertions.symbol, assertions.file, assertions.dependency,
-      assertions.config, assertions.command, assertions.test];
+    const selected = [assertions.accepted, assertions.symbol, assertions.callPath, assertions.impact, assertions.file,
+      assertions.dependency, assertions.config, assertions.command, assertions.test, assertions.crossProject];
     const results = await createMvpVerifierRegistry().verifyAll(selected, context(probes));
     expect(results.map((result) => result.status)).toEqual([
-      "SUPPORTED", "SUPPORTED", "REFUTED", "SUPPORTED", "SUPPORTED", "SUPPORTED", "UNKNOWN",
+      "SUPPORTED", "SUPPORTED", "SUPPORTED", "SUPPORTED", "REFUTED", "SUPPORTED", "SUPPORTED", "SUPPORTED", "UNKNOWN", "SUPPORTED",
     ]);
     expect(results.map((result) => result.evidence?.type)).toEqual([
-      "USER_STATEMENT", "CODE_SYMBOL", "FILE_CONTENT", "DEPENDENCY", "CONFIGURATION", "COMMAND_RESULT", "TEST_RESULT",
+      "USER_STATEMENT", "CODE_SYMBOL", "CODE_RELATION", "CODE_IMPACT", "FILE_CONTENT", "DEPENDENCY",
+      "CONFIGURATION", "COMMAND_RESULT", "TEST_RESULT", "CROSS_PROJECT",
     ]);
-    expect(results[2]?.evidence?.verdict).toBe("CONTRADICTS");
-    expect(results[6]?.evidence?.verdict).toBe("INCONCLUSIVE");
+    expect(results[4]?.evidence?.verdict).toBe("CONTRADICTS");
+    expect(results[8]?.evidence?.verdict).toBe("INCONCLUSIVE");
     for (const result of results) {
       expect(result.evidence).toMatchObject({
         assertionId: result.assertionId,

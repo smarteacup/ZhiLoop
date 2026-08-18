@@ -7,10 +7,13 @@ import type {
 
 import type {
   AssertionVerifier,
+  CallPathAssertion,
   CommandAssertion,
   ConfigAssertion,
+  CrossProjectAssertion,
   DependencyAssertion,
   FileAssertion,
+  ImpactAssertion,
   SymbolAssertion,
   TestAssertion,
   UserAssertion,
@@ -253,6 +256,41 @@ export function createSymbolVerifier(): AssertionVerifier {
   });
 }
 
+export function createCallPathVerifier(): AssertionVerifier {
+  return new MvpAssertionVerifier<CallPathAssertion>({
+    verifierId: "call-path-verifier-v1",
+    assertionKinds: ["CALL_PATH_EXISTS"],
+    evidenceType: "CODE_RELATION",
+    getProbe: (context) => context.probes.callPath,
+    target: (assertion) => `call-path:${assertion.parameters.projectId}:${assertion.parameters.from}->${assertion.parameters.to}:${assertion.parameters.maxDepth ?? 8}`,
+    validate: (assertion, context) => {
+      if (assertion.parameters.projectId !== context.project.projectId) throw new Error("Call path projectId conflicts with context");
+      assertSafeText(assertion.parameters.from, "call path from");
+      assertSafeText(assertion.parameters.to, "call path to");
+      if (assertion.parameters.maxDepth !== undefined
+        && (!Number.isSafeInteger(assertion.parameters.maxDepth)
+          || assertion.parameters.maxDepth < 1 || assertion.parameters.maxDepth > 32)) {
+        throw new Error("call path maxDepth is invalid");
+      }
+    },
+  });
+}
+
+export function createImpactVerifier(): AssertionVerifier {
+  return new MvpAssertionVerifier<ImpactAssertion>({
+    verifierId: "impact-verifier-v1",
+    assertionKinds: ["IMPACT_CONTAINS"],
+    evidenceType: "CODE_IMPACT",
+    getProbe: (context) => context.probes.impact,
+    target: (assertion) => `impact:${assertion.parameters.projectId}:${assertion.parameters.symbol}->${assertion.parameters.impactedSymbol}`,
+    validate: (assertion, context) => {
+      if (assertion.parameters.projectId !== context.project.projectId) throw new Error("Impact projectId conflicts with context");
+      assertSafeText(assertion.parameters.symbol, "impact symbol");
+      assertSafeText(assertion.parameters.impactedSymbol, "impacted symbol");
+    },
+  });
+}
+
 export function createFileVerifier(): AssertionVerifier {
   return new MvpAssertionVerifier<FileAssertion>({
     verifierId: "file-verifier-v1",
@@ -329,6 +367,23 @@ export function createTestVerifier(): AssertionVerifier {
       assertSafeText(assertion.parameters.testId, "testId");
       if (assertion.parameters.commandHash !== undefined) assertSafeText(assertion.parameters.commandHash, "test commandHash");
       assertSafeRelativePath(assertion.parameters.path, "test path");
+    },
+  });
+}
+
+export function createCrossProjectVerifier(): AssertionVerifier {
+  return new MvpAssertionVerifier<CrossProjectAssertion>({
+    verifierId: "cross-project-verifier-v1",
+    assertionKinds: ["CROSS_PROJECT_VERIFIED"],
+    evidenceType: "CROSS_PROJECT",
+    getProbe: (context) => context.probes.crossProject,
+    target: (assertion) => `cross-project:${assertion.parameters.subjectKey}:${assertion.parameters.minimumProjects}`,
+    validate: (assertion) => {
+      assertSafeText(assertion.parameters.subjectKey, "cross-project subjectKey");
+      if (!Number.isSafeInteger(assertion.parameters.minimumProjects)
+        || assertion.parameters.minimumProjects < 2 || assertion.parameters.minimumProjects > 20) {
+        throw new Error("cross-project minimumProjects is invalid");
+      }
     },
   });
 }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import type { LedgerEventRecord } from "@zhiloop/conversation-ledger";
-import type { Episode, EventEnvelope, KnowledgeAsset, KnowledgeCandidate, KnowledgeKind } from "@zhiloop/domain";
+import type { Episode, EventEnvelope, KnowledgeAsset, KnowledgeKind } from "@zhiloop/domain";
 import type { VerificationResult } from "@zhiloop/evidence-engine";
 import type { IncrementalIndexResult } from "@zhiloop/knowledge-indexer";
 import type { ProjectionWriteResult } from "@zhiloop/knowledge-registry";
@@ -328,8 +328,10 @@ function compiler(options: {
 
 function evidence(): EvidenceVerificationPort {
   return {
-    verify: async (candidate: KnowledgeCandidate, project, requestedAt): Promise<readonly VerificationResult[]> =>
-      candidate.assertions.map((assertion) => {
+    verify: async ({ candidate, project, requestedAt, purpose, snapshot }): Promise<readonly VerificationResult[]> => {
+      expect(purpose).toBe("CANDIDATE");
+      expect(snapshot).toBeDefined();
+      return candidate.assertions.map((assertion) => {
         const type = assertion.kind === "SYMBOL_EXISTS"
           ? "CODE_SYMBOL" as const
           : assertion.kind === "TEST_PASSED" ? "TEST_RESULT" as const : "USER_STATEMENT" as const;
@@ -354,7 +356,8 @@ function evidence(): EvidenceVerificationPort {
           correlationId: candidate.correlationId,
         },
         };
-      }),
+      });
+    },
   };
 }
 

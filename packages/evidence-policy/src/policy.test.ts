@@ -13,11 +13,14 @@ const evidenceTypes: Partial<Record<AssertionKind, EvidenceType>> = {
   USER_ACCEPTED: "USER_STATEMENT",
   USER_REJECTED: "USER_STATEMENT",
   SYMBOL_EXISTS: "CODE_SYMBOL",
+  CALL_PATH_EXISTS: "CODE_RELATION",
+  IMPACT_CONTAINS: "CODE_IMPACT",
   FILE_CONTAINS: "FILE_CONTENT",
   DEPENDENCY_PRESENT: "DEPENDENCY",
   CONFIG_EQUALS: "CONFIGURATION",
   COMMAND_SUCCEEDED: "COMMAND_RESULT",
   TEST_PASSED: "TEST_RESULT",
+  CROSS_PROJECT_VERIFIED: "CROSS_PROJECT",
 };
 
 function assertion(kind: AssertionKind, suffix = kind.toLowerCase()): KnowledgeAssertion {
@@ -25,6 +28,8 @@ function assertion(kind: AssertionKind, suffix = kind.toLowerCase()): KnowledgeA
     USER_ACCEPTED: { statementRef: `event-${suffix}` },
     USER_REJECTED: { statementRef: `event-${suffix}` },
     SYMBOL_EXISTS: { projectId: "project-1", symbol: "KnowledgeCompiler" },
+    CALL_PATH_EXISTS: { projectId: "project-1", from: "KnowledgeCompiler", to: "VerifierRegistry", maxDepth: 8 },
+    IMPACT_CONTAINS: { projectId: "project-1", symbol: "KnowledgeCompiler", impactedSymbol: "VerifierRegistry" },
     FILE_CONTAINS: { path: "src/index.ts", expected: "export", matchMode: "EXACT" },
     DEPENDENCY_PRESENT: { name: "vitest" },
     CONFIG_EQUALS: { key: "enabled", expected: "true" },

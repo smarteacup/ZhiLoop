@@ -21,6 +21,9 @@
 | Candidate Repository Migration | 1 | 只前向迁移；拒绝更高版本 | 编译暂停，Ledger 保留 |
 | Knowledge Registry Migration | 1 | 只前向迁移；拒绝更高版本 | 召回失败开放为空 |
 | Governance Store Migration | 1 | 只前向迁移；拒绝更高版本 | 治理写入停止 |
+| Verification Store Schema | 1 | STRICT tables；Recipe/Run canonical hash 必须匹配 | 证据验证与保鲜暂停，不使用损坏证明 |
+| Evidence Recipe | `evidence-recipe-v1` | 知识 ID、版本与 Assertion hash 必须精确匹配 | 当前版本不参与自动保鲜 |
+| CodeGraph CLI/Index | 运行时能力探测 | 必须返回可归一化状态与稳定 index revision | 代码图证据为 `UNKNOWN`，不自动初始化或发布 |
 | Node.js | >=24.18.0 <27 | 依赖稳定 `node:sqlite` | 构建/启动前拒绝 |
 
 ## 2. 升级规则

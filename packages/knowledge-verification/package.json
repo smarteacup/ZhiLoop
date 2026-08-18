@@ -1,0 +1,25 @@
+{
+  "name": "@zhiloop/knowledge-verification",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [
+      "@zhiloop/code-intelligence",
+      "@zhiloop/conversation-ledger",
+      "@zhiloop/domain",
+      "@zhiloop/evidence-engine",
+      "@zhiloop/evidence-probes"
+    ],
+    "allowedExternalDependencies": ["node:*"]
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": {
+    "@zhiloop/code-intelligence": "0.0.0",
+    "@zhiloop/conversation-ledger": "0.0.0",
+    "@zhiloop/domain": "0.0.0",
+    "@zhiloop/evidence-engine": "0.0.0",
+    "@zhiloop/evidence-probes": "0.0.0"
+  }
+}

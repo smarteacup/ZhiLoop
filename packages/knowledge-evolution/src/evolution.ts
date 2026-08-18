@@ -135,8 +135,14 @@ function pending(
 }
 
 function candidateSymbols(candidate: KnowledgeCandidate): ReadonlySet<string> {
-  return new Set(candidate.assertions.flatMap((assertion) =>
-    assertion.kind === "SYMBOL_EXISTS" ? [normalized(assertion.parameters.symbol)] : []));
+  return new Set(candidate.assertions.flatMap((assertion) => {
+    if (assertion.kind === "SYMBOL_EXISTS") return [normalized(assertion.parameters.symbol)];
+    if (assertion.kind === "CALL_PATH_EXISTS") return [normalized(assertion.parameters.from), normalized(assertion.parameters.to)];
+    if (assertion.kind === "IMPACT_CONTAINS") {
+      return [normalized(assertion.parameters.symbol), normalized(assertion.parameters.impactedSymbol)];
+    }
+    return [];
+  }));
 }
 
 function sameContent(candidate: KnowledgeCandidate, target: KnowledgeAsset): boolean {

@@ -73,8 +73,20 @@ export interface LedgerSnapshotPort {
   inspectSnapshot?(request: LedgerSnapshotRequest): Promise<Omit<LoadedLedgerSnapshot, "records">>;
 }
 
+export type EvidenceVerificationPurpose = "CANDIDATE" | "FRESHNESS" | "PRE_INJECTION";
+
+export interface EvidenceVerificationRequest {
+  readonly candidate: KnowledgeCandidate;
+  readonly project: ProjectContext;
+  readonly requestedAt: string;
+  readonly purpose: EvidenceVerificationPurpose;
+  readonly snapshot?: LoadedLedgerSnapshot;
+  readonly assertionIds?: readonly string[];
+  readonly expectedCodeRevision?: string;
+}
+
 export interface EvidenceVerificationPort {
-  verify(candidate: KnowledgeCandidate, project: ProjectContext, requestedAt: string): Promise<readonly VerificationResult[]>;
+  verify(request: EvidenceVerificationRequest): Promise<readonly VerificationResult[]>;
 }
 
 export interface MarkdownKnowledgePort {

@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
+import { CodeGraphCliAdapter } from "@zhiloop/codegraph-adapter";
 import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
-import type { KnowledgeAssertion, KnowledgeAsset, KnowledgeCandidate, ProjectContext } from "@zhiloop/domain";
-import type { VerificationResult } from "@zhiloop/evidence-engine";
+import type { KnowledgeAsset, ProjectContext } from "@zhiloop/domain";
 import {
   KnowledgeGovernanceMutationService,
   KnowledgeGovernanceQueryService,
@@ -15,6 +15,14 @@ import {
 } from "@zhiloop/knowledge-governance-service";
 import { IncrementalKnowledgeIndexer } from "@zhiloop/knowledge-indexer";
 import { SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
+import {
+  GitProjectRevisionPort,
+  KnowledgeVerificationService,
+  SqliteKnowledgeVerificationStore,
+  type KnowledgeVerificationBatch,
+  type KnowledgeVerificationRequest,
+  type VerificationExecutionControls,
+} from "@zhiloop/knowledge-verification";
 import { SqliteKnowledgeRegistryProjection } from "@zhiloop/knowledge-registry";
 import {
   DEFAULT_MVP_COMPILER_VERSION,
@@ -99,34 +107,6 @@ export function deriveP2ProjectContext(snapshot: ExtractionSnapshot, ledger: Sql
   });
 }
 
-function evidenceFor(assertion: KnowledgeAssertion, candidate: KnowledgeCandidate, project: ProjectContext, at: string): VerificationResult {
-  const userAssertion = assertion.kind === "USER_ACCEPTED" || assertion.kind === "USER_REJECTED";
-  const status = userAssertion ? (assertion.kind === "USER_ACCEPTED" ? "SUPPORTED" : "REFUTED") : "UNKNOWN";
-  const sourceRef = userAssertion ? assertion.parameters.statementRef : assertion.assertionId;
-  const verdict = status === "SUPPORTED" ? "SUPPORTS" as const : status === "REFUTED" ? "CONTRADICTS" as const : "INCONCLUSIVE" as const;
-  return Object.freeze({
-    assertionId: assertion.assertionId,
-    assertionKind: assertion.kind,
-    verifierId: userAssertion ? "snapshot-user-statement-v1" : "snapshot-bounded-v1",
-    status,
-    target: sourceRef,
-    observedAt: at,
-    reasonCodes: [userAssertion ? "SNAPSHOT_SOURCE_OBSERVED" : "VERIFICATION_SOURCE_UNAVAILABLE"],
-    ...(userAssertion ? {
-      evidence: {
-        evidenceId: `ev_${sha256(JSON.stringify([assertion.assertionId, sourceRef, project.projectId, at]))}`,
-        assertionId: assertion.assertionId,
-        type: "USER_STATEMENT" as const,
-        verdict,
-        sourceRef,
-        projectId: project.projectId,
-        observedAt: at,
-        correlationId: candidate.correlationId,
-      },
-    } : {}),
-  });
-}
-
 function extractionMetadata(service: () => SessionExtractionService): KnowledgeMetadataPort {
   const traverse = (assetId: string, version: number): KnowledgeProvenanceRecord => {
     const queue: ProvenanceNode[] = [{ type: "KNOWLEDGE_VERSION", knowledge: { id: assetId, version } }];
@@ -205,6 +185,27 @@ export interface P2ProductionCompositionOptions {
   readonly compilerExecutable?: string;
   readonly compilerModel?: string;
   readonly compilerIgnoreUserConfig?: boolean;
+  readonly codeGraphTimeoutMs?: number;
+  readonly verificationTimeoutMs?: number;
+}
+
+export class P2ProductionVerificationRuntime implements EvidenceVerificationPort {
+  #service: KnowledgeVerificationService;
+
+  constructor(service: KnowledgeVerificationService) { this.#service = service; }
+
+  verify(request: KnowledgeVerificationRequest) { return this.#service.verify(request); }
+
+  verifyBatch(request: KnowledgeVerificationRequest, controls?: VerificationExecutionControls): Promise<KnowledgeVerificationBatch> {
+    return this.#service.verifyBatch(request, controls);
+  }
+
+  replace(service: KnowledgeVerificationService): () => void {
+    const previous = this.#service;
+    this.#service = service;
+    let restored = false;
+    return () => { if (restored) return; restored = true; if (this.#service === service) this.#service = previous; };
+  }
 }
 
 /** Owns the P2 Markdown/Registry/index boundary shared by compile and governance. */
@@ -217,6 +218,8 @@ export class P2ProductionComposition {
   readonly index: IncrementalKnowledgeIndexer;
   readonly governanceStore: SqliteGovernanceOperationStore;
   readonly freshnessStore: SqliteKnowledgeFreshnessStore;
+  readonly verificationStore: SqliteKnowledgeVerificationStore;
+  readonly verification: P2ProductionVerificationRuntime;
   readonly #checkpointStore: SqliteKnowledgeWorkerCheckpointStore;
 
   private constructor(options: P2ProductionCompositionOptions, compiler: KnowledgeExtractionPort) {
@@ -226,7 +229,13 @@ export class P2ProductionComposition {
     this.index = new IncrementalKnowledgeIndexer(this.markdown, this.registry);
     this.governanceStore = new SqliteGovernanceOperationStore(join(options.stateDirectory, "knowledge-governance.sqlite"));
     this.freshnessStore = new SqliteKnowledgeFreshnessStore(join(options.stateDirectory, "knowledge-freshness.sqlite"));
+    this.verificationStore = new SqliteKnowledgeVerificationStore(join(options.stateDirectory, "knowledge-verification.sqlite"));
     this.#checkpointStore = new SqliteKnowledgeWorkerCheckpointStore(join(options.stateDirectory, "knowledge-worker.sqlite"));
+
+    this.verification = new P2ProductionVerificationRuntime(this.createVerification(
+      options.codeGraphTimeoutMs ?? 300,
+      options.verificationTimeoutMs ?? 5_000,
+    ));
 
     const ledgerPort: LedgerSnapshotPort = {
       loadSnapshot: async (request, limit) => {
@@ -259,14 +268,10 @@ export class P2ProductionComposition {
         return Object.freeze({ snapshotId: loaded.snapshotId, sourceVersion: loaded.sourceVersion, contentHash: loaded.contentHash });
       },
     };
-    const evidence: EvidenceVerificationPort = {
-      verify: async (candidate, project, requestedAt) => candidate.assertions.map((assertion) =>
-        evidenceFor(assertion, candidate, project, requestedAt)),
-    };
     const runtime = new KnowledgeWorkerRuntime({
       ledger: ledgerPort,
       compiler,
-      evidence,
+      evidence: this.verification,
       evolution: {
         search: (queries, limit) => {
           const assets = new Map<string, KnowledgeAsset>();
@@ -280,7 +285,13 @@ export class P2ProductionComposition {
       },
       markdown: this.markdown,
       registry: this.registry,
-      freshness: this.freshnessStore,
+      freshness: {
+        project: (input) => {
+          this.verificationStore.saveRecipe({ assetId: input.asset.id, assetVersion: input.asset.version,
+            recipeVersion: "evidence-recipe-v1", assertions: input.candidate.assertions, createdAt: input.observedAt });
+          return this.freshnessStore.project(input);
+        },
+      },
       index: this.index,
     }, this.#checkpointStore);
     this.worker = Object.freeze({
@@ -335,8 +346,34 @@ export class P2ProductionComposition {
     return this.#checkpointStore.load(workId(snapshotId));
   }
 
+  private createVerification(codeGraphTimeoutMs: number, timeoutMs: number): KnowledgeVerificationService {
+    return new KnowledgeVerificationService({
+      revisions: new GitProjectRevisionPort(), store: this.verificationStore,
+      codeIntelligence: new CodeGraphCliAdapter(undefined, { timeoutMs: codeGraphTimeoutMs }),
+      timeoutMs,
+      crossProject: {
+        store: this.verificationStore,
+        eligibility: {
+          classify: (proof) => {
+            const asset = this.registry.getAsset(proof.knowledgeVersion.assetId, true);
+            if (asset === undefined) return "UNKNOWN";
+            if (asset.tombstone || asset.asset.version !== proof.knowledgeVersion.assetVersion) return "STALE";
+            const freshness = this.freshnessStore.getState(proof.knowledgeVersion.assetId, proof.knowledgeVersion.assetVersion);
+            if (freshness === undefined) return "UNKNOWN";
+            return freshness.projectId === proof.canonicalProjectId && freshness.status === "FRESH" ? "CURRENT" : "STALE";
+          },
+        },
+      },
+    });
+  }
+
+  applyVerificationConfiguration(configuration: { readonly codeGraphTimeoutMs: number; readonly timeoutMs: number }): () => void {
+    return this.verification.replace(this.createVerification(configuration.codeGraphTimeoutMs, configuration.timeoutMs));
+  }
+
   close(): void {
     this.governanceStore.close();
+    this.verificationStore.close();
     this.freshnessStore.close();
     this.#checkpointStore.close();
     this.registry.close();

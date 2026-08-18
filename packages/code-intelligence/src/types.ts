@@ -6,6 +6,7 @@ export interface CodeIntelligenceCapability {
   readonly reasonCode: string;
   readonly providerVersion?: string;
   readonly indexedFiles?: number;
+  readonly indexRevision?: string;
 }
 
 export interface CodeProjectSnapshot {
@@ -37,14 +38,29 @@ export interface CodeRelationshipFact {
   readonly startLine: number;
 }
 
+export interface CodeCallPathFact {
+  readonly from: string;
+  readonly to: string;
+  readonly symbols: readonly string[];
+  readonly paths: readonly string[];
+}
+
 export interface CodeFactResult<TFact> {
   readonly capability: CodeIntelligenceCapability;
   readonly facts: readonly TFact[];
+  readonly bounded?: boolean;
 }
 
 export interface CodeIntelligencePort {
-  capabilities(project: CodeProjectSnapshot): Promise<CodeIntelligenceCapability>;
+  capabilities(project: CodeProjectSnapshot, options?: { readonly refresh?: boolean }): Promise<CodeIntelligenceCapability>;
   findSymbols(project: CodeProjectSnapshot, query: CodeSymbolQuery): Promise<CodeFactResult<CodeSymbolFact>>;
   callers(project: CodeProjectSnapshot, symbol: string, limit?: number): Promise<CodeFactResult<CodeRelationshipFact>>;
   impact(project: CodeProjectSnapshot, symbol: string, limit?: number): Promise<CodeFactResult<CodeRelationshipFact>>;
+  trace(
+    project: CodeProjectSnapshot,
+    from: string,
+    to: string,
+    maxDepth?: number,
+    limit?: number,
+  ): Promise<CodeFactResult<CodeCallPathFact>>;
 }

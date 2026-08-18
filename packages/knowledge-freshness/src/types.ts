@@ -61,3 +61,40 @@ export interface FreshnessPlanningInput {
   readonly changes: KnowledgeChangeSet;
   readonly revalidationResults?: readonly VerificationResult[];
 }
+
+export interface KnowledgeFreshnessState {
+  readonly schemaVersion: 1;
+  readonly assetId: string;
+  readonly assetVersion: number;
+  readonly projectId: string;
+  readonly status: FreshnessStatus;
+  readonly revision: number;
+  readonly codeRevision: string;
+  readonly graphRevision?: string;
+  readonly reasonCodes: readonly string[];
+  readonly affectedAssertionIds: readonly string[];
+  readonly updatedAt: string;
+}
+
+export interface FreshnessStateTransitionInput {
+  readonly assetId: string;
+  readonly assetVersion: number;
+  readonly expectedRevision: number;
+  readonly projectId: string;
+  readonly status: FreshnessStatus;
+  readonly codeRevision: string;
+  readonly graphRevision?: string;
+  readonly reasonCodes: readonly string[];
+  readonly affectedAssertionIds: readonly string[];
+  readonly updatedAt: string;
+}
+
+export interface FreshnessStateTransitionResult {
+  readonly status: "TRANSITIONED" | "IDEMPOTENT";
+  readonly state: KnowledgeFreshnessState;
+}
+
+export interface FreshnessStateEvent extends KnowledgeFreshnessState {
+  readonly eventId: string;
+  readonly previousStatus: FreshnessStatus;
+}

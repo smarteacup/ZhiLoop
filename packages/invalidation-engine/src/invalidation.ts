@@ -81,7 +81,15 @@ export function createKnowledgeFingerprint(
       || !SAFE_DIGEST.test(item.digest) || !SAFE_TEXT.test(item.sourceRef) || !Number.isFinite(Date.parse(item.observedAt))) {
       throw new Error("Fingerprint observation does not match target");
     }
-    return { ...item };
+    return {
+      assertionId: item.assertionId,
+      kind: item.kind,
+      key: item.key,
+      ...(item.path === undefined ? {} : { path: item.path }),
+      digest: item.digest,
+      sourceRef: item.sourceRef,
+      observedAt: item.observedAt,
+    };
   });
   const identity = JSON.stringify(["knowledge-fingerprint-v1", candidate.candidateId, projectId, entries]);
   return freeze({ schemaVersion: 1, candidateId: candidate.candidateId, projectId, entries, fingerprint: `fp_${hash(identity)}` });

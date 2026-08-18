@@ -2,16 +2,56 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M7 预热与注入门禁） | 累计 |
+| 指标 | 本轮（M8 Freshness 复验 Worker） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 8 |
-| 风险发现 | 10 | 60 |
-| 高风险 | 4 | 29 |
-| 中风险 | 5 | 25 |
-| 低风险 | 1 | 6 |
-| 已修复 | 10 | 60 |
+| Review 次数 | 1 | 9 |
+| 风险发现 | 9 | 69 |
+| 高风险 | 4 | 33 |
+| 中风险 | 4 | 29 |
+| 低风险 | 1 | 7 |
+| 已修复 | 9 | 69 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 17 分 00 秒 | 已知耗时 1 小时 44 分 03 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 12 分 00 秒 | 已知耗时 1 小时 56 分 03 秒（首轮历史报告未记录耗时） |
+
+## M8 审查结论
+
+M8 将 ChangeSet、Anchor 反查、批量 Evidence 复验、Invalidation Plan 和版本化 Freshness 状态连成可重放闭环。状态与知识正文分离，每次真实变化都有不可变事件；冲突只生成修复建议，不越过治理发布门禁。9 个问题全部修复，无未解决风险。
+
+## M8 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | Fingerprint 哈希依赖 JavaScript 对象键顺序 | canonical JSON 落库重排键后，同一 Fingerprint 回读即被误判损坏 | Fingerprint 条目在哈希前按固定字段顺序重建；SQLite 回读复验端到端测试 |
+| 高 | 只有不可变 publication projection，没有可变当前 Freshness | 代码变化后 Gate 永远看到发布时 FRESH，无法形成运行闭环 | 新增版本化 CAS state 与不可变 transition event；`get` 合并当前状态但不改原载荷 |
+| 高 | 缺失 verifier 结果会进入 `MARK_STALE` 分支并被解释为 CONFLICT | 服务漏返回被误当作代码已反驳，错误触发修复 | 每个请求 assertion 必须恰好返回一次；缺失/重复在写入前整体拒绝 |
+| 高 | 跨项目、错误 assertion kind 或不一致观察时间最初只会变成“不支持” | 无效 Evidence 可被误分类为真实冲突 | 批结果校验 project、revision、kind、observedAt 和 Evidence project/time；故障矩阵 |
+| 中 | 既有 projection 升级后没有 state row | Worker 无法处理历史知识，Gate 继续使用旧默认 | Schema 初始化用完整性载荷确定性回填 revision 0；重开数据库迁移测试 |
+| 中 | 状态更新若不绑定资产版本和 expected revision | 并发复验可覆盖新版或后写覆盖先写 | `(assetId,version)` 主键、事务内 CAS；同观察幂等优先于 stale expected revision |
+| 中 | 批验证后取消仍可能继续写状态 | Hook/后台取消失效，产生超出调用生命周期的副作用 | 调用前、批验证后和逐项写入前检查 AbortSignal；取消测试 |
+| 中 | SQLite 状态 JSON 和数值字段只靠 TypeScript 类型 | 损坏状态可污染 Gate 或抛出不明确异常 | 读取时验证枚举、版本、revision、时间、revision 文本和数组；事件 previous status 单独验证 |
+| 低 | Worker 初始分支覆盖率为 63.63% | 校验矩阵和取消/空集合边界缺少回归保护 | 增加四类 Anchor、8 类坏批次、上下限、空工作、早晚取消；Worker branches 89.61% |
+
+## M8 关键维度确认
+
+- **批一致性**：一次 run 只调用一次 verifier；所有结果绑定同一 project/code/graph revision，校验完成后才开始写。
+- **幂等恢复**：相同状态、revision identity、原因和 assertion 集合不增加 state revision/event；部分写入重跑安全。
+- **历史边界**：publication projection 与知识正文不变；状态事件按资产版本保留，发布新版本会初始化独立 state。
+- **错误语义**：UNKNOWN 必须由显式 UNKNOWN/ERROR Evidence 产生；缺失或损坏输出属于批失败，不能伪装为 CONFLICT。
+- **治理边界**：`MARK_STALE` 只是 preserveBody 计划，不直接写 Markdown/Registry 生命周期。
+
+## M8 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，65 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 163 files，1396/1396 通过 |
+| Coverage | statements 90.17%，branches 85.18%，functions 91.88%，lines 93.70% |
+| Freshness package | statements 90.65%，branches 88.17%，functions 95.23%，lines 94.04% |
+| Worker coverage | statements 96.05%，branches 89.61%，functions/lines 100% |
+| OpenSpec strict validation | `run-freshness-revalidation` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M7 审查结论
 

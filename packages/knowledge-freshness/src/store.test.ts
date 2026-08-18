@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
 import { describe, expect, it } from "vitest";
 
 import type { KnowledgeAsset, KnowledgeCandidate } from "@zhiloop/domain";
@@ -76,5 +81,33 @@ describe("SqliteKnowledgeFreshnessStore", () => {
     expect(() => store.affected(changes(), 0)).toThrow("FRESHNESS_AFFECTED_LIMIT_INVALID");
     expect(() => store.affected(changes({ changedPaths: ["../secret"], changedSymbols: [] })))
       .toThrow("FRESHNESS_CHANGESET_INVALID");
+  });
+
+  it("keeps version-bound freshness state with CAS, replay and immutable events", () => {
+    using store = new SqliteKnowledgeFreshnessStore(":memory:");
+    store.project(projection());
+    expect(store.getState("asset-1")).toMatchObject({ status: "FRESH", revision: 0, codeRevision: "publication:content-v1" });
+    const transition = {
+      assetId: "asset-1", assetVersion: 1, expectedRevision: 0, projectId: "project-1", status: "REVALIDATE" as const,
+      codeRevision: "git:head-2", graphRevision: "graph-2", reasonCodes: ["RELATED_TARGET_CHANGED"],
+      affectedAssertionIds: ["assertion-symbol"], updatedAt: "2026-08-19T00:00:00.000Z",
+    };
+    expect(store.transition(transition)).toMatchObject({ status: "TRANSITIONED", state: { revision: 1, status: "REVALIDATE" } });
+    expect(store.transition(transition)).toMatchObject({ status: "IDEMPOTENT", state: { revision: 1 } });
+    expect(store.get("asset-1")?.freshnessStatus).toBe("REVALIDATE");
+    expect(store.listStateEvents("asset-1", 1)).toMatchObject([{ revision: 1, previousStatus: "FRESH", status: "REVALIDATE" }]);
+    expect(() => store.transition({ ...transition, status: "CONFLICT", codeRevision: "git:head-3" }))
+      .toThrow("FRESHNESS_STATE_REVISION_CONFLICT");
+  });
+
+  it("backfills freshness state for projections created before the state table", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-freshness-state-"));
+    const filename = path.join(directory, "freshness.sqlite");
+    try {
+      const first = new SqliteKnowledgeFreshnessStore(filename); first.project(projection()); first.close();
+      const database = new DatabaseSync(filename); database.exec("DELETE FROM knowledge_freshness_state"); database.close();
+      using reopened = new SqliteKnowledgeFreshnessStore(filename);
+      expect(reopened.getState("asset-1")).toMatchObject({ status: "FRESH", revision: 0, codeRevision: "publication:content-v1" });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

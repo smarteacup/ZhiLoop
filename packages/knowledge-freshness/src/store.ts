@@ -11,6 +11,10 @@ import type {
   FreshnessProjectionInput,
   FreshnessProjectionWriteResult,
   KnowledgeFreshnessRecord,
+  KnowledgeFreshnessState,
+  FreshnessStateEvent,
+  FreshnessStateTransitionInput,
+  FreshnessStateTransitionResult,
 } from "./types.js";
 
 function canonical(value: unknown): string {
@@ -91,11 +95,60 @@ export class SqliteKnowledgeFreshnessStore {
           ON knowledge_freshness_anchors(project_id, kind, anchor_key, asset_id);
         CREATE INDEX IF NOT EXISTS freshness_anchor_path_lookup
           ON knowledge_freshness_anchors(project_id, anchor_path, asset_id);
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_state (
+          asset_id TEXT NOT NULL,
+          asset_version INTEGER NOT NULL,
+          project_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          code_revision TEXT NOT NULL,
+          graph_revision TEXT,
+          reason_codes_json TEXT NOT NULL,
+          affected_assertion_ids_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(asset_id, asset_version),
+          FOREIGN KEY(asset_id, asset_version)
+            REFERENCES knowledge_freshness(asset_id, asset_version) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS knowledge_freshness_state_events (
+          event_id TEXT PRIMARY KEY,
+          asset_id TEXT NOT NULL,
+          asset_version INTEGER NOT NULL,
+          previous_status TEXT NOT NULL,
+          status TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          project_id TEXT NOT NULL,
+          code_revision TEXT NOT NULL,
+          graph_revision TEXT,
+          reason_codes_json TEXT NOT NULL,
+          affected_assertion_ids_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(asset_id, asset_version)
+            REFERENCES knowledge_freshness(asset_id, asset_version) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS freshness_state_events_asset
+          ON knowledge_freshness_state_events(asset_id, asset_version, revision);
+        INSERT OR IGNORE INTO knowledge_freshness_state
+          (asset_id,asset_version,project_id,status,revision,code_revision,graph_revision,reason_codes_json,
+           affected_assertion_ids_json,updated_at)
+          SELECT asset_id,asset_version,project_id,'FRESH',0,
+            'publication:' || json_extract(payload_json,'$.assetContentHash'),NULL,'[]','[]',
+            json_extract(payload_json,'$.updatedAt')
+          FROM knowledge_freshness;
       `);
     } catch (error) { this.#database.close(); this.#closed = true; throw error; }
   }
 
   #open(): void { if (this.#closed) throw new Error("FRESHNESS_STORE_CLOSED"); }
+
+  #initializeState(record: KnowledgeFreshnessRecord): void {
+    this.#database.prepare(`INSERT OR IGNORE INTO knowledge_freshness_state
+      (asset_id,asset_version,project_id,status,revision,code_revision,graph_revision,reason_codes_json,affected_assertion_ids_json,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+      record.assetId, record.assetVersion, record.projectId, "FRESH", 0,
+      `publication:${record.assetContentHash}`, null, "[]", "[]", record.updatedAt,
+    );
+  }
 
   project(input: FreshnessProjectionInput): FreshnessProjectionWriteResult {
     this.#open();
@@ -110,6 +163,7 @@ export class SqliteKnowledgeFreshnessStore {
         WHERE active.asset_id=?`).get(record.assetId) as { asset_version: number; payload_hash: string } | undefined;
       if (existing !== undefined) {
         if (existing.asset_version === record.assetVersion && existing.payload_hash === payloadHash) {
+          this.#initializeState(record);
           this.#database.exec("COMMIT");
           return { status: "IDEMPOTENT", assetId: record.assetId, assetVersion: record.assetVersion, anchorCount: record.anchors.length };
         }
@@ -126,6 +180,7 @@ export class SqliteKnowledgeFreshnessStore {
       this.#database.prepare(`INSERT INTO knowledge_freshness_active(asset_id,asset_version,project_id) VALUES(?,?,?)
         ON CONFLICT(asset_id) DO UPDATE SET asset_version=excluded.asset_version,project_id=excluded.project_id`)
         .run(record.assetId, record.assetVersion, record.projectId);
+      this.#initializeState(record);
       this.#database.exec("COMMIT");
     } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
     return { status: "PROJECTED", assetId: record.assetId, assetVersion: record.assetVersion, anchorCount: record.anchors.length };
@@ -144,7 +199,114 @@ export class SqliteKnowledgeFreshnessStore {
       : this.#database.prepare(`SELECT payload_json,payload_hash FROM knowledge_freshness
           WHERE asset_id=? AND asset_version=?`).get(assetId, assetVersion)) as
       { payload_json: string; payload_hash: string } | undefined;
-    return row === undefined ? undefined : parse(row.payload_json, row.payload_hash);
+    if (row === undefined) return undefined;
+    const projection = parse(row.payload_json, row.payload_hash);
+    const state = this.getState(assetId, assetVersion);
+    return state === undefined ? projection : deepFreeze({ ...projection, freshnessStatus: state.status, updatedAt: state.updatedAt });
+  }
+
+  getState(assetId: string, assetVersion?: number): KnowledgeFreshnessState | undefined {
+    this.#open();
+    if (!safeText(assetId) || (assetVersion !== undefined && (!Number.isSafeInteger(assetVersion) || assetVersion < 1))) {
+      throw new Error("FRESHNESS_STATE_LOOKUP_INVALID");
+    }
+    const row = (assetVersion === undefined
+      ? this.#database.prepare(`SELECT state.* FROM knowledge_freshness_active active JOIN knowledge_freshness_state state
+          ON state.asset_id=active.asset_id AND state.asset_version=active.asset_version WHERE active.asset_id=?`).get(assetId)
+      : this.#database.prepare("SELECT * FROM knowledge_freshness_state WHERE asset_id=? AND asset_version=?").get(assetId, assetVersion)) as
+      Record<string, unknown> | undefined;
+    return row === undefined ? undefined : this.#state(row);
+  }
+
+  #state(row: Record<string, unknown>): KnowledgeFreshnessState {
+    const status = row["status"];
+    const reasonCodes = JSON.parse(String(row["reason_codes_json"])) as unknown;
+    const affectedAssertionIds = JSON.parse(String(row["affected_assertion_ids_json"])) as unknown;
+    if (!new Set(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN"]).has(status as string)
+      || !safeText(String(row["asset_id"])) || !Number.isSafeInteger(Number(row["asset_version"]))
+      || Number(row["asset_version"]) < 1 || !safeText(String(row["project_id"]))
+      || !Number.isSafeInteger(Number(row["revision"])) || Number(row["revision"]) < 0
+      || !safeText(String(row["code_revision"]), 4_096) || !Number.isFinite(Date.parse(String(row["updated_at"])))
+      || (row["graph_revision"] !== null && row["graph_revision"] !== undefined
+        && !safeText(String(row["graph_revision"]), 4_096))
+      || !Array.isArray(reasonCodes) || !reasonCodes.every((item) => typeof item === "string")
+      || !Array.isArray(affectedAssertionIds) || !affectedAssertionIds.every((item) => typeof item === "string")) {
+      throw new Error("FRESHNESS_STATE_CORRUPT");
+    }
+    return deepFreeze({
+      schemaVersion: 1,
+      assetId: String(row["asset_id"]), assetVersion: Number(row["asset_version"]), projectId: String(row["project_id"]),
+      status: status as KnowledgeFreshnessState["status"], revision: Number(row["revision"]),
+      codeRevision: String(row["code_revision"]),
+      ...(row["graph_revision"] === null || row["graph_revision"] === undefined ? {} : { graphRevision: String(row["graph_revision"]) }),
+      reasonCodes, affectedAssertionIds, updatedAt: String(row["updated_at"]),
+    });
+  }
+
+  transition(input: FreshnessStateTransitionInput): FreshnessStateTransitionResult {
+    this.#open();
+    const statuses = new Set(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN"]);
+    if (!safeText(input.assetId) || !safeText(input.projectId) || !safeText(input.codeRevision, 4_096)
+      || (input.graphRevision !== undefined && !safeText(input.graphRevision, 4_096))
+      || !Number.isSafeInteger(input.assetVersion) || input.assetVersion < 1
+      || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0 || !statuses.has(input.status)
+      || !Number.isFinite(Date.parse(input.updatedAt)) || input.reasonCodes.length > 1_000 || input.affectedAssertionIds.length > 10_000
+      || ![...input.reasonCodes, ...input.affectedAssertionIds].every((item) => safeText(item))) {
+      throw new Error("FRESHNESS_STATE_TRANSITION_INVALID");
+    }
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#database.prepare("SELECT * FROM knowledge_freshness_state WHERE asset_id=? AND asset_version=?")
+        .get(input.assetId, input.assetVersion) as Record<string, unknown> | undefined;
+      if (row === undefined) throw new Error("FRESHNESS_STATE_NOT_FOUND");
+      const current = this.#state(row);
+      if (current.projectId !== input.projectId) throw new Error("FRESHNESS_STATE_PROJECT_CONFLICT");
+      const same = current.status === input.status && current.codeRevision === input.codeRevision
+        && current.graphRevision === input.graphRevision
+        && canonical(current.reasonCodes) === canonical(input.reasonCodes)
+        && canonical(current.affectedAssertionIds) === canonical(input.affectedAssertionIds);
+      if (same) { this.#database.exec("COMMIT"); return { status: "IDEMPOTENT", state: current }; }
+      if (current.revision !== input.expectedRevision) throw new Error("FRESHNESS_STATE_REVISION_CONFLICT");
+      const next: KnowledgeFreshnessState = deepFreeze({
+        schemaVersion: 1, assetId: input.assetId, assetVersion: input.assetVersion, projectId: input.projectId,
+        status: input.status, revision: current.revision + 1, codeRevision: input.codeRevision,
+        ...(input.graphRevision === undefined ? {} : { graphRevision: input.graphRevision }),
+        reasonCodes: Object.freeze([...input.reasonCodes]), affectedAssertionIds: Object.freeze([...input.affectedAssertionIds]),
+        updatedAt: input.updatedAt,
+      });
+      const update = this.#database.prepare(`UPDATE knowledge_freshness_state SET status=?,revision=?,code_revision=?,graph_revision=?,
+        reason_codes_json=?,affected_assertion_ids_json=?,updated_at=? WHERE asset_id=? AND asset_version=? AND revision=?`).run(
+        next.status, next.revision, next.codeRevision, next.graphRevision ?? null, canonical(next.reasonCodes),
+        canonical(next.affectedAssertionIds), next.updatedAt, next.assetId, next.assetVersion, input.expectedRevision,
+      );
+      if (Number(update.changes) !== 1) throw new Error("FRESHNESS_STATE_REVISION_CONFLICT");
+      const eventId = `freshness-${hash(canonical(next))}`;
+      this.#database.prepare(`INSERT INTO knowledge_freshness_state_events
+        (event_id,asset_id,asset_version,previous_status,status,revision,project_id,code_revision,graph_revision,
+        reason_codes_json,affected_assertion_ids_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        eventId, next.assetId, next.assetVersion, current.status, next.status, next.revision, next.projectId,
+        next.codeRevision, next.graphRevision ?? null, canonical(next.reasonCodes), canonical(next.affectedAssertionIds), next.updatedAt,
+      );
+      this.#database.exec("COMMIT");
+      return { status: "TRANSITIONED", state: next };
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+
+  listStateEvents(assetId: string, assetVersion: number, limit = 100): readonly FreshnessStateEvent[] {
+    this.#open();
+    if (!safeText(assetId) || !Number.isSafeInteger(assetVersion) || assetVersion < 1
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new Error("FRESHNESS_STATE_EVENT_QUERY_INVALID");
+    const rows = this.#database.prepare(`SELECT * FROM knowledge_freshness_state_events
+      WHERE asset_id=? AND asset_version=? ORDER BY revision DESC LIMIT ?`).all(assetId, assetVersion, limit) as unknown as Record<string, unknown>[];
+    return Object.freeze(rows.map((row) => {
+      const previousStatus = String(row["previous_status"]);
+      if (!new Set(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN"]).has(previousStatus)) {
+        throw new Error("FRESHNESS_STATE_EVENT_CORRUPT");
+      }
+      return Object.freeze({
+        ...this.#state(row), eventId: String(row["event_id"]), previousStatus: previousStatus as FreshnessStateEvent["previousStatus"],
+      });
+    }));
   }
 
   affected(changes: KnowledgeChangeSet, limit = 500): AffectedKnowledgeResult {

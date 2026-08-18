@@ -2,16 +2,52 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M4 知识演进决策） | 累计 |
+| 指标 | 本轮（M5 CodeGraph 事实层） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 5 |
-| 风险发现 | 7 | 36 |
-| 高风险 | 4 | 18 |
-| 中风险 | 2 | 15 |
-| 低风险 | 1 | 3 |
-| 已修复 | 7 | 36 |
+| Review 次数 | 1 | 6 |
+| 风险发现 | 6 | 42 |
+| 高风险 | 3 | 21 |
+| 中风险 | 2 | 17 |
+| 低风险 | 1 | 4 |
+| 已修复 | 6 | 42 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 18 分 25 秒 | 已知耗时 1 小时 03 分 28 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 7 分 35 秒 | 已知耗时 1 小时 11 分 03 秒（首轮历史报告未记录耗时） |
+
+## M5 审查结论
+
+M5 将 CodeGraph 定位为实时代码事实提供者，而非 ZhiLoop 知识库的替代或权威正文。新增的 `code-intelligence` 只暴露规范化路径、行号和符号事实；`codegraph-adapter` 使用非 shell argv 调用、版本/健康协商和指纹缓存。6 个问题全部修复，并通过本机 CodeGraph 0.9.4 真实只读烟测。
+
+## M5 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | CodeGraph 原始 query 包含内部 node ID、score 和 backend 字段 | Vendor 实现细节进入 Evidence/Knowledge，后续无法替换适配器 | 严格投影为 symbol/kind/path/line/language/exported；测试明确断言 node ID 不存在 |
+| 高 | 未初始化与健康索引的空结果可被混同 | 未配置 CodeGraph 时可将真实符号误判为不存在 | 先协商 READY/NOT_CONFIGURED/INCOMPATIBLE/UNAVAILABLE；非 READY 探针恒为 UNKNOWN，不调 query |
+| 高 | 版本调用超时时初始逻辑仍根据 stdout 标记 INCOMPATIBLE | 运行故障被误分类为永久配置问题，无法正确重试 | 进程失败/超时/输出超限先级高于版本解析；回归测试 |
+| 中 | CodeGraph fuzzy query 可返回同类名和子成员 | 单看“有返回”会产生虚假 SYMBOL_EXISTS Evidence | Probe 再比较精确 symbol 和可选 path；健康空命中才是 REFUTED |
+| 中 | 不绑定代码指纹的查询缓存会返回旧事实 | 代码改动后知识仍被旧结果支持 | LRU key 包含 root + projectFingerprint + operation + query + limit；指纹改变重查测试 |
+| 低 | 子进程 stdout/stderr 最初可无界增长 | 损坏或恶意适配器输出导致内存压力 | 1 MB 硬上限，超限 SIGKILL；所有操作 10 ms–10 s 超时边界；不记录原始 stderr |
+
+## M5 关键维度确认
+
+- **进程边界**：`spawn(executable, argv, shell:false)`，最小 PATH 环境，不使用用户内容构造 shell 字符串。
+- **写入边界**：Adapter 只允许 version/status/query/callers/impact，没有 init/index/sync 代码路径。
+- **能力边界**：当前实际包为自包含 CLI，无可导入 SDK；因此首版使用可测 ProcessPort，保留了后续 SDK Adapter 替换点。
+- **Evidence 边界**：非 READY 只能 UNKNOWN；精确命中才 SUPPORTED；健康空结果才 REFUTED。
+- **交付边界**：本模块提供真实 Probe 和适配器；默认后台仍不擅自初始化项目，配置与控制台激活属于 M7/M8。
+
+## M5 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，63 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 157 files，1368/1368 通过 |
+| Coverage | statements 90.12%，branches 85.05%，functions 91.74%，lines 93.67% |
+| Real CodeGraph smoke | 0.9.4 READY，KnowledgeWorkerRuntime 规范化查询通过 |
+| OpenSpec strict validation | `connect-codegraph-fact-layer` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M4 审查结论
 

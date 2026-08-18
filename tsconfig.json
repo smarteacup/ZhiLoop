@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "./packages/domain" },
+    { "path": "./packages/code-intelligence" },
+    { "path": "./packages/codegraph-adapter" },
     { "path": "./packages/schemas" },
     { "path": "./packages/config" },
     { "path": "./packages/control-api" },

@@ -1,0 +1,14 @@
+{
+  "name": "@zhiloop/codegraph-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": ["@zhiloop/code-intelligence"],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" },
+  "dependencies": { "@zhiloop/code-intelligence": "0.0.0" }
+}

@@ -2,16 +2,53 @@
 
 ## 审查统计
 
-| 指标 | 本轮（Durable Knowledge Revalidation） | 累计 |
+| 指标 | 本轮（Knowledge Repair Drafts） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 13 |
-| 风险发现 | 9 | 99 |
-| 高风险 | 3 | 44 |
-| 中风险 | 6 | 47 |
+| Review 次数 | 1 | 14 |
+| 风险发现 | 6 | 105 |
+| 高风险 | 2 | 46 |
+| 中风险 | 4 | 51 |
 | 低风险 | 0 | 8 |
-| 已修复 | 9 | 94 |
+| 已修复 | 6 | 100 |
 | 未解决 | 0 | 5 |
-| 本轮耗时 | 约 80 分钟 | 已知耗时约 4 小时 54 分钟（首轮历史报告未记录耗时） |
+| 本轮耗时 | 约 45 分钟 | 已知耗时约 5 小时 39 分钟（首轮历史报告未记录耗时） |
+
+## Knowledge Repair Drafts 审查结论
+
+Freshness 冲突现在会携带精确 Verification run 身份进入 durable repair job，并生成一个不修改旧知识的 `PENDING` 草稿。草稿存储以 exact asset/version/content hash 和 conflict run 为幂等身份，后续 Candidate 必须重新以 `PROPOSED` 进入正常门禁；`PROMOTED` 也只代表已有下游 intake receipt。审查覆盖身份、CAS、SQLite、隐私、旧版本、调度顺序、崩溃恢复、资源生命周期和覆盖率，6 个发现均已修复。
+
+## Knowledge Repair Drafts 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 初版 effect replay 要求历史结果等于草稿当前状态 | 草稿从 READY 继续到 PROMOTED 后，重放早期 attach effect 会被误报损坏，破坏幂等语义 | receipt 只验证自身 hash、命令身份和历史结果结构，不与后来状态比较；跨后续状态重放测试通过 |
+| 高 | Sidecar 新增草稿库后，构造/stop 异常仍可能提前退出清理 | 数据库锁泄漏、半启动实例或后续重启失败 | source→draft→jobs→intake 每级构造失败逆序关闭；close 即使 stop 失败也排空 worker 并逐项关闭全部资源 |
+| 中 | effect 输入哈希未绑定 expected revision 与 updatedAt | 同 key、同 payload 但不同命令时序会被静默当作重放，掩盖调用方冲突 | effect hash 纳入 operation、draftId、expectedRevision、updatedAt 和语义 payload；差异重放返回冲突 |
+| 中 | 通用文本校验禁止换行 | 正常 Markdown 知识正文会被草稿库误拒，真实冲突无法沉淀 | ID/原因码继续禁控制字符，summary/body 改为允许换行但限制 NUL 与长度；多行正文回归测试 |
+| 中 | source Candidate 最初只检查 ID/status | 损坏的 assertion ownership、时间、episode 或 Evidence hint 可进入长期修复输入 | 补 Candidate 结构、范围、assertion candidateId、时间和提示字段检查；损坏输入矩阵 fail closed |
+| 中 | 新 workspace 最初未纳入全仓 coverage include | 全量测试看似通过，但草稿核心异常分支不受 90%/85% 门禁保护 | 将 `knowledge-repair-drafts` 加入 coverage，补损坏 payload/effect、分页、CAS、checkpoint、取消和 transient failure 测试 |
+
+## Knowledge Repair Drafts 关键维度确认
+
+- **身份链**：Verification service 的稳定 runId 按 asset 一一映射，经 Freshness worker 校验后进入 repair job；handler 再核对 project、Candidate、knowledge version、code/graph revision 和 refuted assertion。
+- **调度与恢复**：Freshness effect 先提交，repair job 入队后才提交 page checkpoint；两处之间退出会重放同一 run 和同一 job key，最终只有一个草稿。
+- **权限边界**：自动流程不生成缺少 live fact 的替代正文；新 Candidate 只能是 `PROPOSED`，不能复用旧 Candidate ID，`inheritedAuthorization` 固定为 false。
+- **存储边界**：SQLite 使用 0600、WAL/FULL、STRICT、canonical payload hash、unique conflict identity、revision CAS 和 effect receipt；查询、正文、断言和页大小均有界。
+- **隐私边界**：任务投影继续只展示类型、实体、进度和原因；草稿正文只通过独立的受界 read API 获取，不进入后台任务列表。
+- **兼容边界**：Registry、Markdown、Freshness 原记录和 lifecycle 均不改写；历史 revalidation Gate 报告标注了后续 capability 升级。
+
+## Knowledge Repair Drafts Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，72 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7 Gate | 60/60 通过 |
+| Vitest unit/integration | 185 files，1,593/1,593 通过 |
+| Coverage | statements 90.02%，branches 85.13%，functions 92.06%，lines 93.80% |
+| OpenSpec strict validation | `generate-knowledge-repair-drafts` 有效 |
+| 持久化回放 | draft insert 后/检查点前退出，第二 worker 恢复为同一草稿，旧 content hash 不变 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## Durable Knowledge Revalidation 审查结论
 

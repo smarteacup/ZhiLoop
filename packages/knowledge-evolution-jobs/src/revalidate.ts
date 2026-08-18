@@ -1,4 +1,4 @@
-import { parseEvolutionJobInput } from "@zhiloop/evolution-job-runtime";
+import { parseEvolutionJobInput, type KnowledgeRepairDraftJobInput } from "@zhiloop/evolution-job-runtime";
 import {
   JobCancellationRequestedError,
   JobLeaseLostError,
@@ -57,6 +57,7 @@ export interface KnowledgeRevalidateHandlerOptions {
     "freezeAffectedSnapshot" | "getAffectedSnapshot" | "readAffectedSnapshotPage" | "get" | "getState" | "transitionWithEffect">;
   readonly verifier: FreshnessRevalidationPort;
   readonly recipes?: KnowledgeRecipeResolver;
+  readonly repairJobs?: { enqueue(input: KnowledgeRepairDraftJobInput): unknown };
   readonly pageSize?: number;
   readonly maxTargets?: number;
 }
@@ -203,6 +204,11 @@ export function createKnowledgeRevalidateHandler(options: KnowledgeRevalidateHan
           const result = await new KnowledgeFreshnessWorker(adapter, options.verifier)
             .run(changes, available.length, context.signal);
           if (result.affectedCount !== available.length) throw new NonRetryableJobError("REVALIDATE_RESULT_CARDINALITY_INVALID");
+          for (const item of result.items.filter((entry) => entry.state.status === "CONFLICT")) {
+            context.throwIfCancellationRequested();
+            options.repairJobs?.enqueue({ schemaVersion: 1, jobType: "KNOWLEDGE_REPAIR_DRAFT", projectId: parsed.projectId,
+              assetId: item.assetId, assetVersion: item.assetVersion, conflictRunId: item.verificationRunId });
+          }
         }
         const cursor = page.items.at(-1)!;
         const processedCount = state.processedCount + page.items.length;

@@ -73,7 +73,8 @@ class FakeVerifier implements FreshnessRevalidationPort {
         observedAt: input.changes.observedAt, reasonCodes: ["SUPPORTED"] };
     })]));
     return { projectId: input.projectId, codeRevision: input.changes.sourceRef,
-      observedAt: input.changes.observedAt, results };
+      observedAt: input.changes.observedAt,
+      runIds: Object.fromEntries(input.items.map((item) => [item.assetId, `run-${item.assetId}-${input.changes.sourceRef}`])), results };
   }
 }
 
@@ -207,6 +208,33 @@ describe("KNOWLEDGE_REVALIDATE durable handler", () => {
       milliseconds += 10;
       expect(await runtime.runOnce()).toMatchObject({ status: "SUCCEEDED" });
       expect(value.freshness.listStateEvents("asset-1", 1)).toHaveLength(1);
+      expect(value.source.baseline("project-1")?.revision).toBe(2);
+    } finally { runtime.close(); value.freshness.close(); value.source.close(); }
+  });
+
+  it("enqueues one idempotent repair identity after conflict and before the page checkpoint", async () => {
+    const value = await fixture(1);
+    const verifier = new FakeVerifier();
+    const unique = new Map<string, unknown>(); let calls = 0; let failAfterEnqueue = true;
+    const repairJobs = { enqueue: (input: Parameters<NonNullable<Parameters<typeof createKnowledgeRevalidateHandler>[0]["repairJobs"]>["enqueue"]>[0]) => {
+      calls += 1; unique.set(`${input.assetId}@${input.assetVersion}:${input.conflictRunId}`, input);
+      if (failAfterEnqueue) { failAfterEnqueue = false; throw new Error("PROCESS_EXIT_AFTER_REPAIR_ENQUEUE"); }
+      return input;
+    } };
+    let milliseconds = Date.parse(at);
+    const runtime = new EvolutionJobRuntime(join(value.state, "repair-schedule-jobs.sqlite"), { workerId: "worker-repair", handlers: {
+      KNOWLEDGE_REVALIDATE: createKnowledgeRevalidateHandler({ source: value.source, store: value.freshness, verifier, repairJobs }),
+    }, store: { clock: () => new Date(milliseconds), random: () => 0,
+      retryPolicy: { baseDelayMs: 10, maxDelayMs: 10, jitterRatio: 0 } } });
+    try {
+      runtime.enqueue(value.input, 3);
+      expect(await runtime.runOnce()).toMatchObject({ status: "RETRY_WAIT" });
+      expect(value.freshness.listStateEvents("asset-1", 1)).toHaveLength(1);
+      milliseconds += 10;
+      expect(await runtime.runOnce()).toMatchObject({ status: "SUCCEEDED" });
+      expect(calls).toBe(2); expect(unique.size).toBe(1);
+      expect([...unique.values()][0]).toMatchObject({ jobType: "KNOWLEDGE_REPAIR_DRAFT", projectId: "project-1",
+        assetId: "asset-1", assetVersion: 1, conflictRunId: expect.stringContaining("run-asset-1-") });
       expect(value.source.baseline("project-1")?.revision).toBe(2);
     } finally { runtime.close(); value.freshness.close(); value.source.close(); }
   });

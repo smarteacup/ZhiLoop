@@ -32,6 +32,8 @@ export interface FreshnessBatchVerificationResult {
   readonly codeRevision: string;
   readonly graphRevision?: string;
   readonly observedAt: string;
+  /** Exact durable verification run used for each requested knowledge version. */
+  readonly runIds: Readonly<Record<string, string>>;
   readonly results: Readonly<Record<string, readonly VerificationResult[]>>;
 }
 
@@ -50,6 +52,7 @@ export interface FreshnessWorkerResultItem {
   readonly state: KnowledgeFreshnessState;
   readonly plan: FreshnessPlan;
   readonly writeStatus: "TRANSITIONED" | "IDEMPOTENT";
+  readonly verificationRunId: string;
 }
 
 export interface FreshnessWorkerRunResult {
@@ -69,7 +72,7 @@ function validateBatch(
   batch: FreshnessBatchVerificationResult,
   changes: KnowledgeChangeSet,
   requestedItems: readonly FreshnessRevalidationItem[],
-): ReadonlyMap<string, readonly VerificationResult[]> {
+): { readonly results: ReadonlyMap<string, readonly VerificationResult[]>; readonly runIds: ReadonlyMap<string, string> } {
   if (batch.projectId !== changes.projectId || batch.codeRevision !== changes.sourceRef || !safe(batch.codeRevision)
     || (batch.graphRevision !== undefined && !safe(batch.graphRevision))
     || !Number.isFinite(Date.parse(batch.observedAt))) throw new Error("FRESHNESS_BATCH_IDENTITY_INVALID");
@@ -94,7 +97,14 @@ function validateBatch(
     verified.set(assetId, results);
   }
   if (verified.size !== requested.size) throw new Error("FRESHNESS_BATCH_RESULT_INCOMPLETE");
-  return verified;
+  const runIds = new Map<string, string>();
+  for (const [assetId, runId] of Object.entries(batch.runIds)) {
+    if (!requested.has(assetId)) throw new Error("FRESHNESS_BATCH_RUN_UNREQUESTED");
+    if (!safe(runId, 1_000)) throw new Error("FRESHNESS_BATCH_RUN_IDENTITY_INVALID");
+    runIds.set(assetId, runId);
+  }
+  if (runIds.size !== requested.size) throw new Error("FRESHNESS_BATCH_RUN_INCOMPLETE");
+  return Object.freeze({ results: verified, runIds });
 }
 
 export function selectAffectedAssertionIds(record: KnowledgeFreshnessRecord, changes: KnowledgeChangeSet): readonly string[] {
@@ -144,14 +154,15 @@ export class KnowledgeFreshnessWorker {
       const record = this.store.get(item.assetId, item.assetVersion);
       const current = this.store.getState(item.assetId, item.assetVersion);
       if (record === undefined || current === undefined) throw new Error("FRESHNESS_WORKER_STATE_MISSING");
-      const plan = planKnowledgeFreshness({ record, changes, revalidationResults: verified.get(item.assetId) ?? [] });
+      const plan = planKnowledgeFreshness({ record, changes, revalidationResults: verified.results.get(item.assetId) ?? [] });
       const written = this.store.transition({
         assetId: item.assetId, assetVersion: item.assetVersion, expectedRevision: current.revision,
         projectId: changes.projectId, status: plan.freshnessStatus, codeRevision: batch.codeRevision,
         ...(batch.graphRevision === undefined ? {} : { graphRevision: batch.graphRevision }),
         reasonCodes: plan.reasonCodes, affectedAssertionIds: plan.affectedAssertionIds, updatedAt: batch.observedAt,
       });
-      output.push(Object.freeze({ assetId: item.assetId, assetVersion: item.assetVersion, state: written.state, plan, writeStatus: written.status }));
+      output.push(Object.freeze({ assetId: item.assetId, assetVersion: item.assetVersion, state: written.state, plan,
+        writeStatus: written.status, verificationRunId: verified.runIds.get(item.assetId)! }));
     }
     return Object.freeze({
       projectId: changes.projectId, codeRevision: batch.codeRevision,

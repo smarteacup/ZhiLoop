@@ -7,6 +7,8 @@
     { "path": "../evolution-job-runtime" },
     { "path": "../job-runtime" },
     { "path": "../invalidation-engine" },
-    { "path": "../knowledge-freshness" }
+    { "path": "../knowledge-freshness" },
+    { "path": "../knowledge-repair-drafts" },
+    { "path": "../knowledge-verification" }
   ]
 }

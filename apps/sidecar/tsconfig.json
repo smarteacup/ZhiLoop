@@ -35,6 +35,7 @@
     { "path": "../../packages/knowledge-governance-service" },
     { "path": "../../packages/knowledge-indexer" },
     { "path": "../../packages/knowledge-freshness" },
+    { "path": "../../packages/knowledge-repair-drafts" },
     { "path": "../../packages/knowledge-mcp" },
     { "path": "../../packages/knowledge-reranker" },
     { "path": "../../packages/knowledge-registry" },

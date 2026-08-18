@@ -76,6 +76,7 @@ export class ProductionFreshnessVerifier {
     if (failed) throw failure;
 
     const results: Record<string, FreshnessBatchVerificationResult["results"][string]> = {};
+    const runIds: Record<string, string> = {};
     let graphRevision: string | undefined;
     for (const [index, item] of input.items.entries()) {
       const batch = batches[index]!;
@@ -85,11 +86,12 @@ export class ProductionFreshnessVerifier {
         graphRevision = batch.graphRevision;
       }
       results[item.assetId] = batch.results;
+      runIds[item.assetId] = batch.runId;
     }
     const verified = Object.freeze({
       projectId: input.projectId, codeRevision: input.changes.sourceRef,
       ...(graphRevision === undefined ? {} : { graphRevision }),
-      observedAt: input.changes.observedAt, results: Object.freeze(results),
+      observedAt: input.changes.observedAt, runIds: Object.freeze(runIds), results: Object.freeze(results),
     });
     this.onVerified?.({ projectId: input.projectId, codeRevision: input.changes.sourceRef,
       ...(graphRevision === undefined ? {} : { graphRevision }) });

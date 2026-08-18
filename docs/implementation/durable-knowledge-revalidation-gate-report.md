@@ -17,7 +17,7 @@ Observed at: `2026-08-19T04:51:00+08:00`
 | Freshness Gate | exact project/content/code/graph revision matching; optional targeted verification; deterministic compensation | current/missing/mismatch/conflict/unknown, timeout, cancellation, degraded stores, repeat prompt and P95 latency tests |
 | Sidecar/Console | startup recovery, single worker, timer drain, validate-before-swap configuration, health/capability/job projection and Chinese labels | composition, configuration rollback, actual release install, SIGTERM/restart and API compatibility tests |
 
-The future job types `KNOWLEDGE_REPAIR_DRAFT`, `CODEGRAPH_INITIALIZE`, and `LEGACY_KNOWLEDGE_MIGRATION` are intentionally persisted as typed capabilities but remain `NOT_CONFIGURED`. Enqueue is rejected before persistence until a later change registers their handlers.
+At the time of this gate, the future job types `KNOWLEDGE_REPAIR_DRAFT`, `CODEGRAPH_INITIALIZE`, and `LEGACY_KNOWLEDGE_MIGRATION` remained `NOT_CONFIGURED`. `KNOWLEDGE_REPAIR_DRAFT` was subsequently registered by `generate-knowledge-repair-drafts`; the other two still reject enqueue before persistence.
 
 ## Real Codex and CodeGraph replay
 
@@ -78,4 +78,4 @@ Together these gates prove no duplicate Ledger, Candidate Preview dispatch, Fres
 
 The code review is recorded in `code_review.md`. Findings concerning exact revision coverage, legacy baseline migration, restart root recovery, package dependency direction, validate-before-swap configuration, graph applicability, compensation traceability, degraded capability projection, and shutdown order were fixed before this report.
 
-Repair Draft generation, semantic evolution judgment, CodeGraph initialization execution, legacy migration execution, and their operator commands remain intentionally outside this change and continue to report `NOT_CONFIGURED`; they are not silently simulated by the completed revalidation path.
+Repair Draft generation was intentionally outside this historical change and is now implemented by the subsequent `generate-knowledge-repair-drafts` change. Semantic evolution judgment, CodeGraph initialization execution, legacy migration execution, and their operator commands remain outside this report; they are not silently simulated by the revalidation path.

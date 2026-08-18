@@ -3,9 +3,11 @@ import { join } from "node:path";
 
 import { EvolutionJobRuntime, type EvolutionJobCapability, type EvolutionJobProjection } from "@zhiloop/evolution-job-runtime";
 import { GitKnowledgeChangeSource, KnowledgeChangeIntake, type KnowledgeChangeIntakeState } from "@zhiloop/knowledge-change-intake";
-import { createKnowledgeCompileHandler, createKnowledgeRevalidateHandler } from "@zhiloop/knowledge-evolution-jobs";
+import { createKnowledgeCompileHandler, createKnowledgeRepairDraftHandler, createKnowledgeRevalidateHandler } from "@zhiloop/knowledge-evolution-jobs";
 import type { FreshnessCompensationPort, LiveKnowledgeRevisionReadPort, SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
 import type { FreshnessSchedulerConfiguration } from "@zhiloop/knowledge-freshness";
+import { SqliteKnowledgeRepairDraftStore, type KnowledgeRepairDraft, type RepairDraftListRequest,
+  type RepairDraftPage } from "@zhiloop/knowledge-repair-drafts";
 
 import { P2DurableKnowledgeCompilationPort } from "./p2-evolution-jobs.js";
 import { ProductionFreshnessVerifier } from "./p2-freshness-runtime.js";
@@ -87,6 +89,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   readonly #source: GitKnowledgeChangeSource;
   readonly #jobs: EvolutionJobRuntime;
   readonly #verifier: ProductionFreshnessVerifier;
+  readonly #repairDrafts: SqliteKnowledgeRepairDraftStore;
   readonly #roots = new Map<string, string>();
   readonly #stateDirectory: string;
   #configuration: P2EvolutionRuntimeConfiguration;
@@ -104,7 +107,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   constructor(options: {
     readonly stateDirectory: string;
     readonly freshnessStore: SqliteKnowledgeFreshnessStore;
-    readonly production: Pick<P2ProductionComposition, "verification">;
+    readonly production: Pick<P2ProductionComposition, "verification" | "verificationStore">;
     readonly preview: P2CandidatePreviewPort;
     readonly p2Runtime: P2SidecarRuntime;
     readonly configuration?: Partial<P2EvolutionRuntimeConfiguration>;
@@ -114,6 +117,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     this.#configuration = normalizeP2EvolutionRuntimeConfiguration(options.configuration);
     // Reuse the legacy filename so its acknowledged baseline is migrated in place instead of silently reset.
     this.#source = new GitKnowledgeChangeSource(join(options.stateDirectory, "git-freshness-baseline.sqlite"));
+    try { this.#repairDrafts = new SqliteKnowledgeRepairDraftStore(join(options.stateDirectory, "knowledge-repair-drafts.sqlite")); }
+    catch (error) { this.#source.close(); throw error; }
     this.#verifier = new ProductionFreshnessVerifier(options.production.verification, (revision) => {
       if (revision.graphRevision !== undefined) {
         try { this.#intake.updateGraphRevision(revision.projectId, revision.codeRevision, revision.graphRevision); }
@@ -124,19 +129,34 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
       this.#roots.set(project.projectId, project.repositoryRoot);
       this.#verifier.observe(project.projectId, project.repositoryRoot);
     }
-    this.#jobs = new EvolutionJobRuntime(join(options.stateDirectory, "evolution-jobs.sqlite"), {
-      workerId: `sidecar-${process.pid}-${randomUUID()}`,
-      leaseMs: this.#configuration.leaseMs,
-      heartbeatMs: this.#configuration.heartbeatMs,
-      handlers: {
-        KNOWLEDGE_REVALIDATE: async (context) => await createKnowledgeRevalidateHandler({ source: this.#source,
-          store: options.freshnessStore, verifier: this.#verifier, pageSize: this.#configuration.revalidationPageSize,
-          maxTargets: this.#configuration.maxAffectedPerJob })(context),
-        KNOWLEDGE_COMPILE: createKnowledgeCompileHandler(new P2DurableKnowledgeCompilationPort(options.preview, options.p2Runtime)),
-      },
-    });
+    try {
+      this.#jobs = new EvolutionJobRuntime(join(options.stateDirectory, "evolution-jobs.sqlite"), {
+        workerId: `sidecar-${process.pid}-${randomUUID()}`,
+        leaseMs: this.#configuration.leaseMs,
+        heartbeatMs: this.#configuration.heartbeatMs,
+        handlers: {
+          KNOWLEDGE_REVALIDATE: async (context) => await createKnowledgeRevalidateHandler({ source: this.#source,
+            store: options.freshnessStore, verifier: this.#verifier, pageSize: this.#configuration.revalidationPageSize,
+            maxTargets: this.#configuration.maxAffectedPerJob,
+            repairJobs: { enqueue: (input) => this.enqueue(input, this.#configuration.maxAttempts) } })(context),
+          KNOWLEDGE_COMPILE: createKnowledgeCompileHandler(new P2DurableKnowledgeCompilationPort(options.preview, options.p2Runtime)),
+          KNOWLEDGE_REPAIR_DRAFT: createKnowledgeRepairDraftHandler({ freshness: options.freshnessStore,
+            verification: options.production.verificationStore, drafts: this.#repairDrafts }),
+        },
+      });
+    } catch (error) {
+      this.#repairDrafts.close();
+      this.#source.close();
+      throw error;
+    }
     this.#onJob = options.onJob;
-    this.#intake = this.#createIntake(this.#configuration);
+    try { this.#intake = this.#createIntake(this.#configuration); }
+    catch (error) {
+      this.#jobs.close();
+      this.#repairDrafts.close();
+      this.#source.close();
+      throw error;
+    }
   }
 
   readonly #onJob: ((job: EvolutionJobProjection) => void) | undefined;
@@ -219,6 +239,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   }
 
   listJobs(limit = 100): readonly EvolutionJobProjection[] { return this.#jobs.list({ limit }).items; }
+  getRepairDraft(draftId: string): KnowledgeRepairDraft | undefined { this.#assertOpen(); return this.#repairDrafts.get(draftId); }
+  listRepairDrafts(request: RepairDraftListRequest): RepairDraftPage { this.#assertOpen(); return this.#repairDrafts.list(request); }
 
   async applyConfiguration(configuration: FreshnessSchedulerConfiguration): Promise<() => Promise<void>> {
     this.#assertOpen();
@@ -242,12 +264,14 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     if (this.#pollTimer !== undefined) clearTimeout(this.#pollTimer);
     this.#pollTimer = undefined;
     this.#workerAbort?.abort(new Error("P2_EVOLUTION_RUNTIME_STOPPED"));
-    await this.#intake.stop();
+    let failure: unknown;
+    try { await this.#intake.stop(); } catch (error) { failure = error; }
     await this.#workerTail?.catch(() => undefined);
-    this.#intake.close();
-    this.#jobs.close();
-    this.#source.close();
+    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#repairDrafts.close(), () => this.#source.close()]) {
+      try { close(); } catch (error) { failure ??= error; }
+    }
     this.#closed = true;
+    if (failure !== undefined) throw failure;
   }
 
   #createIntake(configuration: P2EvolutionRuntimeConfiguration): KnowledgeChangeIntake {

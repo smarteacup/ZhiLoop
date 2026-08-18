@@ -44,7 +44,7 @@
 |---|---|---|
 | `KNOWLEDGE_COMPILE` 外层作业 | READY | 自动调度只创建/复用 Preview；不会越过显式 Commit |
 | `KNOWLEDGE_REVALIDATE` | READY | 固定当前代码 Recipe 集合，逐页 checkpoint，baseline 最后 CAS 推进 |
-| `KNOWLEDGE_REPAIR_DRAFT` | NOT_CONFIGURED | 类型已预留，未注册 handler 时入队前拒绝 |
+| `KNOWLEDGE_REPAIR_DRAFT` | READY | `CONFLICT` 自动创建可追溯 `PENDING` 草稿；不改旧知识、不生成无依据正文、不继承发布授权 |
 | `CODEGRAPH_INITIALIZE` | NOT_CONFIGURED | Hook/门禁绝不隐式初始化 CodeGraph |
 | `LEGACY_KNOWLEDGE_MIGRATION` | NOT_CONFIGURED | 未实现迁移 handler 前不接受操作请求 |
 | 精确 Freshness 门禁 | READY | 代码/图 revision 不一致即排除；非代码知识继续；总预算不超过 200ms |

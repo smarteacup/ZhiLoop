@@ -43,7 +43,8 @@ function runtime(state: string, options: { readonly configuration?: ConstructorP
     service: () => ({ listSnapshots: () => ({ items: [] }), getSnapshot: () => undefined }),
     candidatePreviewJobForSnapshot: () => undefined,
   } as unknown as P2SidecarRuntime;
-  const production = { verification: { verifyBatch: async () => { throw new Error("unexpected verification"); } } } as unknown as Pick<P2ProductionComposition, "verification">;
+  const production = { verification: { verifyBatch: async () => { throw new Error("unexpected verification"); } },
+    verificationStore: { getRun: () => undefined } } as unknown as Pick<P2ProductionComposition, "verification" | "verificationStore">;
   return { freshness, runtime: new P2EvolutionRuntime({ stateDirectory: state, freshnessStore: freshness,
     production, preview, p2Runtime: p2, configuration: { workerPollIntervalMs: 60_000, ...options.configuration },
     ...(options.onJob === undefined ? {} : { onJob: options.onJob }) }) };
@@ -86,6 +87,8 @@ describe("P2EvolutionRuntime", () => {
     const fixture = runtime(state, { configuration: { enabled: false } });
     fixture.runtime.observeProject("project-1", root);
     expect(fixture.runtime.state()).toMatchObject({ status: "DISABLED", activeJobs: 0 });
+    expect(fixture.runtime.state().capabilities).toContainEqual(expect.objectContaining({ jobType: "KNOWLEDGE_REPAIR_DRAFT", status: "READY" }));
+    expect(fixture.runtime.listRepairDrafts({ limit: 10 }).items).toEqual([]);
     expect(await fixture.runtime.start()).toBe(true);
     expect(await fixture.runtime.start()).toBe(false);
     await fixture.runtime.trigger();
@@ -104,6 +107,7 @@ describe("P2EvolutionRuntime", () => {
     expect(() => fixture.runtime.jobs()).toThrow("RUNTIME_CLOSED");
     expect(() => fixture.runtime.read("project-1")).toThrow("RUNTIME_CLOSED");
     expect(() => fixture.runtime.schedule(request)).toThrow("RUNTIME_CLOSED");
+    expect(() => fixture.runtime.listRepairDrafts({ limit: 10 })).toThrow("RUNTIME_CLOSED");
     fixture.freshness.close();
   });
 

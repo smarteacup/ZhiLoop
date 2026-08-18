@@ -31,6 +31,7 @@
     { "path": "./packages/evidence-policy" },
     { "path": "./packages/knowledge-evolution" },
     { "path": "./packages/knowledge-evolution-jobs" },
+    { "path": "./packages/knowledge-repair-drafts" },
     { "path": "./packages/knowledge-freshness" },
     { "path": "./packages/context-prewarm" },
     { "path": "./packages/invalidation-engine" },

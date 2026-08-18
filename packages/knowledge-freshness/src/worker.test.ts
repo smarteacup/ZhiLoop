@@ -52,6 +52,7 @@ describe("KnowledgeFreshnessWorker", () => {
     let status: VerificationResult["status"] = "SUPPORTED";
     const verifyBatch = vi.fn(async (input: Parameters<ConstructorParameters<typeof KnowledgeFreshnessWorker>[1]["verifyBatch"]>[0]) => ({
       projectId: input.projectId, codeRevision: input.changes.sourceRef, graphRevision: "graph-2", observedAt: at,
+      runIds: { "asset-one": `run-${input.changes.sourceRef}` },
       results: { "asset-one": [result("one", status)] },
     }));
     const worker = new KnowledgeFreshnessWorker(store, { verifyBatch });
@@ -68,11 +69,13 @@ describe("KnowledgeFreshnessWorker", () => {
     using store = new SqliteKnowledgeFreshnessStore(":memory:"); store.project(projection("one")); store.project(projection("two"));
     const bounded = await new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => ({
       projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at,
+      runIds: Object.fromEntries(input.items.map((item) => [item.assetId, `run-${item.assetId}`])),
       results: Object.fromEntries(input.items.map((item) => [item.assetId, [result(item.assetId.slice(6), "UNKNOWN")]])),
     }) }).run(changes(), 1);
     expect(bounded).toMatchObject({ bounded: true, affectedCount: 1, items: [{ state: { status: "UNKNOWN" } }] });
     const remainder = await new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => ({
       projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at,
+      runIds: Object.fromEntries(input.items.map((item) => [item.assetId, `run-${item.assetId}`])),
       results: Object.fromEntries(input.items.map((item) => [item.assetId, [result(item.assetId.slice(6), "UNKNOWN")]])),
     }) }).run(changes(), 1);
     expect(remainder).toMatchObject({ bounded: false, affectedCount: 1 });
@@ -88,6 +91,7 @@ describe("KnowledgeFreshnessWorker", () => {
     for (const [name, results, error] of cases) {
       const invalid = new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => ({
         projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at, results: { "asset-one": results },
+        runIds: { "asset-one": `run-${name}` },
       }) });
       await expect(invalid.run(changes(`git:head-${name}`))).rejects.toThrow(error);
       expect(store.getState("asset-one")?.revision).toBe(before);
@@ -109,9 +113,26 @@ describe("KnowledgeFreshnessWorker", () => {
       const invalid = new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => {
         const base = result("one", "SUPPORTED");
         return { projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at,
-          results: { "asset-one": [base] }, ...mutate(base) };
+          runIds: { "asset-one": `run-${name}` }, results: { "asset-one": [base] }, ...mutate(base) };
       } });
       await expect(invalid.run(changes(`git:identity-${name}`))).rejects.toThrow(error);
+      expect(store.getState("asset-one")?.revision).toBe(before);
+    }
+    const runCases: Array<[string, "MISSING" | "UNREQUESTED" | "INVALID", string]> = [
+      ["missing", "MISSING", "FRESHNESS_BATCH_RUN_INCOMPLETE"],
+      ["unrequested", "UNREQUESTED", "FRESHNESS_BATCH_RUN_UNREQUESTED"],
+      ["invalid", "INVALID", "FRESHNESS_BATCH_RUN_IDENTITY_INVALID"],
+    ];
+    for (const [name, kind, error] of runCases) {
+      const invalid = new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => {
+        const validRunIds = Object.fromEntries(input.items.map((item) => [item.assetId, `run-${item.assetId}`]));
+        const runIds = kind === "MISSING" ? {} : kind === "UNREQUESTED" ? { ...validRunIds, unknown: "run-unknown" }
+          : { ...validRunIds, [input.items[0]!.assetId]: "bad\nrun" };
+        return { projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at, runIds,
+          results: Object.fromEntries(input.items.map((item) => [item.assetId,
+            [result(item.assetId.slice(6), "SUPPORTED")]])) };
+      } });
+      await expect(invalid.run(changes(`git:run-${name}`))).rejects.toThrow(error);
       expect(store.getState("asset-one")?.revision).toBe(before);
     }
     for (const limit of [0, 10_001, 1.5]) await expect(new KnowledgeFreshnessWorker(store, {
@@ -158,6 +179,7 @@ describe("KnowledgeFreshnessWorker", () => {
     const lateAbort = new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => {
       controller.abort("late cancellation");
       return { projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at,
+        runIds: { "asset-one": "run-late" },
         results: { "asset-one": [result("one", "SUPPORTED")] } };
     } });
     await expect(lateAbort.run(changes(), 500, controller.signal)).rejects.toThrow("FRESHNESS_WORKER_ABORTED");

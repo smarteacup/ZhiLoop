@@ -59,11 +59,14 @@ async function resources() {
   const rollout = new ActiveRolloutService(new MemoryRolloutStateStore(), {
     policyRevision: 1, configFingerprint: `sha256:${"a".repeat(64)}`, versionFingerprint: `sha256:${"b".repeat(64)}`, now,
   });
+  let refreshCalls = 0;
   return {
     stateDirectory,
     feedbackStore,
     feedback,
     rollout,
+    refreshContext: (sessionId: string) => { refreshCalls += 1; return sessionId === "session-p4" ? 2 : 0; },
+    refreshCalls: () => refreshCalls,
     inspectEligibility: async () => ({
       exists: true, currentVersion: 1, current: true, scopeMatched: true, statusEligible: true, suppressed: false,
     }),
@@ -85,6 +88,7 @@ describe("P4SidecarConsole", () => {
       { schemaVersion: 1, requestId: "r9", type: "p4.feedback.record", idempotencyKey: "feedback-1", occurredAt: now, action: "PIN", assetId: "knowledge-p4", expectedKnowledgeVersion: 1, scopeKey: "PROJECT:project-p4", traceId: "trace-p4", actor: "local-console" },
       { schemaVersion: 1, requestId: "r10", type: "p4.high-risk.preview", idempotencyKey: "preview-1", occurredAt: now, expectedPolicyRevision: 1, command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-p4"], projectIds: ["project-p4"], reason: "reviewed", payloadFingerprint: fingerprint } },
       { schemaVersion: 1, requestId: "r11", type: "p4.high-risk.commit", idempotencyKey: "commit-1", occurredAt: now, expectedPolicyRevision: 1, previewId: fingerprint, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" },
+      { schemaVersion: 1, requestId: "r12", type: "p4.context.refresh", sessionId: "session-p4", idempotencyKey: "refresh-1" },
     ];
     for (const request of requests) expect(parseP4ConsoleRequest(request)).toMatchObject({ requestId: request.requestId, type: request.type });
     for (const invalid of [null, [], {}, { schemaVersion: 1, requestId: "bad id", type: "p4.capabilities" }, { schemaVersion: 1, requestId: "r", type: "unknown" }, { schemaVersion: 2, requestId: "r", type: "p4.rollout.get" }, { schemaVersion: 1, requestId: "r", type: "p4.feedback-targets.list", sessionId: "bad id" }, { schemaVersion: 1, requestId: "r", type: "p4.high-risk.governance", forged: true }]) {
@@ -129,6 +133,19 @@ describe("P4SidecarConsole", () => {
       traceId: "trace-p4",
       actor: "local-console",
     }))).resolves.toMatchObject({ ok: true, result: { outcome: "RECORDED", eligibleAfterWrite: true } });
+    await expect(console.handle(parseP4ConsoleRequest({
+      schemaVersion: 1, requestId: "request-context-refresh", type: "p4.context.refresh",
+      sessionId: "session-p4", idempotencyKey: "refresh-1",
+    }))).resolves.toMatchObject({ ok: true, result: { sessionId: "session-p4", removedEntries: 2, reasonCode: "SESSION_CONTEXT_REFRESHED" } });
+    await expect(console.handle(parseP4ConsoleRequest({
+      schemaVersion: 1, requestId: "request-context-refresh-replay", type: "p4.context.refresh",
+      sessionId: "session-p4", idempotencyKey: "refresh-1",
+    }))).resolves.toMatchObject({ ok: true, result: { removedEntries: 2 } });
+    expect(values.refreshCalls()).toBe(1);
+    await expect(console.handle(parseP4ConsoleRequest({
+      schemaVersion: 1, requestId: "request-context-refresh-conflict", type: "p4.context.refresh",
+      sessionId: "session-other", idempotencyKey: "refresh-1",
+    }))).resolves.toMatchObject({ ok: false, error: { code: "CONFLICT" } });
     console.close(); values.feedbackStore.close();
   });
 

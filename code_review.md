@@ -2,16 +2,52 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M8 Freshness 复验 Worker） | 累计 |
+| 指标 | 本轮（M9 控制台可观测性） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 9 |
-| 风险发现 | 9 | 69 |
-| 高风险 | 4 | 33 |
-| 中风险 | 4 | 29 |
-| 低风险 | 1 | 7 |
-| 已修复 | 9 | 69 |
+| Review 次数 | 1 | 10 |
+| 风险发现 | 8 | 77 |
+| 高风险 | 3 | 36 |
+| 中风险 | 4 | 33 |
+| 低风险 | 1 | 8 |
+| 已修复 | 8 | 77 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 12 分 00 秒 | 已知耗时 1 小时 56 分 03 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 15 分 00 秒 | 已知耗时 2 小时 11 分 03 秒（首轮历史报告未记录耗时） |
+
+## M9 审查结论
+
+M9 将会话 Candidate、用户承诺、Evolution、知识 Freshness、代码锚点、状态事件和会话缓存刷新组成可解释控制面。读取不改变知识或状态；唯一新增命令只清除 L1 目录缓存，并经过现有本地认证/CSRF 边界。8 个问题全部修复，无未解决风险。
+
+## M9 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 知识列表和详情只采用治理资格，未采用 Freshness | 已知冲突或缺失投影的代码知识仍在页面显示为“可召回” | 列表/详情共同校验版本、contentHash、project 和 FRESH 状态；缺失/冲突回归视图 |
+| 高 | Candidate 页面只展示摘要和数量 | 用户无法审查将写入的正文、承诺证据和演进目标 | 严格 DTO 暴露 checkpoint 正文、断言、承诺、歧义、Evolution 与双向来源链 |
+| 高 | `context.refresh` 的幂等键最初未固定回执 | 重试会重复执行并返回不同删除数量，跨会话复用也不报冲突 | 有界回执表固定同键结果，跨会话同键返回 CONFLICT；Sidecar 重放测试 |
+| 中 | Candidate/用户原话直接进入有上限 DTO | 合法超长内容会令整个会话详情 Zod 校验失败 | Sidecar 只在 Console 投影中确定性截断，原 checkpoint 不变 |
+| 中 | 刷新接口过大请求被通用 catch 映射为 502 | 客户端会误判服务端故障并无意义重试 | 16KiB 硬上限，超限返回 413；Gateway 测试 |
+| 中 | 刷新若通过普通 Prompt 触发会污染会话 | 控制动作被沉淀为用户知识并改变模型任务 | 独立 POST 控制命令，只清除 session cache，不写 Codex/Ledger |
+| 中 | Freshness 状态存在 SQLite 但没有版本历史视图 | 无法解释知识何时、因何代码 revision 变旧 | 详情展示当前 state、code/graph revision、Anchor 和最多 100 条不可变事件 |
+| 低 | 新增 DECIDED/Freshness 状态沿用英文 Badge | 操作员理解成本高且与中文控制台不一致 | 补充中文标签，同时以 title/诊断码保留原枚举 |
+
+## M9 关键维度确认
+
+- **真实性**：页面只组合 Registry、Worker checkpoint、Freshness Store 和 Runtime Audit 的服务端事实，不在浏览器推测任务状态。
+- **召回一致性**：IMPLEMENTATION/带 symbol 知识只有匹配当前版本、内容、项目且 FRESH 时显示可召回；非代码知识标记为无需代码保鲜。
+- **隐私与边界**：完整内容只经已认证正文接口返回；日志和刷新回执不保存正文，刷新不会创建对话事件。
+- **并发与恢复**：知识治理继续使用 expected-version；刷新按 idempotency key 稳定重放，跨会话冲突失败关闭。
+
+## M9 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，65 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 163 files，1397/1397 通过 |
+| Coverage | statements 90.16%，branches 85.08%，functions 91.81%，lines 93.69% |
+| OpenSpec strict validation | `expose-knowledge-observability` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M8 审查结论
 

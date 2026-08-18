@@ -1,5 +1,5 @@
-const good = new Set(["READY", "SUCCEEDED", "CAPTURED_CURRENT", "INJECTED"]);
-const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE"]);
+const good = new Set(["READY", "SUCCEEDED", "CAPTURED_CURRENT", "INJECTED", "FRESH"]);
+const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "REVALIDATE", "CONFLICT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE"]);
 
 const labels: Readonly<Record<string, string>> = Object.freeze({
   ACCEPTED: "已接受",
@@ -14,12 +14,14 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   COMPLETE_SNAPSHOT: "完整快照",
   CRITICAL: "严重",
   DEGRADED: "降级",
+  DECIDED: "已完成决策",
   DISABLED: "已禁用",
   DISCOVERED_NOT_CAPTURED: "待采集",
   EFFECTIVE: "已生效",
   ELIGIBLE: "符合条件",
   ERROR: "错误",
   FAILED: "失败",
+  FRESH: "数据新鲜",
   HEALTHY: "健康",
   IMPLEMENTED: "已实现",
   INELIGIBLE: "不符合条件",
@@ -28,6 +30,8 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   NO_CONTEXT: "无可用上下文",
   NOT_APPLICABLE: "不适用",
   NOT_CONFIGURED: "未配置",
+  NOT_PROJECTED: "尚未建立保鲜投影",
+  NOT_REQUIRED: "无需代码保鲜",
   NOT_IMPLEMENTED: "未实现",
   NOT_VERIFIED: "未验证",
   OFF: "关闭",
@@ -45,6 +49,8 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   RECONNECTING: "重新连接中",
   RESYNC_REQUIRED: "需要重新同步",
   RETRY_WAIT: "等待重试",
+  REVALIDATE: "等待重新验证",
+  CONFLICT: "与当前代码冲突",
   RETRY_WITH_CONTEXT: "补充上下文后重试",
   RETRY_WITH_CORRECTION: "修正后重试",
   ROLLED_BACK: "已回滚",

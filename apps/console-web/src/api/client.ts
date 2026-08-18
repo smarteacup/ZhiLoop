@@ -60,6 +60,7 @@ import { retrievalTraceSchema } from "@zhiloop/control-api";
 import {
   closureRunListViewSchema,
   closureRunViewSchema,
+  contextRefreshReceiptSchema,
   feedbackReceiptSchema,
   feedbackTargetViewSchema,
   highRiskGovernanceViewSchema,
@@ -68,6 +69,7 @@ import {
   rolloutViewSchema,
   sessionInjectionViewSchema,
   type ClosureRunView,
+  type ContextRefreshReceipt,
   type FeedbackCommand,
   type FeedbackReceipt,
   type FeedbackTargetView,
@@ -125,6 +127,7 @@ export interface ConsoleApi {
   simulateRetrieval?(command: KnowledgeSearchCommand, signal?: AbortSignal): Promise<RetrievalSimulationView>;
   retrievalTrace?(traceId: string, scope?: { readonly projectId?: string; readonly taskId?: string }, signal?: AbortSignal): Promise<RetrievalTraceView>;
   sessionInjections?(sessionId: string, signal?: AbortSignal): Promise<SessionInjectionView>;
+  refreshSessionContext?(sessionId: string, signal?: AbortSignal): Promise<ContextRefreshReceipt>;
   closureRuns?(sessionId?: string, signal?: AbortSignal): Promise<z.infer<typeof closureRunListViewSchema>>;
   closureRun?(sessionId: string, closureRunId: string, signal?: AbortSignal): Promise<ClosureRunView>;
   feedbackTargets?(sessionId: string, signal?: AbortSignal): Promise<readonly FeedbackTargetView[]>;
@@ -480,6 +483,10 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
       attempts: page.items.map((attempt, index) => p4InjectionView(attempt, expansions[index]?.items ?? [])),
     });
   },
+  refreshSessionContext: async (sessionId: string, signal?: AbortSignal) => await request(
+    `/p4/sessions/${encodeURIComponent(sessionId)}/context-refresh`, contextRefreshReceiptSchema,
+    { signal, body: { idempotencyKey: `context-refresh:${sessionId}:${crypto.randomUUID()}` } },
+  ),
   closureRuns: async (sessionId?: string, signal?: AbortSignal) => {
     if (sessionId === undefined) return closureRunListViewSchema.parse({
       capabilityStatus: "NOT_CONFIGURED", capabilityReasonCode: "SESSION_SCOPE_REQUIRED", truncated: false, items: [],

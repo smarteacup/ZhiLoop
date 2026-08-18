@@ -13,7 +13,8 @@ const view: SessionExtractionView = {
   sessionId: "session-1", revision: 7,
   snapshot: { snapshotId: "snapshot-7", revision: 7, completeness: "PARTIAL_SNAPSHOT", sourceSequenceFrom: 1, sourceSequenceThrough: 42, compilerVersion: "compiler-2", policyHash: "policy-hash", createdAt: observedAt, unsupportedEventTypes: ["TOOL_STREAM_DELTA"] },
   stages: [{ stage: "EPISODE_BUILD", status: "SUCCEEDED", reasonCode: "STAGE_COMPLETE", retryable: false, completedUnits: 3, totalUnits: 3 }, { stage: "EVIDENCE", status: "DEGRADED", reasonCode: "EVIDENCE_PARTIAL", retryable: true }],
-  candidates: [{ candidateId: "candidate-1", subjectKey: "symbol:Compiler", kind: "DECISION", title: "Compiler boundary", summary: "Keep evidence at the boundary", scope: "PROJECT", confidence: 0.88, status: "PROPOSED", evidenceVerdict: "INCONCLUSIVE", policy: { action: "KEEP_PROPOSED", targetStatus: "PROPOSED", shouldPublish: false, reasonCodes: ["EVIDENCE_PARTIAL"] }, provenance: { sessionIds: ["session-1"], turnIds: ["turn-2"], eventIds: ["event-4"], snapshotIds: ["snapshot-7"], episodeIds: ["episode-1"], knowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }] } }],
+  candidates: [{ candidateId: "candidate-1", subjectKey: "symbol:Compiler", kind: "DECISION", title: "Compiler boundary", summary: "Keep evidence at the boundary", body: "# Compiler boundary\n\nKeep evidence at the boundary.", scope: "PROJECT", confidence: 0.88, status: "PROPOSED", evidenceVerdict: "INCONCLUSIVE", policy: { action: "KEEP_PROPOSED", targetStatus: "PROPOSED", shouldPublish: false, reasonCodes: ["EVIDENCE_PARTIAL"] }, assertions: [{ assertionId: "assertion-1", kind: "SYMBOL_EXISTS", target: "{\"symbol\":\"Compiler\"}" }], commitments: [{ signalId: "signal-1", kind: "USER_ACCEPTED", turnId: "turn-2", statementRef: "statement-1", statement: "就按这个方案", occurredAt: observedAt, reasonCodes: ["EXPLICIT_TOPIC_MATCH"] }], evolution: { status: "DECIDED", action: "SUPPLEMENT", targetKnowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }], confidence: 0.9, requiresConfirmation: false, reasonCodes: ["SUBJECT_MATCH"] }, provenance: { sessionIds: ["session-1"], turnIds: ["turn-2"], eventIds: ["event-4"], snapshotIds: ["snapshot-7"], episodeIds: ["episode-1"], knowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }] } }],
+  commitmentAmbiguities: [],
   reverseProvenance: [],
   extractAction: { enabled: true, expectedRevision: 7, idempotencyKey: "extract:session-1:7", reasonCode: "ACTION_READY" },
   commitAction: { enabled: true, expectedRevision: 1, idempotencyKey: "commit:preview-1:1", reasonCode: "ACTION_READY" },
@@ -30,14 +31,20 @@ function apiWith(overrides: Partial<ConsoleApi> = {}): ConsoleApi {
 afterEach(() => cleanup());
 
 describe("SessionExtractionPanel", () => {
-  it("renders partial snapshot, unsupported events, policy and bidirectional provenance", async () => {
+  it("renders partial snapshot, candidate body, commitments, evolution and bidirectional provenance", async () => {
+    const user = userEvent.setup();
     render(<SessionExtractionPanel api={apiWith()} sessionId="session-1" captureCurrent />);
     expect(await screen.findByRole("heading", { name: "会话知识提取" })).toBeTruthy();
     expect(screen.getAllByText("部分快照").length).toBeGreaterThan(0);
     expect(screen.getByText(/工具流式增量事件/u)).toBeTruthy();
     expect(screen.getByText(/保留为候选/u)).toBeTruthy();
     expect(screen.getByText(/技术决策/u)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "knowledge-1@2" }).getAttribute("href")).toBe("#/knowledge/knowledge-1");
+    await user.click(screen.getByText("候选正文、断言与用户承诺"));
+    expect(screen.getByText(/Keep evidence at the boundary\./u)).toBeTruthy();
+    expect(screen.getByText(/用户已明确接受/u)).toBeTruthy();
+    await user.click(screen.getByText("演进决策"));
+    expect(screen.getByText(/补充现有知识/u)).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "knowledge-1@2" }).every((link) => link.getAttribute("href") === "#/knowledge/knowledge-1")).toBe(true);
   });
 
   it("uses the server expected revision and idempotency key when activated by keyboard", async () => {

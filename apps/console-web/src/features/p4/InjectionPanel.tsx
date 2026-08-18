@@ -1,18 +1,29 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import type { InjectionAttemptView, P4ConsoleApi } from "../../api/p4.js";
 import { useAsync } from "../../app/useAsync.js";
 import { EmptyState, ErrorState, LoadingState } from "../../components/AsyncState.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 
-export function InjectionPanel({ api, sessionId }: { readonly api: Pick<P4ConsoleApi, "sessionInjections">; readonly sessionId: string }): React.JSX.Element {
+export function InjectionPanel({ api, sessionId }: { readonly api: Pick<P4ConsoleApi, "sessionInjections"> & Partial<Pick<P4ConsoleApi, "refreshSessionContext">>; readonly sessionId: string }): React.JSX.Element {
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string>();
   const load = useCallback(async (signal: AbortSignal) => await api.sessionInjections(sessionId, signal), [api, sessionId]);
   const [state, retry] = useAsync(load);
   if (state.status === "loading") return <LoadingState label="正在读取实际与影子注入记录" />;
   if (state.status === "error") return <ErrorState error={state.error} retry={retry} />;
   const view = state.value;
   return <section className="panel" aria-labelledby="p4-injection-heading">
-    <div className="section-heading"><div><h2 id="p4-injection-heading">Context Envelope 与 MCP 展开</h2><span>{new Date(view.observedAt).toLocaleString()} · 最多展示 {view.attempts.length} 条</span></div><StatusBadge status={view.capabilityStatus} /></div>
+    <div className="section-heading"><div><h2 id="p4-injection-heading">Context Envelope 与 MCP 展开</h2><span>{new Date(view.observedAt).toLocaleString()} · 最多展示 {view.attempts.length} 条</span></div><div className="capture-actions"><StatusBadge status={view.capabilityStatus} /><button type="button" className="secondary-button" disabled={refreshing || api.refreshSessionContext === undefined} onClick={() => {
+      if (api.refreshSessionContext === undefined) return;
+      setRefreshing(true); setRefreshMessage(undefined);
+      void api.refreshSessionContext(sessionId).then((receipt) => {
+        setRefreshMessage(`本会话稳定知识目录已刷新，清除 ${receipt.removedEntries} 条缓存；下一轮将重新预热。`);
+        retry();
+      }).catch((error: unknown) => setRefreshMessage(error instanceof Error ? `刷新失败：${error.message}` : "刷新失败"))
+        .finally(() => setRefreshing(false));
+    }}>{refreshing ? "刷新中…" : "刷新本会话知识"}</button></div></div>
+    {refreshMessage === undefined ? undefined : <p className="inline-alert" role="status" aria-live="polite">{refreshMessage}</p>}
     {view.capabilityStatus !== "READY" ? <div className="inline-alert warning"><strong>{view.capabilityReasonCode}</strong><p>注入能力未就绪；下方仅展示已持久化事实，不推测投递结果。</p></div> : undefined}
     {view.attempts.length === 0 ? <EmptyState title="没有注入尝试" detail="空列表不代表已注入；请结合能力原因码判断链路状态。" /> : <div className="p4-attempt-list">{view.attempts.map((attempt) => <InjectionAttempt key={attempt.attemptId} value={attempt} />)}</div>}
     {view.truncated ? <p className="muted">结果已由服务端截断，请缩小会话范围后查看。</p> : undefined}

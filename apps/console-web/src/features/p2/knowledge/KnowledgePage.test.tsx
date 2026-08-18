@@ -10,10 +10,11 @@ import { KnowledgePage } from "./KnowledgePage.js";
 const timestamp = "2026-08-04T10:00:00.000Z";
 const ready = { schemaVersion: 1 as const, capabilityId: "knowledge.governance", status: "READY" as const, reasonCode: "COMPONENT_READY" as const, observedAt: timestamp, lastTransitionAt: timestamp, retryable: false, evidenceRefs: [] };
 const provenance = { sessionIds: ["session-1"], turnIds: ["turn-2"], eventIds: ["event-3"], snapshotIds: ["snapshot-4"], episodeIds: ["episode-5"], knowledgeVersions: [{ knowledgeId: "knowledge-1", version: 3 }] };
-const list: KnowledgeListView = { revision: 12, indexStatus: "DEGRADED", indexReasonCode: "INDEX_PUBLICATION_RETRY", retryable: true, items: [{ knowledgeId: "knowledge-1", version: 3, subjectKey: "symbol:Compiler", title: "Compiler contract", summary: "Evidence-backed boundary", scope: "PROJECT", projectId: "zhiloop", kind: "DECISION", status: "ACCEPTED", confidence: 0.91, evidenceVerdict: "SUPPORTS", eligible: true, eligibilityReasonCodes: [], updatedAt: timestamp }] };
+const list: KnowledgeListView = { revision: 12, indexStatus: "DEGRADED", indexReasonCode: "INDEX_PUBLICATION_RETRY", retryable: true, items: [{ knowledgeId: "knowledge-1", version: 3, subjectKey: "symbol:Compiler", title: "Compiler contract", summary: "Evidence-backed boundary", scope: "PROJECT", projectId: "zhiloop", kind: "DECISION", status: "ACCEPTED", confidence: 0.91, evidenceVerdict: "SUPPORTS", eligible: true, eligibilityReasonCodes: [], freshnessStatus: "FRESH", freshnessReasonCode: "FRESHNESS_FRESH", updatedAt: timestamp }] };
 const detail: KnowledgeDetailView = {
   revision: 18, knowledgeId: "knowledge-1", version: 3, title: "Compiler contract", summary: "Evidence-backed boundary", subjectKey: "symbol:Compiler", kind: "DECISION", scope: "PROJECT", projectId: "zhiloop", status: "ACCEPTED", confidence: 0.91, eligible: true, eligibilityReasonCodes: [], markdown: "# Contract\n\nKeep evidence linked.", scopeReasonCodes: ["PROJECT_SOURCE_DOMINANT"],
   assertions: [{ assertionId: "assertion-1", text: "Every conclusion keeps provenance", status: "SUPPORTS" }], evidence: [{ evidenceId: "evidence-1", verdict: "SUPPORTS", source: "event-3", reasonCode: "SOURCE_VERIFIED" }], relations: [{ relation: "RELATED_TO", knowledgeId: "knowledge-2", version: 1, title: "Ledger contract" }], provenance, lifecycle: [{ status: "ACCEPTED", occurredAt: timestamp, reasonCode: "POLICY_ACCEPTED" }], usage: [{ sessionId: "session-1", turnId: "turn-8", mode: "INJECTED", occurredAt: timestamp }], versions: [{ version: 2, status: "SUPERSEDED", createdAt: timestamp, reasonCode: "EDITED", markdown: "old", diffFromPrevious: "- old\n+ current" }, { version: 3, status: "ACCEPTED", createdAt: timestamp, reasonCode: "EDITED", markdown: "current", diffFromPrevious: "- v2\n+ v3" }],
+  freshness: { status: "CONFLICT", projected: true, revision: 2, codeRevision: "git:abc123", graphRevision: "graph:9", reasonCodes: ["FRESHNESS_CONFLICT"], affectedAssertionIds: ["assertion-1"], updatedAt: timestamp, anchors: [{ assertionId: "assertion-1", kind: "SYMBOL", key: "Compiler.compile", path: "src/compiler.ts" }], events: [{ eventId: "freshness-event-1", previousStatus: "REVALIDATE", status: "CONFLICT", revision: 2, codeRevision: "git:abc123", graphRevision: "graph:9", reasonCodes: ["FRESHNESS_CONFLICT"], affectedAssertionIds: ["assertion-1"], occurredAt: timestamp }] },
   editAction: { enabled: true, expectedRevision: 3, idempotencyKey: "edit:3", reasonCode: "ACTION_READY" }, suppressAction: { enabled: true, expectedRevision: 3, idempotencyKey: "suppress:3", reasonCode: "ACTION_READY" }, restoreAction: { enabled: false, expectedRevision: 3, idempotencyKey: "restore:3", reasonCode: "NOT_SUPPRESSED" },
 };
 
@@ -53,6 +54,10 @@ describe("KnowledgePage", () => {
     expect(screen.getByRole("link", { name: "session-1" })).toBeTruthy();
     expect(screen.getByText(/- v2/u)).toBeTruthy();
     expect(screen.getByText("POLICY_ACCEPTED")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "代码知识保鲜" })).toBeTruthy();
+    expect(screen.getAllByText("与当前代码冲突").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Compiler\.compile/u)).toBeTruthy();
+    expect(screen.getByText(/等待重新验证 → 与当前代码冲突/u)).toBeTruthy();
   });
 
   it("previews edit impact and commits a new version with the same expected version", async () => {

@@ -6,6 +6,7 @@ import { useAsync } from "../../../app/useAsync.js";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/AsyncState.js";
 import { StatusBadge } from "../../../components/StatusBadge.js";
 import { capabilityDecision } from "../capability.js";
+import { p2EnumLabel } from "../labels.js";
 
 export function KnowledgePage({ api, knowledgeId }: { readonly api: ConsoleApi; readonly knowledgeId?: string }): React.JSX.Element {
   return knowledgeId === undefined ? <KnowledgeListPage api={api} /> : <KnowledgeDetailPage api={api} knowledgeId={knowledgeId} />;
@@ -51,7 +52,7 @@ function KnowledgeFilters({ draft, onChange, onApply }: { readonly draft: Knowle
 function KnowledgeList({ value }: { readonly value: KnowledgeListView }): React.JSX.Element {
   return <section className="panel"><div className="section-heading"><div><h2>知识索引</h2><span>revision {value.revision} · {value.items.length} 条</span></div><div><StatusBadge status={value.indexStatus} /><small>{value.indexReasonCode}{value.retryable ? " · RETRYABLE" : ""}</small></div></div>
     {value.indexStatus === "DEGRADED" ? <div className="inline-alert warning"><strong>{value.indexReasonCode}</strong><p>索引可能落后；页面不会把缺失结果解释为无知识。</p></div> : undefined}
-    {value.items.length === 0 ? <EmptyState title="没有匹配知识" detail="请调整筛选条件；空结果来自服务端。" /> : <div className="knowledge-list">{value.items.map((item) => <a key={`${item.knowledgeId}:${item.version}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}><div><strong>{item.title}</strong><StatusBadge status={item.status} /></div><p>{item.summary}</p><small>{item.subjectKey} · {item.kind} · {item.scope}{item.projectId === undefined ? "" : `/${item.projectId}`} · v{item.version}</small><div><StatusBadge status={item.evidenceVerdict} /><span>{item.eligible ? "可召回" : `不可召回：${item.eligibilityReasonCodes.join(", ")}`}</span></div></a>)}</div>}
+    {value.items.length === 0 ? <EmptyState title="没有匹配知识" detail="请调整筛选条件；空结果来自服务端。" /> : <div className="knowledge-list">{value.items.map((item) => <a key={`${item.knowledgeId}:${item.version}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}><div><strong>{item.title}</strong><StatusBadge status={item.status} /></div><p>{item.summary}</p><small>{item.subjectKey} · {item.kind} · {item.scope}{item.projectId === undefined ? "" : `/${item.projectId}`} · v{item.version}</small><div><StatusBadge status={item.evidenceVerdict} /><StatusBadge status={item.freshnessStatus} /><span title={item.freshnessReasonCode}>{item.eligible ? "可召回" : `不可召回：${item.eligibilityReasonCodes.map(p2EnumLabel).join("，")}`}</span></div></a>)}</div>}
   </section>;
 }
 
@@ -73,11 +74,22 @@ function KnowledgeDetailPage({ api, knowledgeId }: { readonly api: ConsoleApi; r
   return <div className="page-stack"><a className="back-link" href="#/knowledge">← 返回知识库</a><header className="page-header"><div><p className="eyebrow">{value.knowledgeId}@{value.version}</p><h1>{value.title}</h1><p>{value.subjectKey} · revision {value.revision}</p></div><div><StatusBadge status={value.status} /><StatusBadge status={value.eligible ? "ELIGIBLE" : "INELIGIBLE"} /></div></header>
     {!value.eligible ? <div className="inline-alert warning"><strong>当前版本不进入默认召回</strong><p>{value.eligibilityReasonCodes.join(", ")}</p></div> : undefined}
     <section className="panel detail-split"><div><h2>Markdown</h2><pre className="markdown-preview">{value.markdown}</pre></div><div><h2>Scope 与断言</h2><dl className="detail-grid"><div><dt>Scope</dt><dd>{value.scope}{value.projectId === undefined ? "" : ` / ${value.projectId}`}</dd></div><div><dt>类型</dt><dd>{value.kind}</dd></div><div><dt>置信度</dt><dd>{value.confidence.toFixed(2)}</dd></div><div><dt>Scope 决策</dt><dd>{value.scopeReasonCodes.join(", ")}</dd></div></dl><ul>{value.assertions.map((item) => <li key={item.assertionId}><StatusBadge status={item.status} /> {item.text}</li>)}</ul></div></section>
+    <FreshnessPanel value={value.freshness} />
     <VersionHistory versions={value.versions} currentVersion={value.version} />
     <section className="panel p2-grid"><div><h2>Evidence</h2>{value.evidence.map((item) => <article className="fact-row" key={item.evidenceId}><div><strong>{item.source}</strong><StatusBadge status={item.verdict} /></div><small>{item.evidenceId} · {item.reasonCode}</small></article>)}</div><div><h2>关系</h2>{value.relations.map((item) => <a className="fact-row" key={`${item.relation}:${item.knowledgeId}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}><strong>{item.relation} → {item.title}</strong><small>{item.knowledgeId}@{item.version}</small></a>)}</div></section>
     <section className="panel p2-grid"><div><h2>来源链</h2><Provenance value={value.provenance} /></div><div><h2>Lifecycle</h2>{value.lifecycle.map((item) => <article className="fact-row" key={`${item.status}:${item.occurredAt}`}><div><strong>{item.reasonCode}</strong><StatusBadge status={item.status} /></div><small>{new Date(item.occurredAt).toLocaleString()}</small></article>)}</div><div><h2>使用记录</h2>{value.usage.map((item) => <a className="fact-row" key={`${item.sessionId}:${item.turnId}`} href={`#/sessions/${encodeURIComponent(item.sessionId)}`}><strong>{item.mode} · {item.turnId}</strong><small>{new Date(item.occurredAt).toLocaleString()}</small></a>)}</div></section>
     <KnowledgeGovernance api={api} value={value} onServerValue={setServerValue} onRefresh={retry} />
   </div>;
+}
+
+function FreshnessPanel({ value }: { readonly value: KnowledgeDetailView["freshness"] }): React.JSX.Element {
+  return <section className="panel" aria-labelledby="freshness-heading">
+    <div className="section-heading"><div><h2 id="freshness-heading">代码知识保鲜</h2><span>状态 revision {value.revision} · {value.projected ? "已建立版本投影" : "没有版本投影"}</span></div><StatusBadge status={value.status} /></div>
+    <dl className="detail-grid"><div><dt>代码 revision</dt><dd>{value.codeRevision ?? "未记录"}</dd></div><div><dt>CodeGraph revision</dt><dd>{value.graphRevision ?? "未记录"}</dd></div><div><dt>最近更新</dt><dd>{value.updatedAt === undefined ? "未记录" : new Date(value.updatedAt).toLocaleString()}</dd></div><div><dt>受影响断言</dt><dd>{value.affectedAssertionIds.join("、") || "无"}</dd></div></dl>
+    <div className="inline-alert"><strong>当前判断依据</strong><p>{value.reasonCodes.map(p2EnumLabel).join("；") || "当前版本尚无额外诊断"}</p><small>{value.reasonCodes.join(", ") || "NO_REASON_CODE"}</small></div>
+    <div className="p2-grid"><div><h3>代码锚点（{value.anchors.length}）</h3>{value.anchors.length === 0 ? <p className="muted">没有代码、配置或依赖锚点。</p> : <div>{value.anchors.map((anchor) => <article className="fact-row" key={`${anchor.kind}:${anchor.assertionId}`}><div><strong>{p2EnumLabel(anchor.kind)} · {anchor.key}</strong><StatusBadge status={anchor.kind} /></div><small>{anchor.assertionId}{anchor.path === undefined ? "" : ` · ${anchor.path}`}</small></article>)}</div>}</div>
+      <div><h3>不可变状态事件（{value.events.length}）</h3>{value.events.length === 0 ? <p className="muted">当前版本没有状态迁移事件。</p> : <div>{value.events.map((event) => <article className="fact-row" key={event.eventId}><div><strong>{p2EnumLabel(event.previousStatus)} → {p2EnumLabel(event.status)}</strong><StatusBadge status={event.status} /></div><p>{event.reasonCodes.map(p2EnumLabel).join("；")}</p><small>r{event.revision} · {new Date(event.occurredAt).toLocaleString()} · code {event.codeRevision}{event.graphRevision === undefined ? "" : ` · graph ${event.graphRevision}`}</small></article>)}</div>}</div></div>
+  </section>;
 }
 
 function VersionHistory({ versions, currentVersion }: { readonly versions: KnowledgeDetailView["versions"]; readonly currentVersion: number }): React.JSX.Element {

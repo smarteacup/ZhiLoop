@@ -1,5 +1,6 @@
 import {
   closureRunSchema,
+  contextRefreshResponseSchema,
   feedbackResponseSchema,
   highRiskCommitResponseSchema,
   highRiskCommandSchema,
@@ -39,6 +40,8 @@ export const p4RolloutResponseSchema = z.strictObject({
 export const p4FeedbackResponseSchema = feedbackResponseSchema;
 export const p4HighRiskPreviewResponseSchema = highRiskPreviewResponseSchema;
 export const p4HighRiskCommitResponseSchema = highRiskCommitResponseSchema;
+export const p4ContextRefreshResponseSchema = contextRefreshResponseSchema;
+export const p4ContextRefreshBodySchema = z.strictObject({ idempotencyKey: safeId });
 
 export const p4FeedbackBodySchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -132,3 +135,4 @@ export type P4CapabilityList = z.infer<typeof p4CapabilityListSchema>;
 export type P4CapabilityArray = z.infer<typeof p4CapabilityArraySchema>;
 export type P4FeedbackTargets = z.infer<typeof p4FeedbackTargetsSchema>;
 export type P4HighRiskGovernance = z.infer<typeof p4HighRiskGovernanceSchema>;
+export type P4ContextRefreshResponse = z.infer<typeof p4ContextRefreshResponseSchema>;

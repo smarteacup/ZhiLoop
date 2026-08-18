@@ -36,6 +36,8 @@ import { retrievalTraceSchema } from "@zhiloop/control-api";
 import {
   closureDetailRequestSchema,
   closureListRequestSchema,
+  contextRefreshRequestSchema,
+  contextRefreshResponseSchema,
   closureRunSchema,
   feedbackCommandSchema,
   highRiskCommitRequestSchema,
@@ -269,6 +271,11 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
 
   public getP4Rollout(options: QueryOptions) {
     return this.execute(this.p4Request("p4.rollout.get", {}), p4RolloutResponseSchema, options);
+  }
+
+  public refreshP4Context(sessionId: string, idempotencyKey: string, options: QueryOptions) {
+    const logical = contextRefreshRequestSchema.parse({ schemaVersion: 1, type: "p4.context.refresh", sessionId, idempotencyKey });
+    return this.execute(this.p4Request(logical.type, logical), contextRefreshResponseSchema, options);
   }
 
   public listP4FeedbackTargets(sessionId: string, options: QueryOptions) {

@@ -165,6 +165,16 @@ export const injectionListRequestSchema = z.strictObject({ ...pageRequest, type:
 export const injectionDetailRequestSchema = z.strictObject({
   schemaVersion: z.literal(1), type: z.literal("p4.injections.get"), sessionId: safeId, attemptId: safeId,
 });
+export const contextRefreshRequestSchema = z.strictObject({
+  schemaVersion: z.literal(1), type: z.literal("p4.context.refresh"), sessionId: safeId, idempotencyKey: safeId,
+});
+export const contextRefreshResponseSchema = z.strictObject({
+  sessionId: safeId,
+  removedEntries: z.number().int().nonnegative().max(1_000_000),
+  refreshedAt: iso,
+  reasonCode: reasonCode,
+});
+export type P4ContextRefreshResponse = z.infer<typeof contextRefreshResponseSchema>;
 export const mcpExpansionListRequestSchema = z.strictObject({
   ...pageRequest, type: z.literal("p4.mcp-expansions.list"), attemptId: safeId,
 });

@@ -8,6 +8,7 @@ import { CONTROL_API_SCHEMA_VERSION, type ControlResponse } from "@zhiloop/contr
 import {
   closureDetailRequestSchema,
   closureListRequestSchema,
+  contextRefreshRequestSchema,
   feedbackCommandSchema,
   highRiskCommitRequestSchema,
   highRiskPreviewRequestSchema,
@@ -16,6 +17,7 @@ import {
   mapP4ConsoleError,
   mcpExpansionListRequestSchema,
   P4ConsoleRuntime,
+  P4ConsoleError,
   SqliteP4OperationStore,
   SqliteRuntimeAuditQueryAdapter,
 } from "@zhiloop/p4-console-runtime";
@@ -29,6 +31,7 @@ type ParsedRuntimeRequest =
   | ReturnType<typeof mcpExpansionListRequestSchema.parse>
   | ReturnType<typeof closureListRequestSchema.parse>
   | ReturnType<typeof closureDetailRequestSchema.parse>
+  | ReturnType<typeof contextRefreshRequestSchema.parse>
   | ReturnType<typeof feedbackCommandSchema.parse>
   | ReturnType<typeof highRiskPreviewRequestSchema.parse>
   | ReturnType<typeof highRiskCommitRequestSchema.parse>
@@ -54,6 +57,7 @@ export function parseP4ConsoleRequest(value: unknown): P4ConsoleTransportRequest
       case "p4.mcp-expansions.list": parsed = mcpExpansionListRequestSchema.parse(runtimeRequest); break;
       case "p4.closures.list": parsed = closureListRequestSchema.parse(runtimeRequest); break;
       case "p4.closures.get": parsed = closureDetailRequestSchema.parse(runtimeRequest); break;
+      case "p4.context.refresh": parsed = contextRefreshRequestSchema.parse(runtimeRequest); break;
       case "p4.feedback.record": parsed = feedbackCommandSchema.parse(runtimeRequest); break;
       case "p4.high-risk.preview": parsed = highRiskPreviewRequestSchema.parse(runtimeRequest); break;
       case "p4.high-risk.commit": parsed = highRiskCommitRequestSchema.parse(runtimeRequest); break;
@@ -115,6 +119,7 @@ export interface P4SidecarConsoleDependencies {
     readonly scopeKey: string;
     readonly signal?: AbortSignal;
   }) => Promise<KnowledgeEligibilityInspection>;
+  readonly refreshContext?: (sessionId: string) => number;
   readonly now?: () => Date;
 }
 
@@ -123,6 +128,7 @@ export class P4SidecarConsole {
   readonly #operations: SqliteP4OperationStore;
   readonly #runtime: P4ConsoleRuntime;
   readonly #dependencies: P4SidecarConsoleDependencies;
+  readonly #contextRefreshReceipts = new Map<string, { readonly sessionId: string; readonly result: Readonly<Record<string, unknown>> }>();
   #closed = false;
 
   private constructor(dependencies: P4SidecarConsoleDependencies, secret: Uint8Array) {
@@ -160,6 +166,28 @@ export class P4SidecarConsole {
         case "p4.mcp-expansions.list": result = this.#runtime.listMcpExpansions(runtimeRequest); break;
         case "p4.closures.list": result = this.#runtime.listClosures(runtimeRequest); break;
         case "p4.closures.get": result = this.#runtime.getClosure(runtimeRequest); break;
+        case "p4.context.refresh": {
+          if (this.#dependencies.refreshContext === undefined) throw new P4ConsoleError("CAPABILITY_DISABLED", "context refresh is disabled");
+          const prior = this.#contextRefreshReceipts.get(request.idempotencyKey);
+          if (prior !== undefined && prior.sessionId !== request.sessionId) {
+            throw new P4ConsoleError("CONFLICT", "context refresh idempotency conflict");
+          }
+          if (prior !== undefined) result = prior.result;
+          else {
+            result = Object.freeze({
+              sessionId: request.sessionId,
+              removedEntries: this.#dependencies.refreshContext(request.sessionId),
+              refreshedAt: (this.#dependencies.now ?? (() => new Date()))().toISOString(),
+              reasonCode: "SESSION_CONTEXT_REFRESHED",
+            });
+            this.#contextRefreshReceipts.set(request.idempotencyKey, { sessionId: request.sessionId, result: result as Readonly<Record<string, unknown>> });
+            if (this.#contextRefreshReceipts.size > 5_000) {
+              const oldest = this.#contextRefreshReceipts.keys().next().value as string | undefined;
+              if (oldest !== undefined) this.#contextRefreshReceipts.delete(oldest);
+            }
+          }
+          break;
+        }
         case "p4.feedback.record": result = await this.#runtime.recordFeedback(runtimeRequest, signal); break;
         case "p4.high-risk.preview": result = await this.#runtime.previewHighRisk(runtimeRequest); break;
         case "p4.high-risk.commit": result = await this.#runtime.commitHighRisk(runtimeRequest); break;

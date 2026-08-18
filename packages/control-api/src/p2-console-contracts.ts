@@ -72,6 +72,7 @@ export const p2ExtractionCandidateViewSchema = z.strictObject({
   kind: p2KnowledgeKindSchema,
   title: boundedText(300).min(1),
   summary: boundedText(2_000).min(1),
+  body: boundedText(32_000),
   scope: p2KnowledgeScopeLevelSchema,
   confidence: z.number().min(0).max(1),
   status: p2KnowledgeStatusSchema,
@@ -82,6 +83,28 @@ export const p2ExtractionCandidateViewSchema = z.strictObject({
     shouldPublish: z.boolean(),
     reasonCodes: z.array(safeCode).max(100),
   }),
+  assertions: z.array(z.strictObject({
+    assertionId: safeId,
+    kind: safeCode,
+    target: boundedText(4_000),
+  })).max(1_000),
+  commitments: z.array(z.strictObject({
+    signalId: safeId,
+    kind: z.enum(["USER_ACCEPTED", "USER_REJECTED", "CORRECTION"]),
+    turnId: safeId,
+    statementRef: boundedText(1_000).min(1),
+    statement: boundedText(2_000).min(1),
+    occurredAt: timestamp,
+    reasonCodes: z.array(safeCode).max(100),
+  })).max(1_000),
+  evolution: z.strictObject({
+    status: z.enum(["DECIDED", "PENDING"]),
+    action: z.enum(["STORE", "SUPPLEMENT", "SUPERSEDE", "CONTRADICT", "SCOPE_SPLIT", "SKIP"]).optional(),
+    targetKnowledgeVersions: z.array(z.strictObject({ knowledgeId: safeId, version: positiveVersion })).max(1_000),
+    confidence: z.number().min(0).max(1),
+    requiresConfirmation: z.boolean(),
+    reasonCodes: z.array(safeCode).max(100),
+  }).optional(),
   provenance: p2ProvenanceViewSchema,
 });
 
@@ -91,6 +114,14 @@ export const p2SessionExtractionViewSchema = z.strictObject({
   snapshot: p2ExtractionSnapshotViewSchema.optional(),
   stages: z.array(p2ExtractionStageViewSchema).max(100),
   candidates: z.array(p2ExtractionCandidateViewSchema).max(100),
+  commitmentAmbiguities: z.array(z.strictObject({
+    kind: z.enum(["USER_ACCEPTED", "USER_REJECTED", "CORRECTION"]),
+    turnId: safeId,
+    statementRef: boundedText(1_000).min(1),
+    statement: boundedText(2_000).min(1),
+    candidateIds: z.array(safeId).max(100),
+    reasonCode: safeCode,
+  })).max(1_000),
   previewId: safeId.optional(),
   reverseProvenance: z.array(p2ProvenanceViewSchema).max(100),
   extractAction: p2ActionGateSchema,
@@ -110,6 +141,8 @@ export const p2KnowledgeFilterSchema = z.strictObject({
   eligible: z.boolean().optional(),
 });
 
+const p2FreshnessStatusSchema = z.enum(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN", "NOT_PROJECTED", "NOT_REQUIRED"]);
+
 const p2KnowledgeSummaryViewSchema = z.strictObject({
   knowledgeId: safeId,
   version: positiveVersion,
@@ -124,6 +157,8 @@ const p2KnowledgeSummaryViewSchema = z.strictObject({
   evidenceVerdict: p2EvidenceVerdictSchema,
   eligible: z.boolean(),
   eligibilityReasonCodes: z.array(safeCode).max(100),
+  freshnessStatus: p2FreshnessStatusSchema,
+  freshnessReasonCode: safeCode,
   updatedAt: timestamp,
 });
 
@@ -151,6 +186,37 @@ const p2KnowledgeVersionViewSchema = z.strictObject({
   diffFromPrevious: boundedText(2_000).optional(),
 });
 
+const p2FreshnessAnchorSchema = z.strictObject({
+  assertionId: safeId,
+  kind: z.enum(["PATH", "SYMBOL", "CONFIG", "DEPENDENCY"]),
+  key: boundedText(1_000).min(1),
+  path: boundedText(1_000).min(1).optional(),
+});
+const p2FreshnessEventSchema = z.strictObject({
+  eventId: safeId,
+  previousStatus: z.enum(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN"]),
+  status: z.enum(["FRESH", "REVALIDATE", "CONFLICT", "UNKNOWN"]),
+  revision,
+  codeRevision: boundedText(4_096).min(1),
+  graphRevision: boundedText(4_096).min(1).optional(),
+  reasonCodes: z.array(safeCode).max(1_000),
+  affectedAssertionIds: z.array(safeId).max(10_000),
+  occurredAt: timestamp,
+});
+
+const p2KnowledgeFreshnessViewSchema = z.strictObject({
+  status: p2FreshnessStatusSchema,
+  projected: z.boolean(),
+  revision,
+  codeRevision: boundedText(4_096).min(1).optional(),
+  graphRevision: boundedText(4_096).min(1).optional(),
+  reasonCodes: z.array(safeCode).max(1_000),
+  affectedAssertionIds: z.array(safeId).max(10_000),
+  updatedAt: timestamp.optional(),
+  anchors: z.array(p2FreshnessAnchorSchema).max(10_000),
+  events: z.array(p2FreshnessEventSchema).max(100),
+});
+
 export const p2KnowledgeDetailViewSchema = z.strictObject({
   revision,
   knowledgeId: safeId,
@@ -174,6 +240,7 @@ export const p2KnowledgeDetailViewSchema = z.strictObject({
   lifecycle: z.array(z.strictObject({ status: p2KnowledgeStatusSchema, occurredAt: timestamp, reasonCode: safeCode })).max(1_000),
   usage: z.array(z.strictObject({ sessionId: boundedText(500), turnId: boundedText(500), mode: safeCode, occurredAt: timestamp })).max(1_000),
   versions: z.array(p2KnowledgeVersionViewSchema).max(1_000),
+  freshness: p2KnowledgeFreshnessViewSchema,
   editAction: p2ActionGateSchema,
   suppressAction: p2ActionGateSchema,
   restoreAction: p2ActionGateSchema,

@@ -160,6 +160,18 @@ function projectId(scope: KnowledgeScope): string | undefined {
   return "projectId" in scope ? scope.projectId : undefined;
 }
 
+function requiresCodeFreshness(kind: KnowledgeKind, symbols: readonly string[]): boolean {
+  return kind === "IMPLEMENTATION" || symbols.length > 0;
+}
+
+function assertionTarget(parameters: unknown): string {
+  return boundedConsoleText(JSON.stringify(parameters) ?? "null", 4_000);
+}
+
+function boundedConsoleText(value: string, maximum: number): string {
+  return value.length <= maximum ? value : `${value.slice(0, maximum - 3)}...`;
+}
+
 export function ordinaryP2Scope(level: KnowledgeScope["level"]): P2ScopeLevel {
   if (level === "USER" || level === "TEAM") {
     throw Object.assign(new Error("unsupported ordinary governance scope"), { code: "CONFLICT" });
@@ -263,12 +275,17 @@ export class P2ConsoleRuntime {
     const candidates = (preview?.candidates ?? []).map((candidate) => {
       const root: ProvenanceNode = { type: "CANDIDATE", candidateId: candidate.candidateId };
       const trace = this.#trace(root);
+      const policyRecord = checkpoint?.payload.policies?.find((item) => item.candidate.candidateId === candidate.candidateId);
+      const evolution = checkpoint?.payload.evolution?.find((item) => item.candidate.candidateId === candidate.candidateId)?.decision;
+      const commitments = checkpoint?.payload.userCommitments?.signals
+        .filter((item) => item.candidateIds.includes(candidate.candidateId)) ?? [];
       return Object.freeze({
         candidateId: candidate.candidateId,
         subjectKey: candidate.subjectKey,
         kind: candidate.kind,
         title: candidate.title,
         summary: candidate.summary,
+        body: boundedConsoleText(policyRecord?.candidate.body ?? "", 32_000),
         scope: ordinaryP2Scope(candidate.scope),
         confidence: candidate.confidence,
         status: policyStatus(candidate.policyDecision),
@@ -279,6 +296,28 @@ export class P2ConsoleRuntime {
           shouldPublish: candidate.policyDecision === "PUBLISH",
           reasonCodes: candidate.policyReasonCodes,
         },
+        assertions: (policyRecord?.candidate.assertions ?? []).map((assertion) => ({
+          assertionId: assertion.assertionId,
+          kind: assertion.kind,
+          target: assertionTarget(assertion.parameters),
+        })),
+        commitments: commitments.map((item) => ({
+          signalId: item.signalId,
+          kind: item.kind,
+          turnId: item.turnId,
+          statementRef: boundedConsoleText(item.statementRef, 1_000),
+          statement: boundedConsoleText(item.statement, 2_000),
+          occurredAt: item.occurredAt,
+          reasonCodes: item.reasonCodes,
+        })),
+        ...(evolution === undefined ? {} : { evolution: {
+          status: evolution.status,
+          ...(evolution.status === "DECIDED" ? { action: evolution.action } : {}),
+          targetKnowledgeVersions: evolution.targetKnowledgeVersions.map((item) => ({ knowledgeId: item.id, version: item.version })),
+          confidence: evolution.confidence,
+          requiresConfirmation: evolution.requiresConfirmation,
+          reasonCodes: evolution.deterministicReasons,
+        } }),
         provenance: trace,
       });
     });
@@ -301,6 +340,14 @@ export class P2ConsoleRuntime {
       ...(snapshotView === undefined ? {} : { snapshot: snapshotView }),
       stages,
       candidates,
+      commitmentAmbiguities: (checkpoint?.payload.userCommitments?.ambiguities ?? []).map((item) => ({
+        kind: item.kind,
+        turnId: item.turnId,
+        statementRef: boundedConsoleText(item.statementRef, 1_000),
+        statement: boundedConsoleText(item.statement, 2_000),
+        candidateIds: item.candidateIds,
+        reasonCode: item.reasonCode,
+      })),
       reverseProvenance: published,
       ...(preview === undefined ? {} : { previewId: preview.previewId }),
       extractAction: action(true, currentRevision, `extract:${sessionId}:${currentRevision}`, "ACTION_READY"),
@@ -357,22 +404,41 @@ export class P2ConsoleRuntime {
     const response = await this.#options.production.query.list({ filter, limit: request.limit ?? 50, ...(request.cursor === undefined ? {} : { cursor: request.cursor }) });
     const items = response.items
       .filter(({ current }) => current.asset.scope.level !== "USER" && current.asset.scope.level !== "TEAM")
-      .filter((item) => request.filter?.eligible !== false || !item.eligible).map(({ current, eligible, eligibilityReasonCodes }) => ({
-      knowledgeId: current.asset.id,
-      version: current.asset.version,
-      subjectKey: current.asset.subjectKey,
-      title: current.asset.title,
-      summary: current.asset.summary,
-      scope: ordinaryP2Scope(current.asset.scope.level),
-      ...(projectId(current.asset.scope) === undefined ? {} : { projectId: projectId(current.asset.scope) }),
-      kind: current.asset.kind,
-      status: current.asset.status,
-      confidence: current.asset.confidence,
-      evidenceVerdict: evidenceVerdict(current.asset.evidence),
-      eligible,
-      eligibilityReasonCodes,
-      updatedAt: current.asset.updatedAt,
-    }));
+      .map(({ current, eligible, eligibilityReasonCodes }) => {
+        const asset = current.asset;
+        const required = requiresCodeFreshness(asset.kind, asset.symbols);
+        const freshness = this.#options.production.freshnessStore.get(asset.id, asset.version);
+        const expectedProjectId = projectId(asset.scope);
+        const projected = freshness !== undefined && freshness.assetContentHash === asset.contentHash
+          && (expectedProjectId === undefined || freshness.projectId === expectedProjectId);
+        const freshnessStatus = !required ? "NOT_REQUIRED" as const
+          : !projected ? "NOT_PROJECTED" as const : freshness.freshnessStatus;
+        const freshnessEligible = !required || (projected && freshnessStatus === "FRESH");
+        return {
+          knowledgeId: asset.id,
+          version: asset.version,
+          subjectKey: asset.subjectKey,
+          title: asset.title,
+          summary: asset.summary,
+          scope: ordinaryP2Scope(asset.scope.level),
+          ...(expectedProjectId === undefined ? {} : { projectId: expectedProjectId }),
+          kind: asset.kind,
+          status: asset.status,
+          confidence: asset.confidence,
+          evidenceVerdict: evidenceVerdict(asset.evidence),
+          eligible: eligible && freshnessEligible,
+          eligibilityReasonCodes: [
+            ...eligibilityReasonCodes,
+            ...(required && !projected ? ["FRESHNESS_NOT_PROJECTED"] : []),
+            ...(required && projected && freshnessStatus !== "FRESH" ? [`FRESHNESS_${freshnessStatus}`] : []),
+          ],
+          freshnessStatus,
+          freshnessReasonCode: !required ? "FRESHNESS_NOT_REQUIRED"
+            : !projected ? "FRESHNESS_NOT_PROJECTED" : `FRESHNESS_${freshnessStatus}`,
+          updatedAt: asset.updatedAt,
+        };
+      })
+      .filter((item) => request.filter?.eligible === undefined || item.eligible === request.filter.eligible);
     return Object.freeze({
       revision: this.#options.production.registry.activeIndexVersion,
       items,
@@ -400,8 +466,22 @@ export class P2ConsoleRuntime {
       ...(index === 0 ? {} : { diffFromPrevious: `v${item.asset.version - 1} → v${item.asset.version}` }),
     }));
     const suppressed = detail.current.tombstone;
-    const eligible = !suppressed && ["ACCEPTED", "IMPLEMENTED", "VERIFIED"].includes(asset.status)
+    const governanceEligible = !suppressed && ["ACCEPTED", "IMPLEMENTED", "VERIFIED"].includes(asset.status)
       && !this.#options.production.governanceStore.isExcluded(asset.id);
+    const requiresFreshness = requiresCodeFreshness(asset.kind, asset.symbols);
+    const freshnessRecord = this.#options.production.freshnessStore.get(asset.id, asset.version);
+    const freshnessState = this.#options.production.freshnessStore.getState(asset.id, asset.version);
+    const scopedProjectId = projectId(asset.scope);
+    const freshnessProjected = freshnessRecord !== undefined && freshnessRecord.assetContentHash === asset.contentHash
+      && (scopedProjectId === undefined || freshnessRecord.projectId === scopedProjectId);
+    const freshnessEligible = !requiresFreshness || (freshnessProjected && freshnessState?.status === "FRESH");
+    const eligible = governanceEligible && freshnessEligible;
+    const freshnessStatus = !requiresFreshness ? "NOT_REQUIRED" as const
+      : !freshnessProjected ? "NOT_PROJECTED" as const
+        : freshnessState?.status ?? "UNKNOWN";
+    const freshnessEvents = freshnessProjected
+      ? this.#options.production.freshnessStore.listStateEvents(asset.id, asset.version, 100)
+      : [];
     return Object.freeze({
       revision: detail.current.indexVersion,
       knowledgeId: asset.id,
@@ -415,7 +495,13 @@ export class P2ConsoleRuntime {
       status: asset.status,
       confidence: asset.confidence,
       eligible,
-      eligibilityReasonCodes: [...(suppressed ? ["GOVERNANCE_SUPPRESSED"] : []), ...(!eligible && !suppressed ? ["STATUS_NOT_ELIGIBLE"] : [])],
+      eligibilityReasonCodes: [
+        ...(suppressed ? ["GOVERNANCE_SUPPRESSED"] : []),
+        ...(!governanceEligible && !suppressed ? ["STATUS_NOT_ELIGIBLE"] : []),
+        ...(requiresFreshness && !freshnessProjected ? ["FRESHNESS_NOT_PROJECTED"] : []),
+        ...(requiresFreshness && freshnessProjected && freshnessState?.status !== "FRESH"
+          ? [`FRESHNESS_${freshnessState?.status ?? "UNKNOWN"}`] : []),
+      ],
       markdown: asset.body,
       scopeReasonCodes: detail.scopeReasonCodes,
       assertions: detail.assertions.map((text, index) => ({ assertionId: `assertion-${index + 1}`, text, status: "INCONCLUSIVE" })),
@@ -428,6 +514,30 @@ export class P2ConsoleRuntime {
       lifecycle: versions.map((item) => ({ status: item.status, occurredAt: item.createdAt, reasonCode: item.reasonCode })),
       usage: detail.usage.map((item) => ({ sessionId: "", turnId: "", mode: item.kind, occurredAt: item.occurredAt })),
       versions,
+      freshness: {
+        status: freshnessStatus,
+        projected: freshnessProjected,
+        revision: freshnessState?.revision ?? 0,
+        ...(freshnessState?.codeRevision === undefined ? {} : { codeRevision: freshnessState.codeRevision }),
+        ...(freshnessState?.graphRevision === undefined ? {} : { graphRevision: freshnessState.graphRevision }),
+        reasonCodes: freshnessProjected
+          ? freshnessState?.reasonCodes ?? []
+          : [requiresFreshness ? "FRESHNESS_NOT_PROJECTED" : "FRESHNESS_NOT_REQUIRED"],
+        affectedAssertionIds: freshnessState?.affectedAssertionIds ?? [],
+        ...(freshnessState?.updatedAt === undefined ? {} : { updatedAt: freshnessState.updatedAt }),
+        anchors: freshnessProjected ? freshnessRecord?.anchors ?? [] : [],
+        events: freshnessEvents.map((event) => ({
+          eventId: event.eventId,
+          previousStatus: event.previousStatus,
+          status: event.status,
+          revision: event.revision,
+          codeRevision: event.codeRevision,
+          ...(event.graphRevision === undefined ? {} : { graphRevision: event.graphRevision }),
+          reasonCodes: event.reasonCodes,
+          affectedAssertionIds: event.affectedAssertionIds,
+          occurredAt: event.updatedAt,
+        })),
+      },
       editAction: action(!suppressed, asset.version, `edit:${asset.id}:${asset.version}`, suppressed ? "KNOWLEDGE_SUPPRESSED" : "ACTION_READY"),
       suppressAction: action(!suppressed, asset.version, `suppress:${asset.id}:${asset.version}`, suppressed ? "ALREADY_SUPPRESSED" : "ACTION_READY"),
       restoreAction: action(suppressed, asset.version, `restore:${asset.id}:${asset.version}`, suppressed ? "ACTION_READY" : "NOT_SUPPRESSED"),

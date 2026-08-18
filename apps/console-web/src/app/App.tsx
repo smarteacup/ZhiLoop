@@ -47,10 +47,11 @@ function CurrentPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
 
 function p4ConsoleApi(api: ConsoleApi): P4ConsoleApi | undefined {
   if (api.sessionInjections === undefined || api.closureRuns === undefined || api.closureRun === undefined
+    || api.refreshSessionContext === undefined
     || api.feedbackTargets === undefined || api.recordFeedback === undefined || api.rollout === undefined
     || api.highRiskGovernance === undefined || api.previewHighRisk === undefined || api.commitHighRisk === undefined) return undefined;
   return {
-    sessionInjections: api.sessionInjections, closureRuns: api.closureRuns, closureRun: api.closureRun,
+    sessionInjections: api.sessionInjections, refreshSessionContext: api.refreshSessionContext, closureRuns: api.closureRuns, closureRun: api.closureRun,
     feedbackTargets: api.feedbackTargets, recordFeedback: api.recordFeedback, rollout: api.rollout,
     highRiskGovernance: api.highRiskGovernance, previewHighRisk: api.previewHighRisk, commitHighRisk: api.commitHighRisk,
   };

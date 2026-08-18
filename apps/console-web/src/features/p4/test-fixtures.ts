@@ -31,6 +31,7 @@ export const disabledHighRisk: HighRiskGovernanceView = { policyRevision: 1, act
 export function p4Api(overrides: Partial<P4ConsoleApi> = {}): P4ConsoleApi {
   return {
     sessionInjections: async () => injection,
+    refreshSessionContext: async (sessionId) => ({ sessionId, removedEntries: 2, refreshedAt: "2026-08-04T00:00:00.000Z", reasonCode: "SESSION_CONTEXT_REFRESHED" }),
     closureRuns: async () => closures,
     closureRun: async () => closure,
     feedbackTargets: async () => [feedbackTarget],

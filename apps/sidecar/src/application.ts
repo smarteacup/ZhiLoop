@@ -582,6 +582,7 @@ export class SidecarApplication {
         feedback: p4Active.feedbackRuntime(),
         rollout,
         inspectEligibility: async (request) => await p4Active!.inspectKnowledgeEligibility(request),
+        refreshContext: (sessionId) => p4Active!.refreshContext(sessionId),
       });
       composedApplication.#p4Console = p4Console;
       composedApplication.#controlPlane.setP4RuntimeState(p4Active.capabilities(), {

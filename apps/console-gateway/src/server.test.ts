@@ -333,6 +333,12 @@ class FakeCommandPort implements ControlCommandPort {
     this.calls.push(`job:retry:${command.jobId}:${command.expectedRevision}:${command.idempotencyKey}`);
     return { schemaVersion: 1, action: "RETRY", disposition: "APPLIED", job: { ...job, revision: command.expectedRevision + 1, status: "QUEUED", reasonCode: "JOB_QUEUED", progress: 0 } };
   }
+
+  public async refreshP4Context(sessionId: string, idempotencyKey: string) {
+    if (this.failure) throw this.failure;
+    this.calls.push(`p4:context-refresh:${sessionId}:${idempotencyKey}`);
+    return { sessionId, removedEntries: 2, refreshedAt: NOW, reasonCode: "SESSION_CONTEXT_REFRESHED" };
+  }
 }
 
 interface AuthenticatedBrowser {
@@ -568,12 +574,14 @@ describe("Console Gateway security boundary", () => {
     for (const route of reads) expect((await fetch(`${address?.origin}${route}`, { headers: readHeaders })).status, route).toBe(200);
     const commandHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
     const commands = [
+      ["/api/v1/p4/sessions/session-1/context-refresh", { idempotencyKey: "refresh-1" }],
       ["/api/v1/p4/feedback", { kind: "MCP_USED", knowledgeId: "knowledge-1", version: 1, expectedRevision: 1, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1", expansionId: "expansion-1" }],
       ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint } }],
       ["/api/v1/p4/high-risk/commit", { expectedPolicyRevision: 1, idempotencyKey: "commit-1", previewId: fingerprint, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" }],
     ] as const;
     for (const [route, body] of commands) expect((await fetch(`${address?.origin}${route}`, { method: "POST", headers: commandHeaders, body: JSON.stringify(body) })).status, route).toBe(200);
     expect(queryPort.calls).toEqual(expect.arrayContaining(["p4:injections:session-1:10", "p4:mcp:session-1:attempt-1:10", "p4:closure:session-1:closure-1"]));
+    expect(commandPort.calls).toContain("p4:context-refresh:session-1:refresh-1");
   });
 
   it("rejects malformed P4 routes and reports each uncomposed optional capability", async () => {
@@ -605,12 +613,15 @@ describe("Console Gateway security boundary", () => {
     const headers = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
     const fingerprint = `sha256:${"a".repeat(64)}`;
     const commands: ReadonlyArray<readonly [string, unknown, number]> = [
+      ["/api/v1/p4/sessions/session-1/context-refresh", { idempotencyKey: "bad id" }, 400],
       ["/api/v1/p4/feedback", { kind: "PIN", knowledgeId: "knowledge-1", version: 1, expectedRevision: 1, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1" }, 503],
       ["/api/v1/p4/feedback", { kind: "PIN", knowledgeId: "knowledge-1", version: 1, expectedRevision: 2, idempotencyKey: "feedback-1", scopeKey: "PROJECT:project-1", traceId: "trace-1" }, 400],
       ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "RULE_CHANGE", assetIds: ["knowledge-1"], projectIds: [], reason: "reviewed", payloadFingerprint: fingerprint } }, 503],
       ["/api/v1/p4/high-risk/preview", { expectedPolicyRevision: 0 }, 400],
     ];
     for (const [route, body, status] of commands) expect((await fetch(`${address?.origin}${route}`, { method: "POST", headers, body: JSON.stringify(body) })).status, route).toBe(status);
+    expect((await fetch(`${address?.origin}/api/v1/p4/sessions/session-1/context-refresh`, { method: "GET", headers })).status).toBe(405);
+    expect((await fetch(`${address?.origin}/api/v1/p4/sessions/session-1/context-refresh`, { method: "POST", headers, body: JSON.stringify({ idempotencyKey: "refresh-1", padding: "x".repeat(20_000) }) })).status).toBe(413);
     expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "GET", headers })).status).toBe(405);
     expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "POST", headers: { ...readHeaders, origin: address?.origin ?? "" }, body: "{}" })).status).toBe(405);
     expect((await fetch(`${address?.origin}/api/v1/p4/feedback`, { method: "POST", headers, body: "{" })).status).toBe(400);

@@ -136,12 +136,14 @@ describe("P2 Console real composition", () => {
 
       type KnowledgeDetailView = {
         summary: string; markdown: string; version: number; status: string; eligible: boolean;
+        freshness: { status: string; projected: boolean; events: readonly unknown[] };
         editAction: { idempotencyKey: string };
         suppressAction: { idempotencyKey: string };
         restoreAction: { idempotencyKey: string };
       };
       const detail = p2KnowledgeDetailViewSchema.parse(await facade.handle({ schemaVersion: 1, requestId: "detail-1", type: "p2.knowledge.get", knowledgeId: list.knowledgeId })) as KnowledgeDetailView;
       expect(detail.status).toBe("ACCEPTED");
+      expect(detail.freshness).toMatchObject({ status: "NOT_REQUIRED", projected: true, events: [] });
       const edit = { title: "Use a durable publication outbox", summary: detail.summary, markdown: detail.markdown };
       const impact = p2KnowledgeEditImpactSchema.parse(await facade.handle({ schemaVersion: 1, requestId: "edit-preview", type: "p2.knowledge.edit.preview", knowledgeId: list.knowledgeId, expectedVersion: detail.version, idempotencyKey: detail.editAction.idempotencyKey, draft: edit }));
       expect(impact).toMatchObject({ evidenceDowngraded: true, eligibleAfter: false });

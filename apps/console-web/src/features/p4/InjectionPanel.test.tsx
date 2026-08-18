@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { userEvent } from "@testing-library/user-event";
 
 import { injectionAttemptViewSchema } from "../../api/p4.js";
 import { InjectionPanel } from "./InjectionPanel.js";
@@ -15,6 +16,13 @@ describe("InjectionPanel", () => {
     expect(screen.getByText("实际进入模型上下文")).toBeTruthy();
     expect(screen.getAllByText("已注入")).toHaveLength(1);
     expect(screen.getByText("delivery-evidence-1")).toBeTruthy();
+  });
+
+  it("explicitly refreshes the stable session catalog without writing a prompt", async () => {
+    const user = userEvent.setup();
+    render(<InjectionPanel api={p4Api()} sessionId="session-1" />);
+    await user.click(await screen.findByRole("button", { name: "刷新本会话知识" }));
+    expect((await screen.findByRole("status")).textContent).toContain("清除 2 条缓存");
   });
 
   it("rejects an INJECTED server fact without actual delivery evidence", () => {

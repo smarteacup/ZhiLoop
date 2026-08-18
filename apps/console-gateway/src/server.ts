@@ -65,6 +65,8 @@ import {
 import { StaticAssetStore } from "./static-assets.js";
 import {
   p4CapabilityListSchema,
+  p4ContextRefreshBodySchema,
+  p4ContextRefreshResponseSchema,
   p4ClosurePageSchema,
   p4FeedbackBodySchema,
   p4FeedbackResponseSchema,
@@ -620,6 +622,31 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         if (options.queryPort.listP4Capabilities === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "P4 capability facts are unavailable"); return; }
         await executeView(response, p4CapabilityListSchema, queryTimeoutMs, maximumJsonResponseBytes,
           async (queryOptions) => ({ items: await options.queryPort.listP4Capabilities!(queryOptions) }));
+        return;
+      }
+      const p4ContextRefreshMatch = /^\/api\/v1\/p4\/sessions\/([^/]+)\/context-refresh$/u.exec(url.pathname);
+      if (p4ContextRefreshMatch !== null) {
+        const sessionId = decodePathSegment(p4ContextRefreshMatch[1]);
+        if (request.method !== "POST") { safeError(response, 405, "INVALID_REQUEST", "Context refresh requires POST"); return; }
+        if (url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json"
+          || sessionId === undefined || !SAFE_KNOWLEDGE_ID.test(sessionId)) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid context refresh command"); return;
+        }
+        try {
+          const body = p4ContextRefreshBodySchema.safeParse(JSON.parse(
+            (await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8"),
+          ));
+          if (!body.success || options.commandPort?.refreshP4Context === undefined) {
+            safeError(response, body.success ? 503 : 400, body.success ? "CAPABILITY_UNAVAILABLE" : "INVALID_REQUEST", "Context refresh command is unavailable or invalid"); return;
+          }
+          await executeCommand(response, p4ContextRefreshResponseSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.commandPort!.refreshP4Context!(sessionId, body.data.idempotencyKey, queryOptions));
+        } catch (error) {
+          const tooLarge = error instanceof Error && error.message === "BODY_TOO_LARGE";
+          safeError(response, tooLarge ? 413 : error instanceof SyntaxError ? 400 : 502,
+            tooLarge || error instanceof SyntaxError ? "INVALID_REQUEST" : "SIDECAR_UNAVAILABLE", "Context refresh command failed");
+        }
         return;
       }
       const p4InjectionMatch = /^\/api\/v1\/p4\/sessions\/([^/]+)\/injections(?:\/([^/]+)(?:\/(mcp-expansions))?)?$/u.exec(url.pathname);

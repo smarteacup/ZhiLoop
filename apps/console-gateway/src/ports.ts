@@ -30,6 +30,7 @@ import type {
   P4FeedbackResponse,
   P4HighRiskCommitResponse,
   P4HighRiskPreviewResponse,
+  P4ContextRefreshResponse,
 } from "@zhiloop/p4-console-runtime";
 import type {
   P4CapabilityArray,
@@ -167,4 +168,5 @@ export interface ControlCommandPort {
   recordP4Feedback?(command: P4FeedbackCommand, options: QueryOptions): Promise<P4FeedbackResponse>;
   previewP4HighRisk?(command: P4HighRiskPreviewCommand, options: QueryOptions): Promise<P4HighRiskPreviewResponse>;
   commitP4HighRisk?(command: P4HighRiskCommitCommand, options: QueryOptions): Promise<P4HighRiskCommitResponse>;
+  refreshP4Context?(sessionId: string, idempotencyKey: string, options: QueryOptions): Promise<P4ContextRefreshResponse>;
 }

@@ -134,6 +134,7 @@ describe("UnixSocketControlClient", () => {
       else if (type === "p4.rollout.get") result = { state: { schemaVersion: 1, stateRevision: 1, effective, lastKnownGood: effective, evidence: [], audit: [{ eventId: fingerprint, kind: "BOOTSTRAP", stateRevision: 1, effectivePolicyRevision: 1, reasonCodes: ["BOOTSTRAP_SHADOW"], occurredAt: NOW }] }, downgradeHistory: [], rollbackTarget: effective };
       else if (type === "p4.feedback-targets.list") result = { items: [] };
       else if (type === "p4.high-risk.governance") result = { policyRevision: 1, activeStageEnabled: false, actor: "local-console", actions: Object.fromEntries(["GLOBAL_PROMOTION", "RULE_CHANGE", "BINDING_CHANGE", "PRIVACY_PURGE"].map((kind) => [kind, { enabled: false, capabilityStatus: "NOT_CONFIGURED", reasonCode: "HIGH_RISK_NOT_CONFIGURED" }])) };
+      else if (type === "p4.context.refresh") result = { sessionId: "session-1", removedEntries: 2, refreshedAt: NOW, reasonCode: "SESSION_CONTEXT_REFRESHED" };
       else if (type === "p4.feedback.record") result = { outcome: "RECORDED", eligibleAfterWrite: true };
       else if (type === "p4.high-risk.preview") result = { preview: { previewId: fingerprint, policyRevision: 1, commandFingerprint: fingerprint, command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint }, blastRadius, createdAt: NOW, expiresAt: "2099-08-03T12:00:00.000Z" }, blastRadius, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" };
       else result = { result: { operationId: fingerprint, previewId: fingerprint, kind: "GLOBAL_PROMOTION", actor: "local-console", policyRevision: 1, blastRadius, committedAt: NOW } };
@@ -149,6 +150,7 @@ describe("UnixSocketControlClient", () => {
     await expect(client.getP4Rollout(options)).resolves.toMatchObject({ state: { stateRevision: 1 } });
     await expect(client.listP4FeedbackTargets("session-1", options)).resolves.toEqual({ items: [] });
     await expect(client.getP4HighRiskGovernance(options)).resolves.toMatchObject({ activeStageEnabled: false });
+    await expect(client.refreshP4Context("session-1", "refresh-1", options)).resolves.toMatchObject({ removedEntries: 2 });
     await expect(client.recordP4Feedback({ action: "PIN", assetId: "knowledge-1", expectedKnowledgeVersion: 1, scopeKey: "PROJECT:project-1", traceId: "trace-1", idempotencyKey: "feedback-1" }, options)).resolves.toMatchObject({ outcome: "RECORDED" });
     await expect(client.previewP4HighRisk({ expectedPolicyRevision: 1, idempotencyKey: "preview-1", command: { kind: "GLOBAL_PROMOTION", assetIds: ["knowledge-1"], projectIds: ["project-1"], reason: "reviewed", payloadFingerprint: fingerprint } }, options)).resolves.toMatchObject({ preview: { previewId: fingerprint } });
     await expect(client.commitP4HighRisk({ expectedPolicyRevision: 1, idempotencyKey: "commit-1", previewId: fingerprint, confirmationPhrase: "CONFIRM GLOBAL_PROMOTION aaaaaaaaaaaaaaaa" }, options)).resolves.toMatchObject({ result: { operationId: fingerprint } });

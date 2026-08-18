@@ -231,6 +231,7 @@ export const highRiskPreviewViewSchema = z.strictObject({
   }
 });
 export const highRiskReceiptSchema = z.strictObject({ operationId: safeId, previewId: safeId, kind: highRiskKindSchema, actor: safeId, policyRevision: revision, committedAt: timestamp });
+export const contextRefreshReceiptSchema = z.strictObject({ sessionId: safeId, removedEntries: count, refreshedAt: timestamp, reasonCode: safeText(120) });
 
 export type P4ActionGate = z.infer<typeof p4ActionGateSchema>;
 export type InjectionAttemptView = z.infer<typeof injectionAttemptViewSchema>;
@@ -245,6 +246,7 @@ export type HighRiskKind = z.infer<typeof highRiskKindSchema>;
 export type HighRiskGovernanceView = z.infer<typeof highRiskGovernanceViewSchema>;
 export type HighRiskPreviewView = z.infer<typeof highRiskPreviewViewSchema>;
 export type HighRiskReceipt = z.infer<typeof highRiskReceiptSchema>;
+export type ContextRefreshReceipt = z.infer<typeof contextRefreshReceiptSchema>;
 
 export interface FeedbackCommand {
   readonly knowledgeId: string;
@@ -278,6 +280,7 @@ export interface HighRiskCommitCommand {
 /** P4 adapter boundary. Implementations must validate responses with the schemas above. */
 export interface P4ConsoleApi {
   sessionInjections(sessionId: string, signal?: AbortSignal): Promise<SessionInjectionView>;
+  refreshSessionContext(sessionId: string, signal?: AbortSignal): Promise<ContextRefreshReceipt>;
   closureRuns(sessionId?: string, signal?: AbortSignal): Promise<ClosureRunListView>;
   closureRun(sessionId: string, closureRunId: string, signal?: AbortSignal): Promise<ClosureRunView>;
   feedbackTargets(sessionId: string, signal?: AbortSignal): Promise<readonly FeedbackTargetView[]>;

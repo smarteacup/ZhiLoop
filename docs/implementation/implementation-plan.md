@@ -603,7 +603,7 @@ P0-P4 构成“知识沉淀 MVP”；P5 构成“知识召回与注入 MVP”；
 
 ## 11. P8：CodeGraph 联邦检索与知识保鲜（Proposed）
 
-设计依据：[CodeGraph 集成与知识保鲜技术设计](../design/codegraph-integration-and-knowledge-freshness-tdd.md)与 [ADR-0005](../adr/0005-codegraph-as-live-code-fact-layer.md)。P8 尚未实施，不计入当前 `0.3.14` 已完成能力。
+设计依据：[CodeGraph 集成与知识保鲜技术设计](../design/codegraph-integration-and-knowledge-freshness-tdd.md)、[持续知识演进设计](../design/continuous-knowledge-evolution-tdd.md)与 [ADR-0005](../adr/0005-codegraph-as-live-code-fact-layer.md)。持续知识演进 M1～M10 已在 `0.4.0` 落地；自动发布 consumer 仍按首版灰度边界保持关闭。
 
 ### CKL-801：CodeIntelligencePort 与 CodeGraph Adapter
 

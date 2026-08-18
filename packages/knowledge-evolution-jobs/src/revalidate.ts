@@ -58,6 +58,14 @@ export interface KnowledgeRevalidateHandlerOptions {
   readonly verifier: FreshnessRevalidationPort;
   readonly recipes?: KnowledgeRecipeResolver;
   readonly repairJobs?: { enqueue(input: KnowledgeRepairDraftJobInput): unknown };
+  readonly onConflict?: (input: {
+    readonly projectId: string;
+    readonly assetId: string;
+    readonly assetVersion: number;
+    readonly verificationRunId: string;
+    readonly observedAt: string;
+    readonly reasonCodes: readonly string[];
+  }) => void;
   readonly pageSize?: number;
   readonly maxTargets?: number;
 }
@@ -206,6 +214,11 @@ export function createKnowledgeRevalidateHandler(options: KnowledgeRevalidateHan
           if (result.affectedCount !== available.length) throw new NonRetryableJobError("REVALIDATE_RESULT_CARDINALITY_INVALID");
           for (const item of result.items.filter((entry) => entry.state.status === "CONFLICT")) {
             context.throwIfCancellationRequested();
+            try {
+              options.onConflict?.({ projectId: parsed.projectId, assetId: item.assetId, assetVersion: item.assetVersion,
+                verificationRunId: item.verificationRunId, observedAt: item.state.updatedAt,
+                reasonCodes: item.state.reasonCodes });
+            } catch { /* Alert observation is best-effort and cannot change the durable Freshness result. */ }
             options.repairJobs?.enqueue({ schemaVersion: 1, jobType: "KNOWLEDGE_REPAIR_DRAFT", projectId: parsed.projectId,
               assetId: item.assetId, assetVersion: item.assetVersion, conflictRunId: item.verificationRunId });
           }

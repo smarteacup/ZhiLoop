@@ -397,6 +397,7 @@ export class SidecarApplication {
         capture,
         health: async () => await composedApplication.health(),
         configuration,
+        operationalAlerts: () => p2Evolution?.listOperationalAlerts({ limit: 1_000 }).items ?? [],
         jobCommands: {
           cancelJob: async (request) => {
             if (p2Evolution?.getJob(request.jobId) !== undefined) return p2Evolution.cancel(request);
@@ -462,6 +463,7 @@ export class SidecarApplication {
         compilerTimeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
         compilerBatchSize: configuration.get().effective.future.compilerBatchSize,
         evolutionMaxCandidates: configuration.get().effective.evolution.maxMatchCandidates,
+        semanticJudgeEnabled: configuration.get().effective.evolution.semanticJudgeEnabled,
         codeGraphTimeoutMs: configuration.get().effective.codeIntelligence.queryTimeoutMs,
         verificationTimeoutMs: verificationTimeoutMs(configuration.get().effective),
         ...(config.codexQuery?.executable === undefined ? {} : { compilerExecutable: config.codexQuery.executable }),
@@ -471,7 +473,10 @@ export class SidecarApplication {
       p2Runtime = await P2SidecarRuntime.create({
         stateDirectory: dirname(config.ledgerPath),
         pollIntervalMs: configuration.get().effective.runtime.workerPollIntervalMs,
-        projectJob: (snapshot) => { composedApplication.#controlPlane?.projectJob(snapshot); },
+        projectJob: (snapshot) => {
+          composedApplication.#controlPlane?.projectJob(snapshot);
+          composedApplication.#projectSemanticEvolutionCapability();
+        },
         knowledgeWorker: p2Production.worker,
         snapshotSource: {
           observe: async (request) => {
@@ -585,6 +590,7 @@ export class SidecarApplication {
       p2Evolution = new P2EvolutionRuntime({
         stateDirectory: dirname(config.ledgerPath), freshnessStore: p2Production.freshnessStore,
         production: p2Production, preview: p2PreviewCoordinator, p2Runtime, configuration: evolutionConfiguration,
+        alertConfiguration: configuration.get().effective.evolutionAlerts,
         onJob: (job) => {
           composedApplication.#controlPlane?.projectJob(evolutionJobSnapshot(job));
           composedApplication.#projectEvolutionCapability();
@@ -957,8 +963,13 @@ export class SidecarApplication {
 
   #projectEvolutionCapability(): void {
     const status = this.#p2Evolution?.state().status;
-    if (status === undefined || status === "STOPPED") return;
-    this.#controlPlane?.setKnowledgeEvolutionState(status);
+    if (status !== undefined && status !== "STOPPED") this.#controlPlane?.setKnowledgeEvolutionState(status);
+    this.#projectSemanticEvolutionCapability();
+  }
+
+  #projectSemanticEvolutionCapability(): void {
+    const capability = this.#p2Production?.semanticEvolutionCapability();
+    if (capability !== undefined) this.#controlPlane?.setSemanticEvolutionState(capability.status, capability.reasonCode);
   }
 
   #projectAutomaticCompilationCapability(): void {

@@ -641,6 +641,25 @@ export const alertEvaluationSchema = z.strictObject({
   })).max(2_000),
 });
 
+export const operationalAlertSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  alertId: safeId(500),
+  dedupKey: safeId(500),
+  severity: z.enum(["INFO", "WARNING", "CRITICAL"]),
+  type: z.enum(["PERMANENT_JOB_FAILURE", "CODEGRAPH_UNAVAILABLE", "STALE_KNOWLEDGE", "MIGRATION_FAILED"]),
+  projectId: safeId(500).optional(),
+  entityRef: safeId(1_000).optional(),
+  reasonCodes: z.array(z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/u)).min(1).max(32),
+  occurrenceCount: z.number().int().positive(),
+  firstObservedAt: isoTimestampSchema,
+  lastObservedAt: isoTimestampSchema,
+  revision: z.number().int().positive(),
+  deliveryState: z.enum(["LOCAL_ONLY", "PENDING", "DELIVERED", "DELIVERY_FAILED"]),
+  lastDeliveryAttemptAt: isoTimestampSchema.optional(),
+  lastDeliveredAt: isoTimestampSchema.optional(),
+  providerRef: safeId(500).optional(),
+});
+
 export const diagnosticsSchema = z.strictObject({
   schemaVersion: z.literal(CONTROL_API_SCHEMA_VERSION),
   observedAt: isoTimestampSchema,
@@ -665,6 +684,7 @@ export const diagnosticsSchema = z.strictObject({
     availableBytes: z.number().int().nonnegative().optional(),
   }),
   alerts: alertEvaluationSchema.optional(),
+  operationalAlerts: z.array(operationalAlertSchema).max(1_000).optional(),
 });
 
 export const capturedEventContentSchema = z.strictObject({
@@ -743,6 +763,7 @@ export type EventMetadata = z.infer<typeof eventMetadataSchema>;
 export type Overview = z.infer<typeof overviewSchema>;
 export type Diagnostics = z.infer<typeof diagnosticsSchema>;
 export type AlertEvaluation = z.infer<typeof alertEvaluationSchema>;
+export type OperationalAlert = z.infer<typeof operationalAlertSchema>;
 export type CapturePreview = z.infer<typeof capturePreviewSchema>;
 export type CaptureCommitResult = z.infer<typeof captureCommitResultSchema>;
 

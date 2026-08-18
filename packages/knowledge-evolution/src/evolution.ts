@@ -282,8 +282,11 @@ function validSemanticJudgment(
   if (!Number.isFinite(judgment.confidence) || judgment.confidence < 0 || judgment.confidence > 1) return false;
   if (judgment.reason.trim().length === 0 || judgment.reason.length > 1_000 || /[\0\r\n]/u.test(judgment.reason)) return false;
   const allowed = new Set(targets.map((target) => `${target.id}@${target.version}`));
+  const selected = judgment.targetKnowledgeVersions.map((target) => `${target.id}@${target.version}`);
   return judgment.targetKnowledgeVersions.length > 0
-    && judgment.targetKnowledgeVersions.every((target) => allowed.has(`${target.id}@${target.version}`));
+    && selected.length <= MAX_TARGETS
+    && new Set(selected).size === selected.length
+    && selected.every((target) => allowed.has(target));
 }
 
 export function classifyKnowledgeEvolution(input: EvolutionMatchInput): EvolutionDecision {

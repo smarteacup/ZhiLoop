@@ -121,7 +121,29 @@ export function jobIngestionViewModel(
 }
 
 function alerts(overview: Overview, diagnostics: Diagnostics): ConsoleAlertViewModel[] {
-  const reportedAlerts: ConsoleAlertViewModel[] = (diagnostics.alerts?.activeAlerts ?? []).map((alert) => ({
+  const durableType: Readonly<Record<NonNullable<Diagnostics["operationalAlerts"]>[number]["type"], string>> = {
+    PERMANENT_JOB_FAILURE: "后台任务永久失败",
+    CODEGRAPH_UNAVAILABLE: "CodeGraph 不可用",
+    STALE_KNOWLEDGE: "发现过期知识",
+    MIGRATION_FAILED: "历史知识迁移失败",
+  };
+  const delivery: Readonly<Record<NonNullable<Diagnostics["operationalAlerts"]>[number]["deliveryState"], string>> = {
+    LOCAL_ONLY: "仅本地记录",
+    PENDING: "等待外部通知",
+    DELIVERED: "已发送外部通知",
+    DELIVERY_FAILED: "外部通知失败，本地记录已保留",
+  };
+  const durableAlerts: ConsoleAlertViewModel[] = (diagnostics.operationalAlerts ?? []).map((alert) => ({
+    alertId: alert.alertId,
+    severity: alert.severity,
+    code: alert.reasonCodes.join("+") || alert.type,
+    title: `${durableType[alert.type]}${alert.entityRef === undefined ? "" : ` · ${alert.entityRef}`}`,
+    detail: `${delivery[alert.deliveryState]} · 累计 ${alert.occurrenceCount} 次`,
+    healthState: alert.severity === "CRITICAL" ? "FAILED" : alert.severity === "INFO" ? "READY" : "DEGRADED",
+    triggeredAt: alert.lastObservedAt,
+    quietHoursSuppressed: false,
+  }));
+  const thresholdAlerts: ConsoleAlertViewModel[] = (diagnostics.alerts?.activeAlerts ?? []).map((alert) => ({
     alertId: alert.alertId,
     severity: alert.severity === "ERROR" ? "CRITICAL" : "WARNING",
     code: alert.reasonCodes.join("+") || "ALERT_THRESHOLD_EXCEEDED",
@@ -131,6 +153,7 @@ function alerts(overview: Overview, diagnostics: Diagnostics): ConsoleAlertViewM
     triggeredAt: alert.observedAt,
     quietHoursSuppressed: diagnostics.alerts?.quietHoursActive === true && !alert.notificationDelivered,
   }));
+  const reportedAlerts = [...durableAlerts, ...thresholdAlerts];
   const result: ConsoleAlertViewModel[] = [...reportedAlerts];
   if (overview.alertCount > reportedAlerts.length) result.push({
     alertId: "reported-alert-count",

@@ -37,6 +37,7 @@ import {
   type SessionCatalogEntry,
 } from "@zhiloop/session-catalog";
 import { evaluateAlerts, type PreviousAlertState } from "@zhiloop/observability";
+import type { OperationalAlertRecord } from "@zhiloop/operational-alerts";
 import {
   JobIdempotencyConflictError,
   JobNotFoundError,
@@ -102,6 +103,7 @@ export interface SidecarControlPlaneOptions {
   readonly configuration?: SqliteConfigurationService;
   readonly jobCommands?: JobCommandExecutionPort;
   readonly extraction?: P2ControlExecutionPort;
+  readonly operationalAlerts?: () => readonly OperationalAlertRecord[];
   readonly clock?: () => Date;
 }
 
@@ -268,6 +270,7 @@ export class SidecarControlPlane {
   readonly #configuration: SqliteConfigurationService | undefined;
   readonly #jobCommands: JobCommandExecutionPort | undefined;
   readonly #extraction: P2ControlExecutionPort | undefined;
+  readonly #operationalAlerts: (() => readonly OperationalAlertRecord[]) | undefined;
   readonly #clock: () => Date;
   readonly #readModel: SqliteOperationalReadModel;
   readonly #catalog: ReadOnlySessionCatalog;
@@ -300,6 +303,7 @@ export class SidecarControlPlane {
     this.#configuration = options.configuration;
     this.#jobCommands = options.jobCommands;
     this.#extraction = options.extraction;
+    this.#operationalAlerts = options.operationalAlerts;
     this.#clock = options.clock ?? (() => new Date());
     this.#readModel = readModel;
     this.#catalog = catalog;
@@ -378,6 +382,7 @@ export class SidecarControlPlane {
       capability("knowledge.compile", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.governance", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.evolution", "STARTING", "COMPONENT_STARTING", observedAt),
+      capability("knowledge.semantic-evolution", "STARTING", "COMPONENT_STARTING", observedAt),
       capability("knowledge.automatic-compile", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Manual extraction is the only enabled SHADOW trigger"),
       capability("knowledge.retrieval", "DISABLED", "CAPABILITY_DISABLED", observedAt, false, "Compose the retrieval runtime"),
       capability("codex.query", "NOT_CONFIGURED", "CAPABILITY_NOT_CONFIGURED", observedAt, false, "Configure the read-only Codex query model"),
@@ -502,6 +507,19 @@ export class SidecarControlPlane {
       status === "DEGRADED",
       status === "DISABLED" ? "Enable knowledge evolution in Sidecar configuration"
         : status === "DEGRADED" ? "Inspect background jobs and retryable failures" : undefined,
+    ));
+  }
+
+  public setSemanticEvolutionState(status: "READY" | "DEGRADED" | "DISABLED", reasonCode: string): void {
+    const observedAt = timestamp(this.#clock);
+    this.#readModel.projectCapability(capability(
+      "knowledge.semantic-evolution",
+      status,
+      status === "READY" ? "COMPONENT_READY" : status === "DEGRADED" ? "COMPONENT_DEGRADED" : "CAPABILITY_DISABLED",
+      observedAt,
+      status === "DEGRADED",
+      status === "DISABLED" ? "在配置中启用语义演进裁决"
+        : status === "DEGRADED" ? `检查 Codex 语义适配器：${reasonCode}` : undefined,
     ));
   }
 
@@ -691,8 +709,12 @@ export class SidecarControlPlane {
         notificationPending: alert.notificationPending,
         notificationDelivered: alert.notificationDelivered,
       })));
-      this.#alertCount = alerts.activeAlerts.length;
     }
+    const operationalAlerts = (() : readonly OperationalAlertRecord[] => {
+      try { return this.#operationalAlerts?.() ?? []; }
+      catch { return []; }
+    })();
+    this.#alertCount = (alerts?.activeAlerts.length ?? 0) + operationalAlerts.length;
     const alertView = alerts === undefined ? undefined : {
       ...alerts,
       activeAlerts: alerts.activeAlerts.map((alert) => ({ ...alert, reasonCodes: [...alert.reasonCodes] })),
@@ -712,6 +734,9 @@ export class SidecarControlPlane {
       },
       storage: { healthy: storage.isFile(), databaseBytes: storage.size },
       ...(alertView === undefined ? {} : { alerts: alertView }),
+      ...(operationalAlerts.length === 0 ? {} : { operationalAlerts: operationalAlerts.map((alert) => ({
+        ...alert, reasonCodes: [...alert.reasonCodes],
+      })) }),
     };
     this.#readModel.projectHealth(value);
     return value;

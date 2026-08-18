@@ -2,16 +2,49 @@
 
 ## 审查统计
 
-| 指标 | 本轮（Knowledge Repair Drafts） | 累计 |
+| 指标 | 本轮（Semantic Evolution and Alerts） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 14 |
-| 风险发现 | 6 | 105 |
-| 高风险 | 2 | 46 |
-| 中风险 | 4 | 51 |
+| Review 次数 | 1 | 15 |
+| 风险发现 | 2 | 107 |
+| 高风险 | 1 | 47 |
+| 中风险 | 1 | 52 |
 | 低风险 | 0 | 8 |
-| 已修复 | 6 | 100 |
+| 已修复 | 2 | 102 |
 | 未解决 | 0 | 5 |
-| 本轮耗时 | 约 45 分钟 | 已知耗时约 5 小时 39 分钟（首轮历史报告未记录耗时） |
+| 本轮耗时 | 约 35 分钟 | 已知耗时约 6 小时 14 分钟（首轮历史报告未记录耗时） |
+
+## Semantic Evolution and Alerts 审查结论
+
+确定性规则无法裁决时，Knowledge Evolution 现在可选择调用一次只读 Codex 语义适配器；模型只能看到受界摘要并从精确目标集合选择关系，任何异常都保持 `PENDING`。永久任务失败、CodeGraph 不可用和知识过期已经接入本地持久化告警，未配置外部 provider 时如实显示 `LOCAL_ONLY`。审查覆盖权限、隐私、超时、并发、SQLite、配置真实性和 producer 重放，2 个发现均已修复。
+
+## Semantic Evolution and Alerts 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | provider 异步投递期间，新 occurrence 可以先推进同一告警 revision | 投递回执按旧 revision 更新会冲突，或者覆盖刚聚合的 occurrence，造成计数丢失/错误投递状态 | 回执阶段重新读取最新 record 并只合并 delivery 字段；并发 pending provider 测试证明 occurrenceCount 保持 2 |
+| 中 | dedupKey 初版只按哈希定位，未约束 type/project/entity 的语义身份 | 两个不同故障错误复用 key 时会被合并为一条告警，运维判断失真 | 已存在记录与新事件的 type/project/entity 不一致即拒绝；身份冲突测试通过 |
+
+## Semantic Evolution and Alerts 关键维度确认
+
+- **决策边界**：确定性引擎优先；语义调用每个未决候选最多一次；action、target、confidence 和 reason 在领域层二次校验。
+- **权限边界**：模型输出不包含 scope 或 authority 字段，不能扩大范围，也不能将 Candidate 提升为发布状态。
+- **隐私边界**：只投影 title/summary/assertion/source ID；告警只保存标识、原因码、计数和投递元数据。
+- **存储与回放**：告警库使用 0600、WAL/FULL、STRICT、canonical hash、event receipt、revision CAS 和有界 cursor；重启后聚合结果不变。
+- **配置真实性**：新安装语义裁决默认关闭；关闭时不组合 Adapter；不可用时报告 DEGRADED；没有 provider 时报告 LOCAL_ONLY。
+- **失败隔离**：语义错误保持 PENDING；告警失败不改变主知识任务结果；Codex 主对话不被阻塞。
+
+## Semantic Evolution and Alerts Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，74 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7 Gate | 60/60 通过 |
+| Vitest unit/integration | 187 files，1,612/1,612 通过 |
+| Coverage | statements 90.00%，branches 85.10%，functions 92.10%，lines 93.77% |
+| OpenSpec strict validation | `wire-semantic-evolution-and-alerts` 有效 |
+| 持久化回放 | 单次语义调用；重复告警冷却聚合为一条，重启后计数保持 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## Knowledge Repair Drafts 审查结论
 

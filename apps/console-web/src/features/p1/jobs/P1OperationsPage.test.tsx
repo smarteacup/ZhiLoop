@@ -192,9 +192,15 @@ describe("P1OperationsPage", () => {
         }],
         transitions: [],
       },
+      operationalAlerts: [{
+        schemaVersion: 1, alertId: "operational-alert-1", dedupKey: "stale:project-1:asset-1@2",
+        severity: "WARNING", type: "STALE_KNOWLEDGE", projectId: "project-1", entityRef: "asset-1@2",
+        reasonCodes: ["VERIFICATION_CONFLICT"], occurrenceCount: 3, firstObservedAt: timestamp,
+        lastObservedAt: timestamp, revision: 3, deliveryState: "LOCAL_ONLY",
+      }],
     });
     const degradedOverview = overview({
-      alertCount: 2,
+      alertCount: 3,
       capabilities: [{ schemaVersion: 1, capabilityId: "knowledge.compiler", status: "DEGRADED", reasonCode: "COMPONENT_DEGRADED", observedAt: timestamp, lastTransitionAt: timestamp, retryable: true, evidenceRefs: [] }],
     });
     render(<P1OperationsPage api={apiWith({ diagnostics: async () => alertDiagnostics, overview: async () => degradedOverview })} mode="diagnostics" />);
@@ -203,6 +209,8 @@ describe("P1OperationsPage", () => {
     expect(screen.getByText("本地存储异常")).toBeTruthy();
     expect(screen.getByText("JOBS · capture")).toBeTruthy();
     expect(screen.getByText(/观测值 12，阈值 10/u)).toBeTruthy();
+    expect(screen.getByText("发现过期知识 · asset-1@2")).toBeTruthy();
+    expect(screen.getByText(/仅本地记录 · 累计 3 次/u)).toBeTruthy();
     expect(screen.getByText("1 个未展开活动告警")).toBeTruthy();
     expect(screen.getByText("knowledge.compiler")).toBeTruthy();
   });

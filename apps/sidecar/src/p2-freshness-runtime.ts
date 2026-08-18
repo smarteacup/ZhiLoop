@@ -30,6 +30,12 @@ export class ProductionFreshnessVerifier {
   constructor(
     private readonly verification: SharedVerificationPort,
     private readonly onVerified?: (revision: { readonly projectId: string; readonly codeRevision: string; readonly graphRevision?: string }) => void,
+    private readonly onCodeGraphUnavailable?: (input: {
+      readonly projectId: string;
+      readonly runId: string;
+      readonly observedAt: string;
+      readonly reasonCodes: readonly string[];
+    }) => void,
   ) {}
   observe(projectId: string, root: string): void { this.#projects.set(projectId, root); }
 
@@ -87,6 +93,14 @@ export class ProductionFreshnessVerifier {
       }
       results[item.assetId] = batch.results;
       runIds[item.assetId] = batch.runId;
+      const unavailableReasons = [...new Set(batch.results.flatMap((result) => result.reasonCodes)
+        .filter((reason) => reason.startsWith("CODEGRAPH_")
+          && /(?:UNAVAILABLE|NOT_CONFIGURED|NOT_INITIALIZED|INCOMPATIBLE|STALE|TIMEOUT|INVALID|BOUNDED)/u.test(reason)))].sort();
+      if (unavailableReasons.length > 0) {
+        try { this.onCodeGraphUnavailable?.({ projectId: input.projectId, runId: batch.runId,
+          observedAt: input.changes.observedAt, reasonCodes: unavailableReasons }); }
+        catch { /* Operational alerting cannot change verification semantics. */ }
+      }
     }
     const verified = Object.freeze({
       projectId: input.projectId, codeRevision: input.changes.sourceRef,

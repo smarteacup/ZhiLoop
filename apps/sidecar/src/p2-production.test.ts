@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import type { EventEnvelope } from "@zhiloop/domain";
 import type { ExtractionSnapshot } from "@zhiloop/control-api";
+import type { KnowledgeExtractionPort } from "@zhiloop/knowledge-compiler";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { deriveP2ProjectContext, readP2SnapshotRecords } from "./p2-production.js";
+import { P2ProductionComposition, deriveP2ProjectContext, readP2SnapshotRecords } from "./p2-production.js";
 
 const directories: string[] = [];
 afterEach(async () => await Promise.all(directories.splice(0).map(async (directory) => await rm(directory, { recursive: true, force: true }))));
@@ -34,6 +35,22 @@ function snapshot(sessionId: string, from: number, to: number): ExtractionSnapsh
 }
 
 describe("P2 production Ledger boundary", () => {
+  it("does not compose semantic arbitration while disabled and truthfully reports injected readiness", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "zhiloop-p2-semantic-")); directories.push(directory);
+    const ledger = new SqliteEventLedger(join(directory, "ledger.sqlite"));
+    const compiler: KnowledgeExtractionPort = { extract: async () => ({ schemaVersion: 1, candidates: [] }) };
+    const common = { stateDirectory: directory, ledger, extraction: () => ({}) as never,
+      compilerTimeoutMs: 1_000, compilerBatchSize: 10, compiler };
+    const disabled = await P2ProductionComposition.create(common);
+    expect(disabled.semanticEvolutionCapability()).toEqual({ status: "DISABLED", reasonCode: "SEMANTIC_EVOLUTION_DISABLED" });
+    disabled.close();
+    const enabled = await P2ProductionComposition.create({ ...common, semanticJudgeEnabled: true,
+      semanticJudge: { arbitrate: async () => { throw new Error("unused"); } } });
+    expect(enabled.semanticEvolutionCapability()).toEqual({ status: "READY", reasonCode: "SEMANTIC_EVOLUTION_READY" });
+    enabled.close();
+    ledger.close();
+  });
+
   it("pages beyond SQLite's 1000-row read cap and keeps project identity stable across sessions", async () => {
     const directory = await mkdtemp(join(tmpdir(), "zhiloop-p2-production-")); directories.push(directory);
     const ledger = new SqliteEventLedger(join(directory, "ledger.sqlite"));

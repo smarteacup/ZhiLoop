@@ -62,3 +62,22 @@ export interface CodexExecStructuredGenerationModelOptions {
   readonly maxDiagnosticRuns?: number;
   readonly ignoreUserConfig?: boolean;
 }
+
+/** Generic read-only JSON generation boundary shared by bounded ZhiLoop model adapters. */
+export interface CodexExecJsonGenerationRequest {
+  readonly operation: "KNOWLEDGE_EXTRACTION" | "SEMANTIC_EVOLUTION";
+  readonly promptVersion: string;
+  readonly trustedInstructions: string;
+  readonly untrustedInput: unknown;
+  readonly responseSchema: Readonly<Record<string, unknown>>;
+}
+
+export interface CodexExecJsonGenerationContext {
+  readonly runKey: string;
+  readonly attempt: number;
+  readonly signal: AbortSignal;
+}
+
+export interface CodexExecJsonGenerationPort {
+  generateStructured(request: CodexExecJsonGenerationRequest, context: CodexExecJsonGenerationContext): Promise<unknown>;
+}

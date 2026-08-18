@@ -242,6 +242,8 @@ describe("knowledge evolution", () => {
       { action: "STORE", targetKnowledgeVersions: [{ id: related.id, version: related.version }], confidence: 1, reason: "store" },
       { action: "SKIP", targetKnowledgeVersions: [{ id: related.id, version: related.version }], confidence: 2, reason: "confidence" },
       { action: "SKIP", targetKnowledgeVersions: [{ id: related.id, version: related.version }], confidence: 1, reason: "bad\nreason" },
+      { action: "SKIP", targetKnowledgeVersions: [{ id: related.id, version: related.version },
+        { id: related.id, version: related.version }], confidence: 1, reason: "duplicate" },
     ]) {
       const invalid = await decideKnowledgeEvolution(input({ retrievedTargets: [related] }), {
         arbitrate: async () => judgment as never,

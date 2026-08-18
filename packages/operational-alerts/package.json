@@ -1,0 +1,13 @@
+{
+  "name": "@zhiloop/operational-alerts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "zhiloop": {
+    "allowedWorkspaceDependencies": [],
+    "allowedExternalDependencies": ["node:*"],
+    "requireDirectTests": true
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b", "clean": "tsc -b --clean" }
+}

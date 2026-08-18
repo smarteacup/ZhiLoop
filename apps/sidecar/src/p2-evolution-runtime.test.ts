@@ -31,6 +31,7 @@ function repository(): { readonly root: string; readonly state: string } {
 }
 
 function runtime(state: string, options: { readonly configuration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["configuration"];
+  readonly alertConfiguration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["alertConfiguration"];
   readonly onJob?: (job: EvolutionJobProjection) => void } = {}): { runtime: P2EvolutionRuntime; freshness: SqliteKnowledgeFreshnessStore } {
   const freshness = new SqliteKnowledgeFreshnessStore(join(state, "freshness.sqlite"));
   const preview: P2CandidatePreviewPort = {
@@ -47,6 +48,7 @@ function runtime(state: string, options: { readonly configuration?: ConstructorP
     verificationStore: { getRun: () => undefined } } as unknown as Pick<P2ProductionComposition, "verification" | "verificationStore">;
   return { freshness, runtime: new P2EvolutionRuntime({ stateDirectory: state, freshnessStore: freshness,
     production, preview, p2Runtime: p2, configuration: { workerPollIntervalMs: 60_000, ...options.configuration },
+    ...(options.alertConfiguration === undefined ? {} : { alertConfiguration: options.alertConfiguration }),
     ...(options.onJob === undefined ? {} : { onJob: options.onJob }) }) };
 }
 
@@ -108,6 +110,23 @@ describe("P2EvolutionRuntime", () => {
     expect(() => fixture.runtime.read("project-1")).toThrow("RUNTIME_CLOSED");
     expect(() => fixture.runtime.schedule(request)).toThrow("RUNTIME_CLOSED");
     expect(() => fixture.runtime.listRepairDrafts({ limit: 10 })).toThrow("RUNTIME_CLOSED");
+    expect(() => fixture.runtime.listOperationalAlerts({ limit: 10 })).toThrow("RUNTIME_CLOSED");
+    fixture.freshness.close();
+  });
+
+  it("persists a sanitized permanent-failure alert when its producer switch is enabled", async () => {
+    const { state } = repository();
+    const fixture = runtime(state, { configuration: { enabled: true, maxAttempts: 1 }, alertConfiguration: {
+      enabled: true, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false,
+    } });
+    fixture.runtime.enqueue({ schemaVersion: 1, jobType: "KNOWLEDGE_REPAIR_DRAFT", projectId: "project-1",
+      assetId: "missing-asset", assetVersion: 1, conflictRunId: "missing-run" }, 1);
+    await fixture.runtime.start();
+    const alerts = fixture.runtime.listOperationalAlerts({ limit: 10 }).items;
+    expect(alerts).toEqual([expect.objectContaining({ type: "PERMANENT_JOB_FAILURE", severity: "CRITICAL",
+      occurrenceCount: 1, deliveryState: "LOCAL_ONLY" })]);
+    expect(JSON.stringify(alerts)).not.toMatch(/source\.ts|unexpected verification/u);
+    await fixture.runtime.close();
     fixture.freshness.close();
   });
 

@@ -23,6 +23,7 @@
 | Governance Store Migration | 1 | 只前向迁移；拒绝更高版本 | 治理写入停止 |
 | Verification Store Schema | 1 | STRICT tables；Recipe/Run canonical hash 必须匹配 | 证据验证与保鲜暂停，不使用损坏证明 |
 | Evolution Job Store Schema | 1 | Job 类型、输入字段、幂等键、lease/fencing 和 checkpoint 必须严格匹配 | 新任务停止入队；旧任务保留并报告 `DEGRADED` |
+| Operational Alert Store Schema | 1 | alert/event identity、canonical payload hash、revision 和 delivery state 必须严格匹配 | 告警写入失败关闭；主知识任务继续，不能误报外部通知成功 |
 | Git Change Observation Schema | 1 | sourceRef、base revision、路径页、observation hash 与 acknowledgement effect 必须一致 | baseline 不推进；当前代码知识停止注入 |
 | Freshness Affected Snapshot Schema | 1 | 固定 `(assetId, assetVersion)` 集合、target hash 与分页游标必须一致 | 重验证任务失败关闭，不接受部分结果 |
 | Evidence Recipe | `evidence-recipe-v1` | 知识 ID、版本与 Assertion hash 必须精确匹配 | 当前版本不参与自动保鲜 |
@@ -45,6 +46,8 @@
 | `KNOWLEDGE_COMPILE` 外层作业 | READY | 自动调度只创建/复用 Preview；不会越过显式 Commit |
 | `KNOWLEDGE_REVALIDATE` | READY | 固定当前代码 Recipe 集合，逐页 checkpoint，baseline 最后 CAS 推进 |
 | `KNOWLEDGE_REPAIR_DRAFT` | READY | `CONFLICT` 自动创建可追溯 `PENDING` 草稿；不改旧知识、不生成无依据正文、不继承发布授权 |
+| 语义演进裁决 | READY（默认关闭） | 只在确定性规则未决时调用一次 Codex；最多 5 个摘要目标，越界/错误/不可用保持 `PENDING` |
+| 本地运维告警 | READY | 三类生产事件写入 SQLite；按 dedupKey 冷却聚合，无 provider 时明确标记 `LOCAL_ONLY` |
 | `CODEGRAPH_INITIALIZE` | NOT_CONFIGURED | Hook/门禁绝不隐式初始化 CodeGraph |
 | `LEGACY_KNOWLEDGE_MIGRATION` | NOT_CONFIGURED | 未实现迁移 handler 前不接受操作请求 |
 | 精确 Freshness 门禁 | READY | 代码/图 revision 不一致即排除；非代码知识继续；总预算不超过 200ms |

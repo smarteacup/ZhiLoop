@@ -105,13 +105,20 @@ describe("KNOWLEDGE_REVALIDATE durable handler", () => {
   it("processes a stable multi-page target set and acknowledges only after all effects", async () => {
     const value = await fixture(3);
     const verifier = new FakeVerifier();
+    const conflicts: string[] = [];
     const runtime = new EvolutionJobRuntime(join(value.state, "jobs.sqlite"), { workerId: "worker-1", handlers: {
-      KNOWLEDGE_REVALIDATE: createKnowledgeRevalidateHandler({ source: value.source, store: value.freshness, verifier, pageSize: 1 }),
+      KNOWLEDGE_REVALIDATE: createKnowledgeRevalidateHandler({ source: value.source, store: value.freshness, verifier, pageSize: 1,
+        onConflict: (conflict) => conflicts.push(`${conflict.assetId}:${conflict.verificationRunId}`) }),
     } });
     try {
       const enqueued = runtime.enqueue(value.input, 3);
       expect(await runtime.runOnce()).toMatchObject({ status: "SUCCEEDED" });
       expect(verifier.calls).toEqual([["asset-1"], ["asset-2"], ["asset-3"]]);
+      expect(conflicts).toEqual([
+        `asset-1:run-asset-1-${value.change.sourceRef}`,
+        `asset-2:run-asset-2-${value.change.sourceRef}`,
+        `asset-3:run-asset-3-${value.change.sourceRef}`,
+      ]);
       expect(value.source.baseline("project-1")?.revision).toBe(2);
       expect(runtime.get(enqueued.job.snapshot.jobId)).toMatchObject({ status: "SUCCEEDED", progress: 1,
         checkpointPhase: "BASELINE_ACKNOWLEDGED" });

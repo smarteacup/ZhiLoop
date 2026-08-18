@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { KnowledgeAsset, KnowledgeCandidate } from "@zhiloop/domain";
 import { SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
@@ -66,6 +66,32 @@ describe("P2 Freshness shared production verifier", () => {
       changedSymbols: [], changedConfigs: [], changedDependencies: [], sourceRef: "git:head:status", observedAt: at }, items });
     expect(calls).toBe(9);
     expect(peak).toBe(4);
+  });
+
+  it("reports sanitized CodeGraph-unavailable observations without changing the verification result", async () => {
+    const unavailable = vi.fn();
+    const verifier = new ProductionFreshnessVerifier({
+      verifyBatch: async (request): Promise<KnowledgeVerificationBatch> => ({
+        schemaVersion: 1, runId: "run-codegraph", requestId: "request-codegraph", purpose: request.purpose,
+        projectId: request.project.projectId, codeRevision: "git:head:status", codeRevisionCapability: "READY",
+        observedAt: request.requestedAt, results: [{ assertionId: "assertion-1", assertionKind: "SYMBOL_EXISTS",
+          status: "UNKNOWN", target: "symbol:Runtime", observedAt: request.requestedAt,
+          reasonCodes: ["CODEGRAPH_UNAVAILABLE", "SENSITIVE_RAW_OUTPUT_MUST_NOT_PASS"] }],
+      }),
+    }, undefined, unavailable);
+    verifier.observe("project-1", "/tmp/project-1");
+    const candidate: KnowledgeCandidate = { schemaVersion: 1, candidateId: "candidate-codegraph", compilerVersion: "compiler-v1",
+      status: "PROPOSED", subjectKey: "implementation.runtime.symbol", kind: "IMPLEMENTATION",
+      scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: [] }, title: "Runtime", summary: "Runtime symbol",
+      body: "secret body", sourceEpisodes: ["episode-1"], confidence: 0.9, assertions: [],
+      evidenceHints: [{ type: "CODE_SYMBOL", sourceRef: "symbol:Runtime", projectId: "project-1", correlationId: "correlation-codegraph" }], createdAt: at,
+      correlationId: "correlation-codegraph" };
+    const result = await verifier.verifyBatch({ projectId: "project-1", changes: { projectId: "project-1", changedPaths: [],
+      changedSymbols: ["Runtime"], changedConfigs: [], changedDependencies: [], sourceRef: "git:head:status", observedAt: at },
+      items: [{ assetId: "asset-1", assetVersion: 1, candidate, assertionIds: [] }] });
+    expect(result.runIds).toEqual({ "asset-1": "run-codegraph" });
+    expect(unavailable).toHaveBeenCalledWith({ projectId: "project-1", runId: "run-codegraph", observedAt: at,
+      reasonCodes: ["CODEGRAPH_UNAVAILABLE"] });
   });
 
   it("revalidates a changed file through the shared service and records a conflict without re-executing anything", async () => {

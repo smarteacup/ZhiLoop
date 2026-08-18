@@ -54,7 +54,7 @@ export const DEFAULT_CONSOLE_CONFIGURATION: ConsoleConfiguration = Object.freeze
       goldenConfigFingerprint: "",
     }),
   }),
-  evolution: Object.freeze({ maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true }),
+  evolution: Object.freeze({ maxMatchCandidates: 5, semanticJudgeEnabled: false, failClosed: true }),
   codeIntelligence: Object.freeze({
     provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250,
     circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000,

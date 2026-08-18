@@ -8,6 +8,7 @@ import type { FreshnessCompensationPort, LiveKnowledgeRevisionReadPort, SqliteKn
 import type { FreshnessSchedulerConfiguration } from "@zhiloop/knowledge-freshness";
 import { SqliteKnowledgeRepairDraftStore, type KnowledgeRepairDraft, type RepairDraftListRequest,
   type RepairDraftPage } from "@zhiloop/knowledge-repair-drafts";
+import { SqliteOperationalAlertStore, type OperationalAlertInput, type OperationalAlertPage } from "@zhiloop/operational-alerts";
 
 import { P2DurableKnowledgeCompilationPort } from "./p2-evolution-jobs.js";
 import { ProductionFreshnessVerifier } from "./p2-freshness-runtime.js";
@@ -42,6 +43,17 @@ export interface P2EvolutionRuntimeState {
   readonly failedWorkerCycles: number;
   readonly lastReasonCode?: string;
 }
+
+export interface P2EvolutionAlertConfiguration {
+  readonly enabled: boolean;
+  readonly onPermanentJobFailure: boolean;
+  readonly onCodeGraphUnavailable: boolean;
+  readonly onStaleKnowledgeDetected: boolean;
+}
+
+const DISABLED_ALERTS: P2EvolutionAlertConfiguration = Object.freeze({
+  enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false,
+});
 
 function integer(value: number, minimum: number, maximum: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(`P2_EVOLUTION_${name}_INVALID`);
@@ -90,6 +102,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   readonly #jobs: EvolutionJobRuntime;
   readonly #verifier: ProductionFreshnessVerifier;
   readonly #repairDrafts: SqliteKnowledgeRepairDraftStore;
+  readonly #alerts: SqliteOperationalAlertStore;
+  readonly #alertConfiguration: P2EvolutionAlertConfiguration;
   readonly #roots = new Map<string, string>();
   readonly #stateDirectory: string;
   #configuration: P2EvolutionRuntimeConfiguration;
@@ -111,19 +125,31 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     readonly preview: P2CandidatePreviewPort;
     readonly p2Runtime: P2SidecarRuntime;
     readonly configuration?: Partial<P2EvolutionRuntimeConfiguration>;
+    readonly alertConfiguration?: Partial<P2EvolutionAlertConfiguration>;
     readonly onJob?: (job: EvolutionJobProjection) => void;
   }) {
     this.#stateDirectory = options.stateDirectory;
     this.#configuration = normalizeP2EvolutionRuntimeConfiguration(options.configuration);
+    this.#alertConfiguration = Object.freeze({ ...DISABLED_ALERTS, ...options.alertConfiguration });
+    if (Object.values(this.#alertConfiguration).some((value) => typeof value !== "boolean")) {
+      throw new Error("P2_EVOLUTION_ALERT_CONFIGURATION_INVALID");
+    }
     // Reuse the legacy filename so its acknowledged baseline is migrated in place instead of silently reset.
     this.#source = new GitKnowledgeChangeSource(join(options.stateDirectory, "git-freshness-baseline.sqlite"));
     try { this.#repairDrafts = new SqliteKnowledgeRepairDraftStore(join(options.stateDirectory, "knowledge-repair-drafts.sqlite")); }
     catch (error) { this.#source.close(); throw error; }
+    try { this.#alerts = new SqliteOperationalAlertStore(join(options.stateDirectory, "operational-alerts.sqlite")); }
+    catch (error) { this.#repairDrafts.close(); this.#source.close(); throw error; }
     this.#verifier = new ProductionFreshnessVerifier(options.production.verification, (revision) => {
       if (revision.graphRevision !== undefined) {
         try { this.#intake.updateGraphRevision(revision.projectId, revision.codeRevision, revision.graphRevision); }
         catch { /* A newer Git revision correctly invalidates a late graph result. */ }
       }
+    }, (unavailable) => {
+      if (!this.#alertConfiguration.enabled || !this.#alertConfiguration.onCodeGraphUnavailable) return;
+      void this.#emitAlert({ eventId: `codegraph:${unavailable.runId}`, observedAt: unavailable.observedAt,
+        dedupKey: `codegraph:${unavailable.projectId}`, severity: "WARNING", type: "CODEGRAPH_UNAVAILABLE",
+        projectId: unavailable.projectId, entityRef: unavailable.runId, reasonCodes: unavailable.reasonCodes });
     });
     for (const project of this.#source.observedProjects()) {
       this.#roots.set(project.projectId, project.repositoryRoot);
@@ -138,6 +164,14 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
           KNOWLEDGE_REVALIDATE: async (context) => await createKnowledgeRevalidateHandler({ source: this.#source,
             store: options.freshnessStore, verifier: this.#verifier, pageSize: this.#configuration.revalidationPageSize,
             maxTargets: this.#configuration.maxAffectedPerJob,
+            onConflict: (conflict) => {
+              if (!this.#alertConfiguration.enabled || !this.#alertConfiguration.onStaleKnowledgeDetected) return;
+              void this.#emitAlert({ eventId: `stale:${conflict.verificationRunId}:${conflict.assetId}@${conflict.assetVersion}`,
+                observedAt: conflict.observedAt, dedupKey: `stale:${conflict.projectId}:${conflict.assetId}@${conflict.assetVersion}`,
+                severity: "WARNING", type: "STALE_KNOWLEDGE", projectId: conflict.projectId,
+                entityRef: `${conflict.assetId}@${conflict.assetVersion}`,
+                reasonCodes: ["FRESHNESS_CONFLICT", ...conflict.reasonCodes] });
+            },
             repairJobs: { enqueue: (input) => this.enqueue(input, this.#configuration.maxAttempts) } })(context),
           KNOWLEDGE_COMPILE: createKnowledgeCompileHandler(new P2DurableKnowledgeCompilationPort(options.preview, options.p2Runtime)),
           KNOWLEDGE_REPAIR_DRAFT: createKnowledgeRepairDraftHandler({ freshness: options.freshnessStore,
@@ -145,6 +179,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
         },
       });
     } catch (error) {
+      this.#alerts.close();
       this.#repairDrafts.close();
       this.#source.close();
       throw error;
@@ -153,6 +188,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     try { this.#intake = this.#createIntake(this.#configuration); }
     catch (error) {
       this.#jobs.close();
+      this.#alerts.close();
       this.#repairDrafts.close();
       this.#source.close();
       throw error;
@@ -241,6 +277,9 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   listJobs(limit = 100): readonly EvolutionJobProjection[] { return this.#jobs.list({ limit }).items; }
   getRepairDraft(draftId: string): KnowledgeRepairDraft | undefined { this.#assertOpen(); return this.#repairDrafts.get(draftId); }
   listRepairDrafts(request: RepairDraftListRequest): RepairDraftPage { this.#assertOpen(); return this.#repairDrafts.list(request); }
+  listOperationalAlerts(request: Parameters<SqliteOperationalAlertStore["list"]>[0]): OperationalAlertPage {
+    this.#assertOpen(); return this.#alerts.list(request);
+  }
 
   async applyConfiguration(configuration: FreshnessSchedulerConfiguration): Promise<() => Promise<void>> {
     this.#assertOpen();
@@ -267,7 +306,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     let failure: unknown;
     try { await this.#intake.stop(); } catch (error) { failure = error; }
     await this.#workerTail?.catch(() => undefined);
-    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#repairDrafts.close(), () => this.#source.close()]) {
+    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#alerts.close(),
+      () => this.#repairDrafts.close(), () => this.#source.close()]) {
       try { close(); } catch (error) { failure ??= error; }
     }
     this.#closed = true;
@@ -323,6 +363,13 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
           if (result.status === "IDLE") break;
           const jobId = "job" in result ? result.job.snapshot.jobId : result.jobId;
           this.#project(jobId);
+          if (result.status === "FAILED" && this.#alertConfiguration.enabled && this.#alertConfiguration.onPermanentJobFailure) {
+            const failure = result.job.snapshot.lastFailure;
+            void this.#emitAlert({ eventId: `permanent-job:${jobId}:${result.job.snapshot.attempt}:${failure?.occurredAt ?? result.job.snapshot.updatedAt}`,
+              observedAt: failure?.occurredAt ?? result.job.snapshot.updatedAt ?? new Date().toISOString(),
+              dedupKey: `permanent-job:${jobId}`, severity: "CRITICAL", type: "PERMANENT_JOB_FAILURE",
+              entityRef: jobId, reasonCodes: [failure?.code ?? "JOB_ATTEMPTS_EXHAUSTED"] });
+          }
         }
         this.#completedWorkerCycles += 1;
         this.#lastReasonCode = undefined;
@@ -340,6 +387,10 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   }
 
   #assertOpen(): void { if (this.#closed) throw new Error("P2_EVOLUTION_RUNTIME_CLOSED"); }
+  async #emitAlert(input: OperationalAlertInput): Promise<void> {
+    try { await this.#alerts.emit(input); }
+    catch { /* The primary evolution state remains authoritative when alert persistence is unavailable. */ }
+  }
   #project(jobId: string): void {
     const value = this.#jobs.get(jobId);
     if (value !== undefined) this.#onJob?.(value);

@@ -39,6 +39,11 @@ import {
 } from "@zhiloop/knowledge-worker-runtime";
 import { MarkdownKnowledgeRepository } from "@zhiloop/markdown-repository";
 import { CodexExecStructuredGenerationModel } from "@zhiloop/model-codex-exec";
+import {
+  CodexSemanticEvolutionJudge,
+  type SemanticEvolutionCapability,
+} from "@zhiloop/semantic-evolution-codex";
+import type { KnowledgeEvolutionSemanticPort } from "@zhiloop/knowledge-evolution";
 import type { ExtractionSnapshot, ProvenanceNode } from "@zhiloop/control-api";
 import type { SessionExtractionService } from "@zhiloop/session-extraction";
 
@@ -181,6 +186,8 @@ export interface P2ProductionCompositionOptions {
   readonly compilerTimeoutMs: number;
   readonly compilerBatchSize: number;
   readonly evolutionMaxCandidates?: number;
+  readonly semanticJudgeEnabled?: boolean;
+  readonly semanticJudge?: KnowledgeEvolutionSemanticPort;
   readonly compiler?: KnowledgeExtractionPort;
   readonly compilerExecutable?: string;
   readonly compilerModel?: string;
@@ -220,9 +227,17 @@ export class P2ProductionComposition {
   readonly freshnessStore: SqliteKnowledgeFreshnessStore;
   readonly verificationStore: SqliteKnowledgeVerificationStore;
   readonly verification: P2ProductionVerificationRuntime;
+  readonly #semanticJudge: KnowledgeEvolutionSemanticPort | undefined;
+  readonly #semanticJudgeEnabled: boolean;
+  readonly #semanticJudgeInitializationFailed: boolean;
   readonly #checkpointStore: SqliteKnowledgeWorkerCheckpointStore;
 
-  private constructor(options: P2ProductionCompositionOptions, compiler: KnowledgeExtractionPort) {
+  private constructor(
+    options: P2ProductionCompositionOptions,
+    compiler: KnowledgeExtractionPort,
+    semanticJudge?: KnowledgeEvolutionSemanticPort,
+    semanticJudgeInitializationFailed = false,
+  ) {
     const knowledgeRoot = join(options.stateDirectory, "knowledge");
     this.markdown = new MarkdownKnowledgeRepository(knowledgeRoot);
     this.registry = new SqliteKnowledgeRegistryProjection(join(options.stateDirectory, "knowledge-registry.sqlite"));
@@ -231,6 +246,9 @@ export class P2ProductionComposition {
     this.freshnessStore = new SqliteKnowledgeFreshnessStore(join(options.stateDirectory, "knowledge-freshness.sqlite"));
     this.verificationStore = new SqliteKnowledgeVerificationStore(join(options.stateDirectory, "knowledge-verification.sqlite"));
     this.#checkpointStore = new SqliteKnowledgeWorkerCheckpointStore(join(options.stateDirectory, "knowledge-worker.sqlite"));
+    this.#semanticJudgeEnabled = options.semanticJudgeEnabled ?? false;
+    this.#semanticJudge = semanticJudge;
+    this.#semanticJudgeInitializationFailed = semanticJudgeInitializationFailed;
 
     this.verification = new P2ProductionVerificationRuntime(this.createVerification(
       options.codeGraphTimeoutMs ?? 300,
@@ -283,6 +301,7 @@ export class P2ProductionComposition {
           return [...assets.values()].sort((left, right) => left.id.localeCompare(right.id)).slice(0, limit);
         },
       },
+      ...(semanticJudge === undefined ? {} : { evolutionSemantic: semanticJudge }),
       markdown: this.markdown,
       registry: this.registry,
       freshness: {
@@ -326,16 +345,33 @@ export class P2ProductionComposition {
   }
 
   static async create(options: P2ProductionCompositionOptions): Promise<P2ProductionComposition> {
-    if (options.compiler !== undefined) return new P2ProductionComposition(options, options.compiler);
-    const model = await CodexExecStructuredGenerationModel.create({
-      cwd: options.stateDirectory,
-      timeoutMs: options.compilerTimeoutMs,
-      maxDiagnosticRuns: 100,
+    let model: CodexExecStructuredGenerationModel | undefined;
+    const createModel = async (): Promise<CodexExecStructuredGenerationModel> => await CodexExecStructuredGenerationModel.create({
+      cwd: options.stateDirectory, timeoutMs: options.compilerTimeoutMs, maxDiagnosticRuns: 100,
       ...(options.compilerExecutable === undefined ? {} : { executable: options.compilerExecutable }),
       ...(options.compilerModel === undefined ? {} : { model: options.compilerModel }),
       ...(options.compilerIgnoreUserConfig === undefined ? {} : { ignoreUserConfig: options.compilerIgnoreUserConfig }),
     });
-    return new P2ProductionComposition(options, new MvpKnowledgeCompiler({ model }));
+    if (options.compiler === undefined) model = await createModel();
+    const compiler = options.compiler ?? new MvpKnowledgeCompiler({ model: model as CodexExecStructuredGenerationModel });
+    if (!(options.semanticJudgeEnabled ?? false)) return new P2ProductionComposition(options, compiler);
+    if (options.semanticJudge !== undefined) return new P2ProductionComposition(options, compiler, options.semanticJudge);
+    try {
+      model ??= await createModel();
+      return new P2ProductionComposition(options, compiler, new CodexSemanticEvolutionJudge(model));
+    } catch {
+      return new P2ProductionComposition(options, compiler, undefined, true);
+    }
+  }
+
+  semanticEvolutionCapability(): SemanticEvolutionCapability | { readonly status: "DISABLED"; readonly reasonCode: "SEMANTIC_EVOLUTION_DISABLED" } {
+    if (!this.#semanticJudgeEnabled) return Object.freeze({ status: "DISABLED", reasonCode: "SEMANTIC_EVOLUTION_DISABLED" });
+    if (this.#semanticJudgeInitializationFailed || this.#semanticJudge === undefined) {
+      return Object.freeze({ status: "DEGRADED", reasonCode: "SEMANTIC_EVOLUTION_UNAVAILABLE" });
+    }
+    return this.#semanticJudge instanceof CodexSemanticEvolutionJudge
+      ? this.#semanticJudge.capability()
+      : Object.freeze({ status: "READY", reasonCode: "SEMANTIC_EVOLUTION_READY" });
   }
 
   async recoverIndex(assetId: string) {

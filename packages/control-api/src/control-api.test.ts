@@ -116,6 +116,16 @@ describe("control API strict contracts", () => {
       storage: { healthy: true, databaseBytes: 4096 },
       rawPrompt: "must be rejected",
     }).success).toBe(false);
+    expect(diagnosticsSchema.safeParse({
+      schemaVersion: 1, observedAt: "2026-08-03T11:00:00.000Z", ledgerSequence: 10, spoolDepth: 0,
+      consumerLags: [], worker: { healthy: true, consumed: 2, produced: 2, retryableFailures: 0 },
+      storage: { healthy: true, databaseBytes: 4096 },
+      operationalAlerts: [{ schemaVersion: 1, alertId: "operational-alert-1", dedupKey: "job:1",
+        severity: "CRITICAL", type: "PERMANENT_JOB_FAILURE", entityRef: "job-1",
+        reasonCodes: ["ATTEMPTS_EXHAUSTED"], occurrenceCount: 1,
+        firstObservedAt: "2026-08-03T10:00:00.000Z", lastObservedAt: "2026-08-03T11:00:00.000Z",
+        revision: 1, deliveryState: "LOCAL_ONLY" }],
+    }).success).toBe(true);
   });
 });
 

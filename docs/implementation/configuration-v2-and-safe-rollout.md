@@ -22,10 +22,11 @@ M10 把此前分散的自动编译、知识演进、CodeGraph、Freshness、Prew
 |---|---|---|
 | `compilation` | `P2AutomaticCompilationRuntime` | 在线重建 completion-based Scheduler，可回滚 |
 | `evolution.maxMatchCandidates` | Knowledge Worker | 新任务读取；修改标记需重启 |
+| `evolution.semanticJudgeEnabled` | Codex 语义演进 Adapter | 默认关闭；启用后只处理确定性规则无法裁决的候选，修改标记需重启 |
 | `codeIntelligence` | CodeGraph Freshness Verifier | 启动时构造；修改标记需重启 |
 | `freshness` | `KnowledgeFreshnessScheduler` | 在线更新去抖、兜底扫描和单任务上限，可回滚 |
 | `prewarm` | `P4ActiveSidecarRuntime` | 每次会话预热动态读取，无需重启 |
-| `evolutionAlerts` | 运行日志/后续通知适配器 | 当前只提供策略字段；默认不通知外部系统 |
+| `evolutionAlerts` | `operational-alerts.sqlite` 与控制台告警中心 | 总开关及三类 producer 开关均已接线；默认不通知外部系统，无 provider 时显示 `LOCAL_ONLY` |
 
 `compilation.mode` 和 publication 字段在控制台可见，但当前生产 consumer 报告 `NOT_CONFIGURED`，因此不能被在线激活为自动发布。这不是静默忽略：页面会收到 `CONSUMER_DISABLED`。首个交付版本仍严格保持 Preview-only。
 

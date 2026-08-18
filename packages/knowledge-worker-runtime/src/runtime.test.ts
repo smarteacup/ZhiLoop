@@ -27,6 +27,7 @@ import type {
   KnowledgeWorkerCheckpoint,
   KnowledgeWorkerCheckpointStore,
   KnowledgeWorkerPorts,
+  KnowledgeWorkerRunOptions,
   KnowledgeWorkerRunRequest,
   LedgerSnapshotPort,
   MarkdownKnowledgePort,
@@ -309,6 +310,17 @@ function request(overrides: Partial<KnowledgeWorkerRunRequest> = {}): KnowledgeW
   };
 }
 
+function publicationOptions(
+  authorizationId = "explicit-commit-1",
+  overrides: Partial<KnowledgeWorkerRunOptions> = {},
+): KnowledgeWorkerRunOptions {
+  return {
+    executionMode: "SAFE_AUTO_PUBLICATION",
+    publicationAuthorization: { kind: "EXPLICIT_COMMIT", authorizationId },
+    ...overrides,
+  };
+}
+
 describe("KnowledgeWorkerRuntime", () => {
   it("runs the complete chain and replays without duplicate candidate or version", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-worker-"));
@@ -318,14 +330,14 @@ describe("KnowledgeWorkerRuntime", () => {
     const store = new SqliteKnowledgeWorkerCheckpointStore(databasePath);
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store, () => new Date("2026-08-01T10:00:00.000Z"));
 
-    const first = await runtime.run(request());
+    const first = await runtime.run(request(), publicationOptions());
     store.close();
     using reopened = new SqliteKnowledgeWorkerCheckpointStore(databasePath);
     const replay = await new KnowledgeWorkerRuntime(
       setup.ports,
       reopened,
       () => new Date("2026-08-01T10:00:00.000Z"),
-    ).run(request());
+    ).run(request(), publicationOptions());
 
     expect(first.status).toBe("COMPLETED");
     expect(first.payload.episodes).toHaveLength(1);
@@ -344,19 +356,19 @@ describe("KnowledgeWorkerRuntime", () => {
     const store = new MemoryCheckpointStore();
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
 
-    const preview = await runtime.run(request(), { stopAfterCandidatePolicy: true });
-    const replay = await runtime.run(request(), { stopAfterCandidatePolicy: true });
+    const preview = await runtime.run(request());
+    const replay = await runtime.run(request(), { executionMode: "POLICY_EVALUATION" });
 
     expect(preview.status).toBe("AWAITING_COMMIT");
     expect(preview.payload.policies).toHaveLength(1);
     expect(preview.payload.outbox).toHaveLength(1);
     expect(preview.stages.MARKDOWN_PUBLISH.status).toBe("PENDING");
-    expect(replay.revision).toBe(preview.revision);
+    expect(replay.revision).toBeGreaterThan(preview.revision);
     expect(setup.markdown.publishCalls).toBe(0);
     expect(setup.registry.calls).toBe(0);
     expect(setup.index.calls).toBe(0);
 
-    const committed = await runtime.run(request());
+    const committed = await runtime.run(request(), publicationOptions());
 
     expect(committed.status).toBe("COMPLETED");
     expect(setup.markdown.publishCalls).toBe(1);
@@ -364,13 +376,147 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.index.calls).toBe(1);
   });
 
+  it("fails closed for missing or malformed publication authority", async () => {
+    const setup = fixture();
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+
+    await expect(runtime.run(request(), { executionMode: "SAFE_AUTO_PUBLICATION" })).rejects.toMatchObject({
+      code: "PUBLICATION_AUTHORIZATION_REQUIRED",
+      retryable: false,
+    });
+    await expect(runtime.run(request(), {
+      executionMode: "PREVIEW_ONLY",
+      publicationAuthorization: { kind: "EXPLICIT_COMMIT", authorizationId: "unexpected" },
+    })).rejects.toMatchObject({ code: "UNEXPECTED_PUBLICATION_AUTHORIZATION" });
+    await expect(runtime.run(request(), {
+      executionMode: "SAFE_AUTO_PUBLICATION",
+      publicationAuthorization: { kind: "EXPLICIT_COMMIT", authorizationId: "   " },
+    })).rejects.toMatchObject({ code: "INVALID_PUBLICATION_AUTHORIZATION" });
+    await expect(runtime.run(request(), {
+      executionMode: "SAFE_AUTO_PUBLICATION",
+      publicationAuthorization: {
+        kind: "EXPLICIT_COMMIT",
+        authorizationId: 42,
+      },
+    } as unknown as KnowledgeWorkerRunOptions)).rejects.toMatchObject({ code: "INVALID_PUBLICATION_AUTHORIZATION" });
+    await expect(runtime.run(request(), {
+      executionMode: "SAFE_AUTO_PUBLICATION",
+      publicationAuthorization: { kind: "SAFE_POLICY", authorizationId: "policy-1", policyHash: "" },
+    })).rejects.toMatchObject({ code: "INVALID_PUBLICATION_AUTHORIZATION" });
+
+    expect(store.checkpoint).toBeUndefined();
+    expect(setup.markdown.publishCalls).toBe(0);
+  });
+
+  it("accepts a policy-bound publication authority and rejects an invalid execution mode", async () => {
+    const setup = fixture();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
+    const completed = await runtime.run(request({ workId: "safe-policy-work" }), {
+      executionMode: "SAFE_AUTO_PUBLICATION",
+      publicationAuthorization: {
+        kind: "SAFE_POLICY",
+        authorizationId: "policy-decision-1",
+        policyHash: "policy-v1",
+      },
+    });
+    expect(completed.status).toBe("COMPLETED");
+    expect(completed.publicationAuthorization).toMatchObject({ kind: "SAFE_POLICY", policyHash: "policy-v1" });
+
+    await expect(new KnowledgeWorkerRuntime(fixture().ports, new MemoryCheckpointStore()).run(
+      request({ workId: "invalid-mode-work" }),
+      { executionMode: "UNBOUNDED" } as unknown as KnowledgeWorkerRunOptions,
+    )).rejects.toMatchObject({ code: "INVALID_EXECUTION_MODE", retryable: false });
+  });
+
+  it("does not inherit publication capability and rejects changed authority after publication starts", async () => {
+    const setup = fixture();
+    let failIndex = true;
+    setup.index.fail = () => {
+      if (failIndex) throw Object.assign(new Error("index offline"), { retryable: true });
+      throw new Error("unexpected index failure");
+    };
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+
+    const partial = await runtime.run(request(), publicationOptions("commit-a"));
+    expect(partial.status).toBe("RETRYABLE");
+    expect(partial.stages.MARKDOWN_PUBLISH.status).toBe("SUCCEEDED");
+    expect(partial.stages.INCREMENTAL_INDEX.status).toBe("RETRYABLE");
+    const indexCalls = setup.index.calls;
+
+    const lowerPrivilege = await runtime.run(request());
+    expect(lowerPrivilege.status).toBe("AWAITING_COMMIT");
+    expect(lowerPrivilege.lastExecutionMode).toBe("PREVIEW_ONLY");
+    expect(setup.index.calls).toBe(indexCalls);
+
+    await expect(runtime.run(request(), publicationOptions("commit-b"))).rejects.toMatchObject({
+      code: "PUBLICATION_AUTHORIZATION_CONFLICT",
+      retryable: false,
+    });
+    expect(setup.index.calls).toBe(indexCalls);
+
+    failIndex = false;
+    setup.index.fail = undefined;
+    const completed = await runtime.run(request(), publicationOptions("commit-a"));
+    expect(completed.status).toBe("COMPLETED");
+    expect(setup.markdown.publishCalls).toBe(1);
+    expect(setup.registry.calls).toBe(1);
+    expect(setup.index.calls).toBe(indexCalls + 1);
+  });
+
+  it("does not let a lower-privilege retry reset a failed publication stage", async () => {
+    const setup = fixture();
+    setup.index.fail = () => { throw Object.assign(new Error("index offline"), { retryable: true }); };
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+    const bounded = request({ workId: "failed-publication", limits: { maxStageAttempts: 1 } });
+
+    const failed = await runtime.run(bounded, publicationOptions("commit-failed"));
+    expect(failed.status).toBe("FAILED");
+    expect(failed.stages.INCREMENTAL_INDEX).toMatchObject({ status: "FAILED", attempts: 1 });
+    const replay = await runtime.run(bounded, { executionMode: "PREVIEW_ONLY", retryFailed: true });
+    expect(replay.status).toBe("FAILED");
+    expect(replay.revision).toBe(failed.revision + 1);
+    expect(replay.lastExecutionMode).toBe("PREVIEW_ONLY");
+    expect(replay.stages.INCREMENTAL_INDEX).toMatchObject({ status: "FAILED", attempts: 1 });
+    expect(setup.index.calls).toBe(1);
+  });
+
+  it("lazily upgrades a legacy awaiting-commit checkpoint", async () => {
+    const setup = fixture();
+    const store = new MemoryCheckpointStore();
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
+    const preview = await runtime.run(request());
+    store.checkpoint = { ...preview };
+    delete (store.checkpoint as { lastExecutionMode?: unknown }).lastExecutionMode;
+
+    const migrated = await runtime.run(request(), { executionMode: "POLICY_EVALUATION" });
+    expect(migrated.status).toBe("AWAITING_COMMIT");
+    expect(migrated.lastExecutionMode).toBe("POLICY_EVALUATION");
+    expect(setup.markdown.publishCalls).toBe(0);
+
+    const completed = await runtime.run(request(), publicationOptions("legacy-commit"));
+    expect(completed.status).toBe("COMPLETED");
+    expect(completed.publicationAuthorization).toEqual({
+      kind: "EXPLICIT_COMMIT",
+      authorizationId: "legacy-commit",
+    });
+    store.checkpoint = { ...completed };
+    delete (store.checkpoint as { lastExecutionMode?: unknown }).lastExecutionMode;
+    delete (store.checkpoint as { publicationAuthorization?: unknown }).publicationAuthorization;
+    const completedLegacyReplay = await runtime.run(request());
+    expect(completedLegacyReplay.revision).toBe(completed.revision);
+    expect(setup.markdown.publishCalls).toBe(1);
+  });
+
   it("replays an idempotent Markdown publish after a crash before checkpoint commit", async () => {
     const setup = fixture();
     const store = new FaultCheckpointStore();
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
 
-    const interrupted = await runtime.run(request());
-    const recovered = await runtime.run(request());
+    const interrupted = await runtime.run(request(), publicationOptions());
+    const recovered = await runtime.run(request(), publicationOptions());
 
     expect(interrupted.status).toBe("RETRYABLE");
     expect(interrupted.stages.MARKDOWN_PUBLISH.error?.code).toBe("CHECKPOINT_SAVE_FAILED");
@@ -392,9 +538,9 @@ describe("KnowledgeWorkerRuntime", () => {
     };
     const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
 
-    const degraded = await runtime.run(request());
+    const degraded = await runtime.run(request(), publicationOptions());
     setup.index.fail = undefined;
-    const recovered = await runtime.run(request());
+    const recovered = await runtime.run(request(), publicationOptions());
 
     expect(degraded.status).toBe("RETRYABLE");
     expect(degraded.stages.INCREMENTAL_INDEX.status).toBe("RETRYABLE");
@@ -423,10 +569,12 @@ describe("KnowledgeWorkerRuntime", () => {
     });
     const first = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
       request({ workId: "version-1" }),
+      publicationOptions("version-1-commit"),
     );
     symbolSupported = true;
     const second = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
       request({ workId: "version-2" }),
+      publicationOptions("version-2-commit"),
     );
 
     expect(first.payload.outbox?.[0]?.asset).toMatchObject({ version: 1, status: "ACCEPTED" });
@@ -453,7 +601,10 @@ describe("KnowledgeWorkerRuntime", () => {
     if (boundary === "registry") setup.registry.fail = retryable;
     if (boundary === "index") setup.index.fail = retryable;
 
-    const result = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(request());
+    const result = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
+      request(),
+      publicationOptions(),
+    );
 
     expect(result.status).toBe("RETRYABLE");
     expect(result.stages[expectedStage].status).toBe("RETRYABLE");
@@ -468,8 +619,8 @@ describe("KnowledgeWorkerRuntime", () => {
     const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
     const bounded = request({ limits: { maxStageAttempts: 2 } });
 
-    expect((await runtime.run(bounded)).status).toBe("RETRYABLE");
-    const terminal = await runtime.run(bounded);
+    expect((await runtime.run(bounded, publicationOptions())).status).toBe("RETRYABLE");
+    const terminal = await runtime.run(bounded, publicationOptions());
 
     expect(terminal.status).toBe("FAILED");
     expect(terminal.stages.LEDGER_READ.attempts).toBe(2);
@@ -488,11 +639,11 @@ describe("KnowledgeWorkerRuntime", () => {
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
     const bounded = request({ limits: { maxStageAttempts: 2 } });
 
-    expect((await runtime.run(bounded)).status).toBe("RETRYABLE");
-    expect((await runtime.run(bounded)).status).toBe("FAILED");
-    expect((await runtime.run(bounded)).status).toBe("FAILED");
+    expect((await runtime.run(bounded, publicationOptions())).status).toBe("RETRYABLE");
+    expect((await runtime.run(bounded, publicationOptions())).status).toBe("FAILED");
+    expect((await runtime.run(bounded, publicationOptions())).status).toBe("FAILED");
 
-    const recovered = await runtime.run(bounded, { retryFailed: true });
+    const recovered = await runtime.run(bounded, publicationOptions("explicit-commit-1", { retryFailed: true }));
     expect(recovered.status).toBe("COMPLETED");
     expect(recovered.stages.LEDGER_READ.status).toBe("SUCCEEDED");
     expect(ledgerCalls).toBe(3);
@@ -502,15 +653,15 @@ describe("KnowledgeWorkerRuntime", () => {
     const setup = fixture();
     const store = new MemoryCheckpointStore();
     const runtime = new KnowledgeWorkerRuntime(setup.ports, store);
-    await runtime.run(request());
+    await runtime.run(request(), publicationOptions());
     setup.ports.ledger.inspectSnapshot = async () => ({
       snapshotId: "snapshot-1",
       sourceVersion: "v1",
       contentHash: "changed",
     });
 
-    await expect(runtime.run(request())).rejects.toMatchObject({ code: "LEDGER_SNAPSHOT_CHANGED" });
-    await expect(runtime.run(request({ promptVersion: "prompt-v2" }))).rejects.toMatchObject({
+    await expect(runtime.run(request(), publicationOptions())).rejects.toMatchObject({ code: "LEDGER_SNAPSHOT_CHANGED" });
+    await expect(runtime.run(request({ promptVersion: "prompt-v2" }), publicationOptions())).rejects.toMatchObject({
       code: "WORK_IDENTITY_CONFLICT",
     });
   });
@@ -520,7 +671,7 @@ describe("KnowledgeWorkerRuntime", () => {
     setup.index.versionOffset = 1;
     const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
 
-    const inconsistent = await runtime.run(request());
+    const inconsistent = await runtime.run(request(), publicationOptions());
     expect(inconsistent.status).toBe("RETRYABLE");
     expect(inconsistent.stages.INCREMENTAL_INDEX.error?.code).toBe("INDEX_VERSION_MISMATCH");
 
@@ -535,6 +686,7 @@ describe("KnowledgeWorkerRuntime", () => {
     const setup = fixture();
     const ledgerLimited = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(
       request({ limits: { maxLedgerRecords: 3 } }),
+      publicationOptions(),
     );
     expect(ledgerLimited.status).toBe("FAILED");
     expect(ledgerLimited.stages.LEDGER_READ.error?.code).toBe("LEDGER_BATCH_LIMIT_EXCEEDED");
@@ -543,6 +695,7 @@ describe("KnowledgeWorkerRuntime", () => {
     publishing.ports.compiler.extract = compiler({ count: 2 }).extract;
     const publishLimited = await new KnowledgeWorkerRuntime(publishing.ports, new MemoryCheckpointStore()).run(
       request({ workId: "publish-limited", limits: { maxPublishItems: 1 } }),
+      publicationOptions(),
     );
     expect(publishLimited.status).toBe("FAILED");
     expect(publishLimited.stages.CANDIDATE_POLICY.error?.code).toBe("PUBLISH_BATCH_LIMIT_EXCEEDED");

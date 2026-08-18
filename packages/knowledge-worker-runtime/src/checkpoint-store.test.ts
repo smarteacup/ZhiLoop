@@ -45,4 +45,23 @@ describe("SqliteKnowledgeWorkerCheckpointStore", () => {
     expect(() => reopened.save({ ...initial, revision: 1 }, 0)).toThrow(KnowledgeWorkerCheckpointConflictError);
     expect(() => reopened.create(initial)).toThrow(KnowledgeWorkerCheckpointConflictError);
   });
+
+  it("accepts legacy mode-free checkpoints and rejects corrupt execution metadata", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-checkpoint-metadata-"));
+    directories.push(directory);
+    using store = new SqliteKnowledgeWorkerCheckpointStore(path.join(directory, "worker.sqlite"));
+    store.create(checkpoint());
+    expect(store.load("work-1")?.lastExecutionMode).toBeUndefined();
+
+    expect(() => store.save({
+      ...checkpoint(),
+      revision: 1,
+      lastExecutionMode: "UNBOUNDED",
+    } as unknown as KnowledgeWorkerCheckpoint, 0)).toThrow("invalid execution mode");
+    expect(() => store.save({
+      ...checkpoint(),
+      revision: 1,
+      publicationAuthorization: { kind: "SAFE_POLICY", authorizationId: "policy-1", policyHash: "" },
+    }, 0)).toThrow("invalid publication authorization");
+  });
 });

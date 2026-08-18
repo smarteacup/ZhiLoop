@@ -3,11 +3,37 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
 import { KnowledgeWorkerCheckpointConflictError } from "./errors.js";
-import type { KnowledgeWorkerCheckpoint, KnowledgeWorkerCheckpointStore } from "./types.js";
+import {
+  KNOWLEDGE_EXECUTION_MODES,
+  type KnowledgeWorkerCheckpoint,
+  type KnowledgeWorkerCheckpointStore,
+} from "./types.js";
 
 const MAX_CHECKPOINT_BYTES = 16 * 1024 * 1024;
+const MAX_AUTHORIZATION_FIELD_LENGTH = 512;
+
+function validBoundedText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= MAX_AUTHORIZATION_FIELD_LENGTH;
+}
+
+function assertExecutionMetadata(checkpoint: KnowledgeWorkerCheckpoint): void {
+  if (checkpoint.lastExecutionMode !== undefined
+    && !KNOWLEDGE_EXECUTION_MODES.includes(checkpoint.lastExecutionMode)) {
+    throw new Error("knowledge worker checkpoint has an invalid execution mode");
+  }
+  const authorization = checkpoint.publicationAuthorization;
+  if (authorization === undefined) return;
+  if (!validBoundedText(authorization.authorizationId)) {
+    throw new Error("knowledge worker checkpoint has an invalid publication authorization");
+  }
+  if (authorization.kind === "EXPLICIT_COMMIT") return;
+  if (authorization.kind !== "SAFE_POLICY" || !validBoundedText(authorization.policyHash)) {
+    throw new Error("knowledge worker checkpoint has an invalid publication authorization");
+  }
+}
 
 function serialize(checkpoint: KnowledgeWorkerCheckpoint): string {
+  assertExecutionMetadata(checkpoint);
   const payload = JSON.stringify(checkpoint);
   if (Buffer.byteLength(payload, "utf8") > MAX_CHECKPOINT_BYTES) {
     throw new Error(`knowledge worker checkpoint exceeds ${MAX_CHECKPOINT_BYTES} bytes`);
@@ -20,6 +46,7 @@ function parse(payload: string): KnowledgeWorkerCheckpoint {
   if (checkpoint.schemaVersion !== 1 || checkpoint.workId.trim().length === 0 || !Number.isSafeInteger(checkpoint.revision)) {
     throw new Error("knowledge worker checkpoint is corrupt or unsupported");
   }
+  assertExecutionMetadata(checkpoint);
   return structuredClone(checkpoint);
 }
 

@@ -13,6 +13,8 @@ import {
   WORKER_STAGES,
   type CandidatePolicyRecord,
   type IndexRebuildResult,
+  type KnowledgeExecutionMode,
+  type KnowledgePublicationAuthorization,
   type KnowledgeWorkerCheckpoint,
   type KnowledgeWorkerCheckpointStore,
   type KnowledgeWorkerLimits,
@@ -40,6 +42,17 @@ const HARD_LIMITS: KnowledgeWorkerLimits = Object.freeze({
   maxStageAttempts: 20,
 });
 const INDEX_SUCCESS = new Set(["INDEXED", "UNCHANGED", "CHUNKS_REFRESHED"]);
+const EXECUTION_MODES = new Set<KnowledgeExecutionMode>([
+  "PREVIEW_ONLY",
+  "POLICY_EVALUATION",
+  "SAFE_AUTO_PUBLICATION",
+]);
+const PUBLICATION_STAGES = new Set<KnowledgeWorkerStage>([
+  "MARKDOWN_PUBLISH",
+  "REGISTRY_PROJECT",
+  "INCREMENTAL_INDEX",
+]);
+const MAX_AUTHORIZATION_ID_LENGTH = 512;
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -83,6 +96,76 @@ function identity(request: KnowledgeWorkerRunRequest, resolvedLimits: KnowledgeW
       retryDelayMs: request.extraction.retryDelayMs,
     },
   });
+}
+
+function executionMode(options: KnowledgeWorkerRunOptions): KnowledgeExecutionMode {
+  const selected = options.executionMode ?? "PREVIEW_ONLY";
+  if (!EXECUTION_MODES.has(selected)) {
+    throw new KnowledgeWorkerError("INVALID_EXECUTION_MODE", "knowledge execution mode is invalid", false);
+  }
+  return selected;
+}
+
+function normalizedAuthorization(
+  mode: KnowledgeExecutionMode,
+  value: KnowledgePublicationAuthorization | undefined,
+): KnowledgePublicationAuthorization | undefined {
+  if (mode !== "SAFE_AUTO_PUBLICATION") {
+    if (value !== undefined) {
+      throw new KnowledgeWorkerError(
+        "UNEXPECTED_PUBLICATION_AUTHORIZATION",
+        "publication authorization is only accepted in SAFE_AUTO_PUBLICATION mode",
+        false,
+      );
+    }
+    return undefined;
+  }
+  if (value === undefined) {
+    throw new KnowledgeWorkerError(
+      "PUBLICATION_AUTHORIZATION_REQUIRED",
+      "SAFE_AUTO_PUBLICATION requires a publication authorization",
+      false,
+    );
+  }
+  if (typeof value.authorizationId !== "string") {
+    throw new KnowledgeWorkerError(
+      "INVALID_PUBLICATION_AUTHORIZATION",
+      "authorizationId must be a string",
+      false,
+    );
+  }
+  const authorizationId = value.authorizationId.trim();
+  if (authorizationId.length === 0 || authorizationId.length > MAX_AUTHORIZATION_ID_LENGTH) {
+    throw new KnowledgeWorkerError(
+      "INVALID_PUBLICATION_AUTHORIZATION",
+      `authorizationId must contain between 1 and ${MAX_AUTHORIZATION_ID_LENGTH} characters`,
+      false,
+    );
+  }
+  if (value.kind === "EXPLICIT_COMMIT") return Object.freeze({ kind: value.kind, authorizationId });
+  if (value.kind !== "SAFE_POLICY") {
+    throw new KnowledgeWorkerError("INVALID_PUBLICATION_AUTHORIZATION", "publication authorization kind is invalid", false);
+  }
+  if (typeof value.policyHash !== "string") {
+    throw new KnowledgeWorkerError("INVALID_PUBLICATION_AUTHORIZATION", "policyHash must be a string", false);
+  }
+  const policyHash = value.policyHash.trim();
+  if (policyHash.length === 0 || policyHash.length > MAX_AUTHORIZATION_ID_LENGTH) {
+    throw new KnowledgeWorkerError(
+      "INVALID_PUBLICATION_AUTHORIZATION",
+      `policyHash must contain between 1 and ${MAX_AUTHORIZATION_ID_LENGTH} characters`,
+      false,
+    );
+  }
+  return Object.freeze({ kind: value.kind, authorizationId, policyHash });
+}
+
+function publicationStarted(checkpoint: KnowledgeWorkerCheckpoint): boolean {
+  return WORKER_STAGES.some((stage) => PUBLICATION_STAGES.has(stage) && checkpoint.stages[stage].attempts > 0);
+}
+
+function modeAllowsStage(mode: KnowledgeExecutionMode, stage: KnowledgeWorkerStage): boolean {
+  return mode === "SAFE_AUTO_PUBLICATION" || !PUBLICATION_STAGES.has(stage);
 }
 
 function pendingStages(): Record<KnowledgeWorkerStage, StageCheckpoint> {
@@ -203,7 +286,17 @@ export class KnowledgeWorkerRuntime {
   ): Promise<KnowledgeWorkerCheckpoint> {
     const resolvedLimits = limits(request.limits);
     const identityHash = identity(request, resolvedLimits);
+    const mode = executionMode(options);
     let checkpoint = this.#store.load(request.workId);
+    if (checkpoint !== undefined && checkpoint.identityHash !== identityHash) {
+      throw new KnowledgeWorkerError(
+        "WORK_IDENTITY_CONFLICT",
+        `work ${request.workId} cannot be replayed with different input or policy`,
+        false,
+      );
+    }
+    const completedReplay = checkpoint?.status === "COMPLETED";
+    const authorization = completedReplay ? undefined : normalizedAuthorization(mode, options.publicationAuthorization);
     if (checkpoint === undefined) {
       const now = this.#clock().toISOString();
       checkpoint = {
@@ -214,16 +307,29 @@ export class KnowledgeWorkerRuntime {
         status: "RUNNING",
         createdAt: now,
         updatedAt: now,
+        lastExecutionMode: mode,
+        ...(authorization === undefined ? {} : { publicationAuthorization: authorization }),
         stages: pendingStages(),
         payload: {},
       };
       this.#store.create(checkpoint);
-    } else if (checkpoint.identityHash !== identityHash) {
+    }
+    if (authorization !== undefined
+      && checkpoint.publicationAuthorization !== undefined
+      && canonical(authorization) !== canonical(checkpoint.publicationAuthorization)
+      && publicationStarted(checkpoint)) {
       throw new KnowledgeWorkerError(
-        "WORK_IDENTITY_CONFLICT",
-        `work ${request.workId} cannot be replayed with different input or policy`,
+        "PUBLICATION_AUTHORIZATION_CONFLICT",
+        "publication authorization cannot change after publication has started",
         false,
       );
+    }
+    if (!completedReplay && (checkpoint.lastExecutionMode !== mode
+      || (authorization !== undefined && canonical(authorization) !== canonical(checkpoint.publicationAuthorization)))) {
+      checkpoint = this.#persist(checkpoint, {
+        lastExecutionMode: mode,
+        ...(authorization === undefined ? {} : { publicationAuthorization: authorization }),
+      });
     }
 
     if (checkpoint.payload.ledger !== undefined && this.#ports.ledger.inspectSnapshot !== undefined) {
@@ -234,11 +340,13 @@ export class KnowledgeWorkerRuntime {
         throw new KnowledgeWorkerError("LEDGER_SNAPSHOT_CHANGED", "immutable ledger snapshot changed during replay", false);
       }
     }
-    if (checkpoint.status === "COMPLETED") return checkpoint;
+    if (completedReplay) return checkpoint;
     if (checkpoint.status === "FAILED") {
       if (options.retryFailed !== true) return checkpoint;
       const failedStage = WORKER_STAGES.find((stage) =>
-        checkpoint?.stages[stage].status === "FAILED" && checkpoint.stages[stage].error?.retryable === true);
+        modeAllowsStage(mode, stage)
+        && checkpoint?.stages[stage].status === "FAILED"
+        && checkpoint.stages[stage].error?.retryable === true);
       if (failedStage === undefined) return checkpoint;
       const previous = checkpoint.stages[failedStage];
       checkpoint = this.#persist(checkpoint, {
@@ -482,7 +590,7 @@ export class KnowledgeWorkerRuntime {
       });
     })) return checkpoint;
 
-    if (options.stopAfterCandidatePolicy === true) {
+    if (mode !== "SAFE_AUTO_PUBLICATION") {
       if (checkpoint.status !== "AWAITING_COMMIT") {
         checkpoint = this.#persist(checkpoint, { status: "AWAITING_COMMIT" });
       }

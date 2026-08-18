@@ -86,6 +86,25 @@ describe("KnowledgeCompilationScheduler", () => {
     expect(scheduler.stop()).toBe(false);
   });
 
+  it("does not let an old in-flight generation schedule into a restarted lifecycle", async () => {
+    const timer = new Timer();
+    let resolveRun!: (value: KnowledgeCompilationRunReport) => void;
+    const scheduler = new KnowledgeCompilationScheduler({
+      configuration: normalizeKnowledgeCompilationConfiguration(),
+      runOnce: async () => await new Promise<KnowledgeCompilationRunReport>((resolve) => { resolveRun = resolve; }),
+    }, { timer });
+    expect(scheduler.start()).toBe(true);
+    timer.tasks[0]!.task();
+    expect(scheduler.stop()).toBe(true);
+    expect(scheduler.start()).toBe(true);
+    expect(timer.tasks).toHaveLength(2);
+    resolveRun(report());
+    await scheduler.drain();
+    await Promise.resolve();
+    expect(timer.tasks).toHaveLength(2);
+    expect(scheduler.stop()).toBe(true);
+  });
+
   it("executes the Node timer and supports cancelling it", async () => {
     const tasks: string[] = [];
     const { NodeKnowledgeCompilationTimer } = await import("./scheduler.js");

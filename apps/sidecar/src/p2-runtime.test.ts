@@ -134,8 +134,13 @@ function knowledgeWorker(options: { failCommitOnce?: boolean; failPreview?: bool
     runtime: {
       run: async (_request, runOptions) => {
         if (snapshot === undefined) throw new Error("requestFor was not called");
-        if (runOptions?.stopAfterCandidatePolicy === true) {
+        if (runOptions?.executionMode === "PREVIEW_ONLY") {
           return workerCheckpoint(snapshot, options.failPreview === true ? "FAILED" : "AWAITING_COMMIT");
+        }
+        if (runOptions?.executionMode !== "SAFE_AUTO_PUBLICATION"
+          || runOptions.publicationAuthorization?.kind !== "EXPLICIT_COMMIT"
+          || runOptions.publicationAuthorization.authorizationId.length === 0) {
+          throw new Error("commit did not provide stable publication authorization");
         }
         commitCalls += 1;
         return workerCheckpoint(snapshot, options.failCommitOnce === true && commitCalls === 1 ? "RETRYABLE" : "COMPLETED");

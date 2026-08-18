@@ -141,9 +141,30 @@ export interface KnowledgeWorkerPayload {
 
 export type KnowledgeWorkerRunStatus = "RUNNING" | "AWAITING_COMMIT" | "RETRYABLE" | "FAILED" | "COMPLETED";
 
+export const KNOWLEDGE_EXECUTION_MODES = [
+  "PREVIEW_ONLY",
+  "POLICY_EVALUATION",
+  "SAFE_AUTO_PUBLICATION",
+] as const;
+
+export type KnowledgeExecutionMode = (typeof KNOWLEDGE_EXECUTION_MODES)[number];
+
+export type KnowledgePublicationAuthorization =
+  | {
+      readonly kind: "EXPLICIT_COMMIT";
+      readonly authorizationId: string;
+    }
+  | {
+      readonly kind: "SAFE_POLICY";
+      readonly authorizationId: string;
+      readonly policyHash: string;
+    };
+
 export interface KnowledgeWorkerRunOptions {
-  /** Persist a publication-free policy preview until the same work is resumed. */
-  readonly stopAfterCandidatePolicy?: boolean;
+  /** Capability ceiling for this invocation. Omitted means fail-closed PREVIEW_ONLY. */
+  readonly executionMode?: KnowledgeExecutionMode;
+  /** Required whenever SAFE_AUTO_PUBLICATION is requested. */
+  readonly publicationAuthorization?: KnowledgePublicationAuthorization;
   /**
    * Permit an explicitly re-queued durable job to make one more attempt at a
    * terminal stage whose underlying failure is still classified retryable.
@@ -159,6 +180,10 @@ export interface KnowledgeWorkerCheckpoint {
   readonly status: KnowledgeWorkerRunStatus;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Optional for backward-compatible reads of schemaVersion 1 checkpoints. */
+  readonly lastExecutionMode?: KnowledgeExecutionMode;
+  /** Stable authority accepted before publication; absent on Preview-only work. */
+  readonly publicationAuthorization?: KnowledgePublicationAuthorization;
   readonly stages: Readonly<Record<KnowledgeWorkerStage, StageCheckpoint>>;
   readonly payload: KnowledgeWorkerPayload;
 }

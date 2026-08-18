@@ -336,7 +336,7 @@ export class P2SidecarRuntime {
     const existing = this.#service.getCandidatePreviewForSnapshot(snapshot.snapshotId);
     if (existing !== undefined) return;
     const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), {
-      stopAfterCandidatePolicy: true,
+      executionMode: "PREVIEW_ONLY",
       retryFailed: true,
     });
     const policies = assertPreviewCheckpoint(checkpoint);
@@ -378,7 +378,14 @@ export class P2SidecarRuntime {
         createdAt: this.#clock().toISOString(),
       });
     }
-    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), { retryFailed: true });
+    const checkpoint = await worker.runtime.run(worker.requestFor(snapshot), {
+      executionMode: "SAFE_AUTO_PUBLICATION",
+      publicationAuthorization: {
+        kind: "EXPLICIT_COMMIT",
+        authorizationId: context.idempotencyKey,
+      },
+      retryFailed: true,
+    });
     assertCommitCheckpoint(checkpoint);
     for (const item of checkpoint.payload.outbox ?? []) {
       if (item.markdown === undefined) continue;

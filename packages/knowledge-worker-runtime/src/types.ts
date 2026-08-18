@@ -11,6 +11,7 @@ import type {
   UserCommitmentSignal,
 } from "@zhiloop/knowledge-compiler";
 import type { EvolutionDecision, KnowledgeEvolutionSemanticPort } from "@zhiloop/knowledge-evolution";
+import type { FreshnessProjectionInput, FreshnessProjectionWriteResult } from "@zhiloop/knowledge-freshness";
 import type { IncrementalIndexResult } from "@zhiloop/knowledge-indexer";
 import type { ProjectionWriteResult } from "@zhiloop/knowledge-registry";
 import type {
@@ -32,6 +33,7 @@ export const WORKER_STAGES = [
   "CANDIDATE_POLICY",
   "MARKDOWN_PUBLISH",
   "REGISTRY_PROJECT",
+  "FRESHNESS_PROJECT",
   "INCREMENTAL_INDEX",
 ] as const;
 
@@ -89,6 +91,10 @@ export interface IncrementalIndexPort {
   syncAsset(assetId: string): IncrementalIndexResult | Promise<IncrementalIndexResult>;
 }
 
+export interface FreshnessProjectionPort {
+  project(input: FreshnessProjectionInput): FreshnessProjectionWriteResult | Promise<FreshnessProjectionWriteResult>;
+}
+
 export interface KnowledgeEvolutionLookupPort {
   search(queries: readonly string[], limit: number): readonly KnowledgeAsset[] | Promise<readonly KnowledgeAsset[]>;
 }
@@ -101,6 +107,7 @@ export interface KnowledgeWorkerPorts {
   readonly evolutionSemantic?: KnowledgeEvolutionSemanticPort;
   readonly markdown: MarkdownKnowledgePort;
   readonly registry: RegistryProjectionPort;
+  readonly freshness: FreshnessProjectionPort;
   readonly index: IncrementalIndexPort;
 }
 
@@ -147,6 +154,7 @@ export interface PublicationOutboxItem {
   readonly expectedCurrentVersion?: number;
   readonly markdown?: StoredKnowledgeVersion;
   readonly projection?: ProjectionWriteResult;
+  readonly freshness?: FreshnessProjectionWriteResult;
   readonly index?: IncrementalIndexResult;
 }
 

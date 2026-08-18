@@ -72,6 +72,7 @@ const EXECUTION_MODES = new Set<KnowledgeExecutionMode>([
 const PUBLICATION_STAGES = new Set<KnowledgeWorkerStage>([
   "MARKDOWN_PUBLISH",
   "REGISTRY_PROJECT",
+  "FRESHNESS_PROJECT",
   "INCREMENTAL_INDEX",
 ]);
 const MAX_AUTHORIZATION_ID_LENGTH = 512;
@@ -326,7 +327,7 @@ function normalizedAuthorization(
 }
 
 function publicationStarted(checkpoint: KnowledgeWorkerCheckpoint): boolean {
-  return WORKER_STAGES.some((stage) => PUBLICATION_STAGES.has(stage) && checkpoint.stages[stage].attempts > 0);
+  return WORKER_STAGES.some((stage) => PUBLICATION_STAGES.has(stage) && (checkpoint.stages[stage]?.attempts ?? 0) > 0);
 }
 
 function modeAllowsStage(mode: KnowledgeExecutionMode, stage: KnowledgeWorkerStage): boolean {
@@ -963,12 +964,39 @@ export class KnowledgeWorkerRuntime {
       }
     })) return checkpoint;
 
+    if (!await execute("FRESHNESS_PROJECT", async () => {
+      const outbox = [...(checkpoint?.payload.outbox ?? [])];
+      const policies = new Map((checkpoint?.payload.policies ?? []).map((policy) => [policy.candidate.candidateId, policy]));
+      for (let index = 0; index < outbox.length; index += 1) {
+        const item = outbox[index];
+        if (item === undefined || item.freshness !== undefined) continue;
+        if (item.projection === undefined) throw new KnowledgeWorkerError("MISSING_REGISTRY_OUTBOX", "Registry outbox is incomplete", false);
+        const policy = policies.get(item.candidateId);
+        if (policy === undefined) throw new KnowledgeWorkerError("MISSING_POLICY_OUTBOX", "Policy outbox is incomplete", false);
+        const freshness = await external("FRESHNESS_PROJECTION_FAILED", () => this.#ports.freshness.project({
+          asset: item.asset,
+          candidate: policy.candidate,
+          verificationResults: policy.verificationResults,
+          projectId: request.project.projectId,
+          observedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
+        }));
+        if (freshness.assetId !== item.asset.id || freshness.assetVersion !== item.asset.version) {
+          throw new KnowledgeWorkerError("FRESHNESS_VERSION_MISMATCH", "Freshness projected a different asset version", false);
+        }
+        outbox[index] = { ...item, freshness };
+        checkpoint = this.#persist(checkpoint as KnowledgeWorkerCheckpoint, {
+          payload: { ...(checkpoint as KnowledgeWorkerCheckpoint).payload, outbox: [...outbox] },
+        });
+      }
+    })) return checkpoint;
+
     if (!await execute("INCREMENTAL_INDEX", async () => {
       const outbox = [...(checkpoint?.payload.outbox ?? [])];
       for (let index = 0; index < outbox.length; index += 1) {
         const item = outbox[index];
         if (item === undefined || item.index !== undefined) continue;
         if (item.projection === undefined) throw new KnowledgeWorkerError("MISSING_REGISTRY_OUTBOX", "Registry outbox is incomplete", false);
+        if (item.freshness === undefined) throw new KnowledgeWorkerError("MISSING_FRESHNESS_OUTBOX", "Freshness outbox is incomplete", false);
         const indexed = await external("INCREMENTAL_INDEX_FAILED", () => this.#ports.index.syncAsset(item.asset.id));
         if (!INDEX_SUCCESS.has(indexed.action)) {
           throw new KnowledgeWorkerError(

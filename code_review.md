@@ -2,16 +2,53 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M5 CodeGraph 事实层） | 累计 |
+| 指标 | 本轮（M6 知识保鲜） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 6 |
-| 风险发现 | 6 | 42 |
-| 高风险 | 3 | 21 |
-| 中风险 | 2 | 17 |
-| 低风险 | 1 | 4 |
-| 已修复 | 6 | 42 |
+| Review 次数 | 1 | 7 |
+| 风险发现 | 8 | 50 |
+| 高风险 | 4 | 25 |
+| 中风险 | 3 | 20 |
+| 低风险 | 1 | 5 |
+| 已修复 | 8 | 50 |
 | 未解决 | 0 | 0 |
-| 本轮耗时 | 7 分 35 秒 | 已知耗时 1 小时 11 分 03 秒（首轮历史报告未记录耗时） |
+| 本轮耗时 | 16 分 00 秒 | 已知耗时 1 小时 27 分 03 秒（首轮历史报告未记录耗时） |
+
+## M6 审查结论
+
+M6 把发布知识投影为可反查的代码 Anchor，并以独立 Freshness 状态驱动重验证计划。SQLite 保留不可变版本历史，只让当前指针进入变更反查；Worker 在 Registry 与索引之间增加可恢复 checkpoint。8 个问题全部修复，无未解决风险。
+
+## M6 风险矩阵
+
+| 等级 | 发现 | 风险 | 修复与证据 |
+|---|---|---|---|
+| 高 | 初版只以 `asset_id` 保存一条当前投影 | 新版本覆盖旧 Candidate、Fingerprint 和 Anchor，破坏可追溯性 | 改为 `(asset_id, asset_version)` 不可变历史表、当前指针表和版本化 Anchor；历史读取测试 |
+| 高 | 版本读取发生在 `BEGIN IMMEDIATE` 之前 | 两个进程可同时通过版本检查，后写覆盖先写 | 版本/CAS 检查、投影、Anchor 和当前指针更新进入同一写事务 |
+| 高 | 投影未核对 Asset 与 Candidate 的身份字段 | 错误 outbox 组合会把别的 Candidate 锚定到正式知识 | 校验 subject、kind、correlation 和 source Episodes；不一致失败关闭 |
+| 高 | 只有变更、尚未复验时沿用 invalidation 的 `MARK_STALE` | 相关改动会被误当成已证实冲突，提前污染生命周期 | 无复验结果只进入 `REVALIDATE`；明确 REFUTED 才输出 `CONFLICT + MARK_STALE` |
+| 中 | 变更路径和 key 直接进入反查 | 非规范路径造成漏召回、跨项目歧义或异常查询负载 | 拒绝绝对路径、反斜线、空段、`.`/`..`、换行和超长 key；项目维度索引 |
+| 中 | 从 SQLite 读出的嵌套 Candidate 只浅冻结 | 调用方可修改内存记录，后续计划与审计读取不一致 | 完整性校验后递归冻结整个投影 |
+| 中 | 旧 checkpoint 缺少新增 stage 时直接读取 `.attempts` | 升级后续跑可能抛 TypeError | publication-started 判定使用缺失安全访问；旧记录兼容回归 |
+| 低 | 仅有通用失败矩阵，没有验证保鲜阶段恢复不重复前序副作用 | checkpoint 顺序回归难以及时发现 | 增加 Markdown/Registry 成功、Freshness 失败后精确续跑的集成测试 |
+
+## M6 关键维度确认
+
+- **状态分层**：Freshness 与历史 `KnowledgeStatus` 独立；计划保留正文，只通过 expected version 提议刷新 Fingerprint 或标记 STALE。
+- **数据模型**：每个正式版本保存 Candidate、Fingerprint、Anchor 和完整性哈希；当前指针决定注入前需要复验的活动版本。
+- **召回边界**：按 project + PATH/SYMBOL/CONFIG/DEPENDENCY 索引，调用方提供 1–10,000 的硬上限；无关变更返回空集。
+- **恢复边界**：`FRESHNESS_PROJECT` 位于 Registry 后、增量索引前；成功的 Markdown/Registry 不重放，投影自身同版本同载荷幂等。
+- **生产边界**：Sidecar 独占并关闭本地 `knowledge-freshness.sqlite`；目录/文件权限分别为 `0700/0600`。
+
+## M6 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，64 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/Gate tests | 56/56 通过 |
+| Vitest unit/integration | 159 files，1375/1375 通过 |
+| Coverage | statements 90.10%，branches 85.03%，functions 91.70%，lines 93.66% |
+| OpenSpec strict validation | `track-knowledge-freshness` 有效 |
+| Diff hygiene | `git diff --check` 通过 |
 
 ## M5 审查结论
 

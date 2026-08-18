@@ -14,6 +14,7 @@ import {
   type KnowledgeRevalidationPort,
 } from "@zhiloop/knowledge-governance-service";
 import { IncrementalKnowledgeIndexer } from "@zhiloop/knowledge-indexer";
+import { SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
 import { SqliteKnowledgeRegistryProjection } from "@zhiloop/knowledge-registry";
 import {
   DEFAULT_MVP_COMPILER_VERSION,
@@ -214,6 +215,7 @@ export class P2ProductionComposition {
   readonly registry: SqliteKnowledgeRegistryProjection;
   readonly index: IncrementalKnowledgeIndexer;
   readonly governanceStore: SqliteGovernanceOperationStore;
+  readonly freshnessStore: SqliteKnowledgeFreshnessStore;
   readonly #checkpointStore: SqliteKnowledgeWorkerCheckpointStore;
 
   private constructor(options: P2ProductionCompositionOptions, compiler: KnowledgeExtractionPort) {
@@ -222,6 +224,7 @@ export class P2ProductionComposition {
     this.registry = new SqliteKnowledgeRegistryProjection(join(options.stateDirectory, "knowledge-registry.sqlite"));
     this.index = new IncrementalKnowledgeIndexer(this.markdown, this.registry);
     this.governanceStore = new SqliteGovernanceOperationStore(join(options.stateDirectory, "knowledge-governance.sqlite"));
+    this.freshnessStore = new SqliteKnowledgeFreshnessStore(join(options.stateDirectory, "knowledge-freshness.sqlite"));
     this.#checkpointStore = new SqliteKnowledgeWorkerCheckpointStore(join(options.stateDirectory, "knowledge-worker.sqlite"));
 
     const ledgerPort: LedgerSnapshotPort = {
@@ -276,6 +279,7 @@ export class P2ProductionComposition {
       },
       markdown: this.markdown,
       registry: this.registry,
+      freshness: this.freshnessStore,
       index: this.index,
     }, this.#checkpointStore);
     this.worker = Object.freeze({
@@ -331,6 +335,7 @@ export class P2ProductionComposition {
 
   close(): void {
     this.governanceStore.close();
+    this.freshnessStore.close();
     this.#checkpointStore.close();
     this.registry.close();
   }

@@ -23,6 +23,7 @@ import { KnowledgeWorkerError } from "./errors.js";
 import { KnowledgeWorkerRuntime } from "./runtime.js";
 import type {
   EvidenceVerificationPort,
+  FreshnessProjectionPort,
   IncrementalIndexPort,
   KnowledgeWorkerCheckpoint,
   KnowledgeWorkerCheckpointStore,
@@ -232,6 +233,21 @@ class MemoryRegistry implements RegistryProjectionPort {
   }
 }
 
+class MemoryFreshness implements FreshnessProjectionPort {
+  calls = 0;
+  fail?: () => never;
+  project(input: Parameters<FreshnessProjectionPort["project"]>[0]) {
+    this.calls += 1;
+    this.fail?.();
+    return {
+      status: "PROJECTED" as const,
+      assetId: input.asset.id,
+      assetVersion: input.asset.version,
+      anchorCount: input.candidate.assertions.length,
+    };
+  }
+}
+
 class MemoryIndex implements IncrementalIndexPort {
   calls = 0;
   readonly versions = new Map<string, number>();
@@ -346,6 +362,7 @@ function fixture(overrides: Partial<KnowledgeWorkerPorts> = {}): {
   readonly ports: KnowledgeWorkerPorts;
   readonly markdown: MemoryMarkdown;
   readonly registry: MemoryRegistry;
+  readonly freshness: MemoryFreshness;
   readonly index: MemoryIndex;
 } {
   const records = ledgerRecords();
@@ -364,6 +381,7 @@ function fixture(overrides: Partial<KnowledgeWorkerPorts> = {}): {
   };
   const markdown = new MemoryMarkdown();
   const registry = new MemoryRegistry();
+  const freshness = new MemoryFreshness();
   const index = new MemoryIndex(markdown);
   const evolution = {
     search: async (_queries: readonly string[], limit: number) =>
@@ -372,8 +390,9 @@ function fixture(overrides: Partial<KnowledgeWorkerPorts> = {}): {
   return {
     markdown,
     registry,
+    freshness,
     index,
-    ports: { ledger, compiler: compiler(), evidence: evidence(), evolution, markdown, registry, index, ...overrides },
+    ports: { ledger, compiler: compiler(), evidence: evidence(), evolution, markdown, registry, freshness, index, ...overrides },
   };
 }
 
@@ -436,6 +455,7 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.markdown.current).toHaveLength(1);
     expect(setup.markdown.publishCalls).toBe(1);
     expect(setup.registry.calls).toBe(1);
+    expect(setup.freshness.calls).toBe(1);
     expect(setup.index.calls).toBe(1);
     expect(evolutionCalls).toBe(1);
   });
@@ -731,6 +751,34 @@ describe("KnowledgeWorkerRuntime", () => {
     expect(setup.index.calls).toBe(indexCalls + 1);
   });
 
+  it("resumes at freshness projection without replaying prior publication side effects", async () => {
+    const setup = fixture();
+    setup.freshness.fail = () => {
+      throw Object.assign(new Error("freshness store offline"), { retryable: true });
+    };
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
+
+    const partial = await runtime.run(request({ workId: "freshness-recovery" }), publicationOptions("commit-freshness"));
+    expect(partial.status).toBe("RETRYABLE");
+    expect(partial.stages.MARKDOWN_PUBLISH.status).toBe("SUCCEEDED");
+    expect(partial.stages.REGISTRY_PROJECT.status).toBe("SUCCEEDED");
+    expect(partial.stages.FRESHNESS_PROJECT.status).toBe("RETRYABLE");
+    expect(setup.markdown.publishCalls).toBe(1);
+    expect(setup.registry.calls).toBe(1);
+    expect(setup.index.calls).toBe(0);
+
+    delete setup.freshness.fail;
+    const completed = await runtime.run(
+      request({ workId: "freshness-recovery" }),
+      publicationOptions("commit-freshness"),
+    );
+    expect(completed.status).toBe("COMPLETED");
+    expect(setup.markdown.publishCalls).toBe(1);
+    expect(setup.registry.calls).toBe(1);
+    expect(setup.freshness.calls).toBe(2);
+    expect(setup.index.calls).toBe(1);
+  });
+
   it("does not let a lower-privilege retry reset a failed publication stage", async () => {
     const setup = fixture();
     setup.index.fail = () => { throw Object.assign(new Error("index offline"), { retryable: true }); };
@@ -895,6 +943,7 @@ describe("KnowledgeWorkerRuntime", () => {
     ["CANDIDATE_POLICY", "evidence"],
     ["MARKDOWN_PUBLISH", "markdown"],
     ["REGISTRY_PROJECT", "registry"],
+    ["FRESHNESS_PROJECT", "freshness"],
     ["INCREMENTAL_INDEX", "index"],
   ] as const)("checkpoints retryable external failure at %s", async (expectedStage, boundary) => {
     const setup = fixture();
@@ -904,6 +953,7 @@ describe("KnowledgeWorkerRuntime", () => {
     if (boundary === "evidence") setup.ports.evidence.verify = async () => retryable();
     if (boundary === "markdown") setup.markdown.fail = retryable;
     if (boundary === "registry") setup.registry.fail = retryable;
+    if (boundary === "freshness") setup.freshness.fail = retryable;
     if (boundary === "index") setup.index.fail = retryable;
 
     const result = await new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore()).run(

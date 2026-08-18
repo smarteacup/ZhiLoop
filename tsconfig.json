@@ -28,6 +28,7 @@
     { "path": "./packages/evidence-engine" },
     { "path": "./packages/evidence-policy" },
     { "path": "./packages/knowledge-evolution" },
+    { "path": "./packages/knowledge-freshness" },
     { "path": "./packages/invalidation-engine" },
     { "path": "./packages/markdown-repository" },
     { "path": "./packages/knowledge-registry" },

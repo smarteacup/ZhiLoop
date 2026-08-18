@@ -68,9 +68,61 @@ function replaceAt(configuration: ConsoleConfiguration, path: string, replacemen
 }
 
 function componentFor(path: string): string {
+  if (path.startsWith("compilation.")) return "知识编译与发布";
+  if (path.startsWith("evolution.")) return "知识演进";
+  if (path.startsWith("codeIntelligence.")) return "CodeGraph 事实层";
+  if (path.startsWith("freshness.")) return "知识保鲜";
+  if (path.startsWith("prewarm.")) return "上下文预热";
+  if (path.startsWith("evolutionAlerts.")) return "知识链路告警";
   if (path.startsWith("runtime.alerts.")) return "observability";
   if (path.startsWith("runtime.")) return "p1-runtime";
   return "future-consumer";
+}
+
+function fieldLabel(path: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    "compilation.enabled": "自动生成知识候选",
+    "compilation.mode": "知识执行模式",
+    "compilation.minNewTurns": "最少新增轮次",
+    "compilation.minNewEvents": "最少新增事件",
+    "compilation.idleMs": "会话空闲触发时间（毫秒）",
+    "compilation.maximumWaitMs": "最长等待时间（毫秒）",
+    "compilation.onSessionEnd": "会话结束时触发",
+    "compilation.scanIntervalMs": "后台扫描间隔（毫秒）",
+    "compilation.maxSessionsPerRun": "单轮最多扫描会话",
+    "compilation.maxDispatchesPerRun": "单轮最多派发任务",
+    "compilation.publication.enabled": "启用安全自动发布",
+    "compilation.publication.allowedKindsCsv": "允许发布的知识类型（逗号分隔）",
+    "compilation.publication.allowedProjectIdsCsv": "允许发布的项目（逗号分隔）",
+    "compilation.publication.requireFreshCodeEvidence": "要求代码事实为最新",
+    "compilation.publication.goldenDatasetId": "Golden 数据集 ID",
+    "compilation.publication.goldenDatasetVersion": "Golden 数据集版本",
+    "compilation.publication.goldenConfigFingerprint": "Golden 配置指纹",
+    "evolution.maxMatchCandidates": "演进匹配候选上限",
+    "evolution.semanticJudgeEnabled": "启用语义演进判断",
+    "evolution.failClosed": "演进判断失败时禁止发布",
+    "codeIntelligence.provider": "代码事实提供方",
+    "codeIntelligence.initializeAutomatically": "自动初始化 CodeGraph",
+    "codeIntelligence.queryTimeoutMs": "CodeGraph 查询超时（毫秒）",
+    "codeIntelligence.circuitBreakerFailures": "CodeGraph 熔断失败阈值",
+    "codeIntelligence.circuitBreakerResetMs": "CodeGraph 熔断恢复时间（毫秒）",
+    "freshness.enabled": "启用知识保鲜",
+    "freshness.changeDebounceMs": "代码变化去抖时间（毫秒）",
+    "freshness.fallbackScanIntervalMs": "保鲜兜底扫描间隔（毫秒）",
+    "freshness.preInjectionGate": "注入前执行保鲜门禁",
+    "freshness.gateTimeoutMs": "保鲜门禁超时（毫秒）",
+    "freshness.maxAffectedPerJob": "单个变化任务影响知识上限",
+    "prewarm.enabled": "启用上下文预热",
+    "prewarm.onSessionStart": "会话开始时预热",
+    "prewarm.ttlMs": "预热缓存有效期（毫秒）",
+    "prewarm.maxItems": "预热知识条目上限",
+    "prewarm.maxTokens": "预热 Token 上限",
+    "evolutionAlerts.enabled": "启用知识链路告警",
+    "evolutionAlerts.onPermanentJobFailure": "永久失败时告警",
+    "evolutionAlerts.onCodeGraphUnavailable": "CodeGraph 不可用时告警",
+    "evolutionAlerts.onStaleKnowledgeDetected": "发现过期知识时告警",
+  };
+  return labels[path] ?? path;
 }
 
 function actionGate(capability: CapabilityGate, expectedRevision: number, allowed: boolean, key: string, blockedReason?: string): RevisionActionGate {
@@ -93,7 +145,7 @@ export function configurationViewModel(state: ConfigurationState, api: ConsoleAp
   const rollbackCapability = api.rollbackConfiguration === undefined ? CONFIGURATION_NOT_CONFIGURED : CONFIGURATION_SERVICE_READY;
   const fields: ConfigurationFieldViewModel[] = primitiveFields(state.view.effective).map(({ path, value }) => ({
     path,
-    label: path,
+    label: fieldLabel(path),
     kind: typeof value as "string" | "number" | "boolean",
     effectiveValue: value,
     draftValue: valueAt(draftConfiguration, path) ?? value,

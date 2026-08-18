@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_CONSOLE_CONFIGURATION } from "./schema.js";
+import { DEFAULT_CONSOLE_CONFIGURATION, migrateConsoleConfiguration } from "./schema.js";
 import { SqliteConfigurationService } from "./service.js";
 import type { ConfigurationActivationComponent, ConsumerCapability } from "./types.js";
 
@@ -27,6 +27,20 @@ afterEach(async () => {
 });
 
 describe("SqliteConfigurationService", () => {
+  it("deterministically migrates strict persisted schema v1 values", () => {
+    const legacy = {
+      schemaVersion: 1,
+      runtime: structuredClone(DEFAULT_CONSOLE_CONFIGURATION.runtime),
+      future: structuredClone(DEFAULT_CONSOLE_CONFIGURATION.future),
+    };
+    const before = structuredClone(legacy);
+    expect(migrateConsoleConfiguration(legacy)).toEqual(DEFAULT_CONSOLE_CONFIGURATION);
+    expect(migrateConsoleConfiguration(legacy)).toEqual(DEFAULT_CONSOLE_CONFIGURATION);
+    expect(legacy).toEqual(before);
+    expect(() => migrateConsoleConfiguration({ ...legacy, futureField: true })).toThrow("unknown fields");
+    expect(() => migrateConsoleConfiguration({ schemaVersion: 3 })).toThrow("unsupported");
+  });
+
   it("starts with bounded defaults and rejects stale or unknown drafts", () => {
     const target = service();
     expect(target.get()).toMatchObject({ revision: 0, effective: DEFAULT_CONSOLE_CONFIGURATION });

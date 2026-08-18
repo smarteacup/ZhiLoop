@@ -132,7 +132,7 @@ describe("typed Console API client", () => {
 
   it("uses typed configuration query, validate, activate and rollback endpoints with CSRF", async () => {
     const configuration = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtime: {
         sessionScanIntervalMs: 60_000, followDebounceMs: 1_000, workerPollIntervalMs: 1_000, extractionDelayMs: 300_000,
         workerConcurrency: 2, scanBatchSize: 100, captureBatchSize: 100,
@@ -145,6 +145,16 @@ describe("typed Console API client", () => {
         },
       },
       future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+      compilation: {
+        enabled: true, mode: "PREVIEW_ONLY", minNewTurns: 3, minNewEvents: 2, idleMs: 120_000, maximumWaitMs: 1_800_000,
+        onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20,
+        publication: { enabled: false, allowedKindsCsv: "", allowedProjectIdsCsv: "", requireFreshCodeEvidence: true, goldenDatasetId: "", goldenDatasetVersion: 0, goldenConfigFingerprint: "" },
+      },
+      evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true },
+      codeIntelligence: { provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+      freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
+      prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
+      evolutionAlerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },
     };
     const state = { view: { schemaVersion: 1, revision: 2, hash: "a".repeat(64), effective: configuration, sources: { "runtime.sessionScanIntervalMs": "GLOBAL" } }, drafts: [], history: [] };
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

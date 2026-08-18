@@ -55,6 +55,7 @@ const DEFAULT_LIMITS: KnowledgeWorkerLimits = Object.freeze({
   maxCandidates: 200,
   maxPublishItems: 50,
   maxStageAttempts: 5,
+  maxEvolutionCandidates: 5,
 });
 const HARD_LIMITS: KnowledgeWorkerLimits = Object.freeze({
   maxLedgerRecords: 5_000,
@@ -62,6 +63,7 @@ const HARD_LIMITS: KnowledgeWorkerLimits = Object.freeze({
   maxCandidates: 2_000,
   maxPublishItems: 500,
   maxStageAttempts: 20,
+  maxEvolutionCandidates: 20,
 });
 const INDEX_SUCCESS = new Set(["INDEXED", "UNCHANGED", "CHUNKS_REFRESHED"]);
 const EXECUTION_MODES = new Set<KnowledgeExecutionMode>([
@@ -772,7 +774,7 @@ export class KnowledgeWorkerRuntime {
           throw new KnowledgeWorkerError("EVOLUTION_EXACT_READ_INVALID", exact.error.message, false);
         }
         const retrievedTargets = await external("EVOLUTION_LOOKUP_FAILED", () =>
-          this.#ports.evolution.search(evolutionQueries(candidate), 5));
+          this.#ports.evolution.search(evolutionQueries(candidate), resolvedLimits.maxEvolutionCandidates));
         try {
           const decision = await decideKnowledgeEvolution({
             candidate,

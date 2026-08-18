@@ -329,13 +329,20 @@ export class SqliteKnowledgeFreshnessStore {
       const rows = item.path !== undefined
         ? this.#database.prepare(`SELECT anchor.asset_id,anchor.asset_version FROM knowledge_freshness_anchors anchor
             JOIN knowledge_freshness_active active ON active.asset_id=anchor.asset_id AND active.asset_version=anchor.asset_version
+            LEFT JOIN knowledge_freshness_state state
+              ON state.asset_id=anchor.asset_id AND state.asset_version=anchor.asset_version
             WHERE anchor.project_id=? AND (anchor.anchor_path=? OR (anchor.kind='PATH' AND anchor.anchor_key=?))
+              AND (state.code_revision IS NULL OR state.code_revision<>?)
             ORDER BY anchor.asset_id LIMIT ?`)
-          .all(changes.projectId, item.path, item.path, limit + 1)
+          .all(changes.projectId, item.path, item.path, changes.sourceRef, limit + 1)
         : this.#database.prepare(`SELECT anchor.asset_id,anchor.asset_version FROM knowledge_freshness_anchors anchor
             JOIN knowledge_freshness_active active ON active.asset_id=anchor.asset_id AND active.asset_version=anchor.asset_version
-            WHERE anchor.project_id=? AND anchor.kind=? AND anchor.anchor_key=? ORDER BY anchor.asset_id LIMIT ?`)
-          .all(changes.projectId, item.kind ?? "", item.key ?? "", limit + 1);
+            LEFT JOIN knowledge_freshness_state state
+              ON state.asset_id=anchor.asset_id AND state.asset_version=anchor.asset_version
+            WHERE anchor.project_id=? AND anchor.kind=? AND anchor.anchor_key=?
+              AND (state.code_revision IS NULL OR state.code_revision<>?)
+            ORDER BY anchor.asset_id LIMIT ?`)
+          .all(changes.projectId, item.kind ?? "", item.key ?? "", changes.sourceRef, limit + 1);
       for (const row of rows as unknown as Array<{ asset_id: string; asset_version: number }>) {
         found.set(row.asset_id, { assetId: row.asset_id, assetVersion: row.asset_version });
       }

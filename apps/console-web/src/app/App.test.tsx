@@ -33,7 +33,7 @@ const session = {
   redactionCount: 0,
 };
 const configuration = {
-  schemaVersion: 1 as const,
+  schemaVersion: 2 as const,
   runtime: {
     sessionScanIntervalMs: 60_000, followDebounceMs: 1_000, workerPollIntervalMs: 1_000, extractionDelayMs: 300_000,
     workerConcurrency: 2, scanBatchSize: 100, captureBatchSize: 100,
@@ -46,6 +46,16 @@ const configuration = {
     },
   },
   future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+  compilation: {
+    enabled: true, mode: "PREVIEW_ONLY" as const, minNewTurns: 3, minNewEvents: 2, idleMs: 120_000, maximumWaitMs: 1_800_000,
+    onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20,
+    publication: { enabled: false, allowedKindsCsv: "", allowedProjectIdsCsv: "", requireFreshCodeEvidence: true as const, goldenDatasetId: "", goldenDatasetVersion: 0, goldenConfigFingerprint: "" },
+  },
+  evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true as const },
+  codeIntelligence: { provider: "codegraph" as const, initializeAutomatically: false as const, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+  freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true as const, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
+  prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
+  evolutionAlerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },
 };
 const api: ConsoleApi = {
   overview: async () => ({ schemaVersion: 1, observedAt: timestamp, rolloutMode: "SHADOW", sidecarVersion: "0.1.4", capabilities: [capability], recentSessions: [session], jobs: { queued: 0, running: 0, retryWait: 0, failed: 0 }, alertCount: 0 }),

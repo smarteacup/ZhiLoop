@@ -117,6 +117,7 @@ export interface KnowledgeWorkerLimits {
   readonly maxCandidates: number;
   readonly maxPublishItems: number;
   readonly maxStageAttempts: number;
+  readonly maxEvolutionCandidates: number;
 }
 
 export interface KnowledgeWorkerRunRequest {

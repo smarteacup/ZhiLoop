@@ -11,7 +11,7 @@ import { ControlClientError, UnixSocketControlClient } from "./control-client.js
 
 const NOW = "2026-08-03T12:00:00.000Z";
 const configuration = {
-  schemaVersion: 1 as const,
+  schemaVersion: 2 as const,
   runtime: {
     sessionScanIntervalMs: 60_000,
     followDebounceMs: 1_000,
@@ -34,6 +34,16 @@ const configuration = {
     },
   },
   future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+  compilation: {
+    enabled: true, mode: "PREVIEW_ONLY" as const, minNewTurns: 3, minNewEvents: 2, idleMs: 120_000, maximumWaitMs: 1_800_000,
+    onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20,
+    publication: { enabled: false, allowedKindsCsv: "", allowedProjectIdsCsv: "", requireFreshCodeEvidence: true as const, goldenDatasetId: "", goldenDatasetVersion: 0, goldenConfigFingerprint: "" },
+  },
+  evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true as const },
+  codeIntelligence: { provider: "codegraph" as const, initializeAutomatically: false as const, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+  freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true as const, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
+  prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
+  evolutionAlerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },
 };
 
 describe("UnixSocketControlClient", () => {

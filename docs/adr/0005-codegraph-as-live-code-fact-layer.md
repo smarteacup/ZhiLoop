@@ -173,9 +173,9 @@ CodeGraph 只能验证代码相关事实，其他知识按来源使用不同更�
 
 ## 当前实施边界
 
-截至 2026-08-07，ZhiLoop 已实现知识指纹决策、`STALE/SUPERSEDED` 生命周期、版本治理和默认召回资格过滤；`evaluateInvalidation` 当前主要由测试和 Gate 使用。
+截至 2026-08-19，CodeGraph Adapter、CodeAnchor 反向索引、Git ChangeSet、去抖/兜底调度、ChangeSet Worker、召回前 Freshness Gate、上下文预热和控制台保鲜视图均已接入 Sidecar 生产组合。UserPrompt 建立项目 baseline，Stop Hook 在后台触发变化扫描；Worker 成功后才推进 durable baseline，崩溃重放保持幂等。
 
-CodeGraph Adapter、CodeAnchor 反向索引、ChangeSet Worker、召回前 Freshness Gate、旧知识迁移和控制台保鲜视图属于 P8，尚未接入当前 `0.3.14` 生产运行时。本文是目标架构决策，不能作为“当前已经自动保鲜”的能力声明。
+当前 CodeGraph 生产复验优先覆盖 `SYMBOL_EXISTS`，路径、配置和依赖变化通过 Anchor path 反向索引定位；更丰富的结构化 Assertion Probe 仍应按 Golden 数据集指标逐类扩展。CodeGraph 未初始化或不可用时不会自动执行 `init`，相关知识转为 `UNKNOWN/REVALIDATE` 并退出代码事实注入，但 Codex 主流程保持开放。
 
 ## 替代方案
 

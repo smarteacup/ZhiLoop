@@ -41,6 +41,7 @@ import { P2SidecarRuntime } from "./p2-runtime.js";
 import { P2ProductionComposition } from "./p2-production.js";
 import { P2ConsoleRuntime, type P2ConsoleRequest } from "./p2-console.js";
 import { P2AutomaticCompilationRuntime } from "./p2-automatic-compilation.js";
+import { P2FreshnessRuntime } from "./p2-freshness-runtime.js";
 import { P2AutomaticCompilationAdapter, P2CandidatePreviewCoordinator } from "./p2-preview-coordinator.js";
 import { P3SidecarConsole } from "./p3-console.js";
 import { P4ActiveSidecarRuntime, type P4ActiveHookResult } from "./p4-active-runtime.js";
@@ -89,6 +90,28 @@ function p1Configuration(configuration: ConsoleConfiguration): P1RuntimeConfigur
   });
 }
 
+function knowledgeCompilationConfiguration(configuration: ConsoleConfiguration) {
+  return Object.freeze({
+    enabled: configuration.compilation.enabled,
+    scanIntervalMs: configuration.compilation.scanIntervalMs,
+    minimumNewTurns: configuration.compilation.minNewTurns,
+    minimumNewEvents: configuration.compilation.minNewEvents,
+    idleAfterMs: configuration.compilation.idleMs,
+    maximumWaitMs: configuration.compilation.maximumWaitMs,
+    maxSessionsPerRun: configuration.compilation.maxSessionsPerRun,
+    maxDispatchesPerRun: configuration.compilation.maxDispatchesPerRun,
+  });
+}
+
+function freshnessSchedulerConfiguration(configuration: ConsoleConfiguration) {
+  return Object.freeze({
+    enabled: configuration.freshness.enabled,
+    changeDebounceMs: configuration.freshness.changeDebounceMs,
+    fallbackScanIntervalMs: configuration.freshness.fallbackScanIntervalMs,
+    maxAffectedPerJob: configuration.freshness.maxAffectedPerJob,
+  });
+}
+
 function consoleConfigurationHash(configuration: ConsoleConfiguration): string {
   return createHash("sha256").update(JSON.stringify(configuration)).digest("hex");
 }
@@ -108,6 +131,7 @@ export class SidecarApplication {
   #p2Production: P2ProductionComposition | undefined;
   #p2Console: P2ConsoleRuntime | undefined;
   #p2AutomaticCompilation: P2AutomaticCompilationRuntime | undefined;
+  #p2Freshness: P2FreshnessRuntime | undefined;
   #p3Console: P3SidecarConsole | undefined;
   #p4Active: P4ActiveSidecarRuntime | undefined;
   #p4Console: P4SidecarConsole | undefined;
@@ -251,6 +275,7 @@ export class SidecarApplication {
     let p2Runtime: P2SidecarRuntime | undefined;
     let p2Production: P2ProductionComposition | undefined;
     let p2AutomaticCompilation: P2AutomaticCompilationRuntime | undefined;
+    let p2Freshness: P2FreshnessRuntime | undefined;
     let p2PreviewCoordinator: P2CandidatePreviewCoordinator | undefined;
     let p3Console: P3SidecarConsole | undefined;
     let p3CodexModelComposed = false;
@@ -264,6 +289,7 @@ export class SidecarApplication {
           "knowledge.retrieval": p3Console === undefined ? "DISABLED" : "READY",
           "knowledge.compile": p2Production === undefined ? "DISABLED" : "READY",
           "codex.query": p3CodexModelComposed ? "READY" : "NOT_CONFIGURED",
+          "knowledge.auto-publication": "NOT_CONFIGURED",
         }),
         components: [{
           componentId: "p1-background-runtime",
@@ -286,9 +312,18 @@ export class SidecarApplication {
               throw new Error("automatic knowledge compilation runtime is not composed");
             }
             return await p2AutomaticCompilation.applyConfiguration(
-              config.automaticKnowledgeCompilation ?? {},
+              knowledgeCompilationConfiguration(next),
               { ...p2PreviewCoordinator.pipelineIdentity(), configurationHash: consoleConfigurationHash(next) },
             );
+          },
+        }, {
+          componentId: "p2-knowledge-freshness",
+          prepare: async () => {
+            if (p2Freshness === undefined) throw new Error("knowledge freshness runtime is not composed");
+          },
+          apply: async (next) => {
+            if (p2Freshness === undefined) throw new Error("knowledge freshness runtime is not composed");
+            return await p2Freshness.applyConfiguration(freshnessSchedulerConfiguration(next));
           },
         }],
       });
@@ -373,10 +408,21 @@ export class SidecarApplication {
         },
         compilerTimeoutMs: configuration.get().effective.future.codexQueryTimeoutMs,
         compilerBatchSize: configuration.get().effective.future.compilerBatchSize,
+        evolutionMaxCandidates: configuration.get().effective.evolution.maxMatchCandidates,
         ...(config.codexQuery?.executable === undefined ? {} : { compilerExecutable: config.codexQuery.executable }),
         ...(config.codexQuery?.model === undefined ? {} : { compilerModel: config.codexQuery.model }),
         ...(config.codexQuery === undefined ? {} : { compilerIgnoreUserConfig: config.codexQuery.userConfiguration === "IGNORE" }),
       });
+      p2Freshness = new P2FreshnessRuntime({
+        statePath: join(dirname(config.ledgerPath), "git-freshness-baseline.sqlite"),
+        store: p2Production.freshnessStore,
+        configuration: freshnessSchedulerConfiguration(configuration.get().effective),
+        codeGraphTimeoutMs: configuration.get().effective.codeIntelligence.queryTimeoutMs,
+        onState: (state) => {
+          void composedApplication.#log.write({ component: "worker", code: `knowledge-freshness:${state.lastReasonCode ?? state.status}`, count: state.pendingProjects }).catch(() => undefined);
+        },
+      });
+      composedApplication.#p2Freshness = p2Freshness;
       p2Runtime = await P2SidecarRuntime.create({
         stateDirectory: dirname(config.ledgerPath),
         pollIntervalMs: configuration.get().effective.runtime.workerPollIntervalMs,
@@ -492,7 +538,10 @@ export class SidecarApplication {
         catalog: composedApplication.#controlPlane.sessionCatalog(),
         adapter: automaticAdapter,
         pipeline: p2PreviewCoordinator.pipelineIdentity(),
-        configuration: config.automaticKnowledgeCompilation ?? {},
+        configuration: {
+          ...knowledgeCompilationConfiguration(configuration.get().effective),
+          ...(config.automaticKnowledgeCompilation ?? {}),
+        },
         onReport: (report) => {
           const code = report.diagnostics[0]?.code ?? (report.bounded ? "SESSION_SCAN_BOUNDED" : "COMPLETE");
           void composedApplication.#log.write({ component: "worker", code: `automatic-knowledge-compilation:${code}`, count: report.queuedSessions }).catch(() => undefined);
@@ -562,6 +611,8 @@ export class SidecarApplication {
         orchestrator: new ContextOrchestrator(),
         rollout,
         captureUserPrompt: async (input) => { await composedApplication.#captureLegacyHook(input); },
+        observeProject: ({ projectId, projectRoot }) => { p2Freshness?.observeProject(projectId, projectRoot); },
+        scanProjectChanges: async () => { await p2Freshness?.trigger(); },
         closureEvidence: {
           load: async () => ({
             present: { taskContract: false, diff: false, tests: false, toolResults: false },
@@ -573,6 +624,13 @@ export class SidecarApplication {
         injectionPolicy: () => ({
           ...structuredClone(DEFAULT_CONFIGURATION.injection),
           defaultMaxTokens: Math.min(4_000, configuration!.get().effective.future.injectionMaxTokens),
+        }),
+        prewarmPolicy: () => ({
+          enabled: configuration!.get().effective.prewarm.enabled,
+          onSessionStart: configuration!.get().effective.prewarm.onSessionStart,
+          ttlMs: configuration!.get().effective.prewarm.ttlMs,
+          maxItems: configuration!.get().effective.prewarm.maxItems,
+          maxTokens: configuration!.get().effective.prewarm.maxTokens,
         }),
         userPromptDeadlineMs: 500,
       });
@@ -593,6 +651,7 @@ export class SidecarApplication {
       p4Console?.close();
       p4Active?.close();
       p3Console?.close();
+      await p2Freshness?.close().catch(() => undefined);
       await p2AutomaticCompilation?.close().catch(() => undefined);
       await p2Runtime?.close().catch(() => undefined);
       p2Production?.close();
@@ -610,11 +669,13 @@ export class SidecarApplication {
     try {
       await this.#p2Runtime?.start();
       this.#p2AutomaticCompilation?.start();
+      this.#p2Freshness?.start();
       const p2State = this.#p2Runtime?.state();
       if (p2State !== undefined) this.#controlPlane?.setP2RuntimeReady(p2State.knowledgeCompile === "READY");
       if (await this.#p1Runtime?.start()) this.#controlPlane?.setAutomaticIngestionReady();
     } catch (error) {
       await this.#p2AutomaticCompilation?.stop().catch(() => undefined);
+      await this.#p2Freshness?.close().catch(() => undefined);
       await this.#runtime.stop();
       throw error;
     }
@@ -827,6 +888,7 @@ export class SidecarApplication {
     await this.#workerTail;
     await this.#p1Runtime?.close();
     await this.#p2AutomaticCompilation?.close();
+    await this.#p2Freshness?.close();
     await this.#p2Runtime?.close();
     this.#p4Console?.close();
     this.#p4Active?.close();

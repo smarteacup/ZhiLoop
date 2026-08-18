@@ -37,13 +37,50 @@ injection:
       expect(result.value.retrieval.topK).toEqual({ exact: 10, fts: 30, vector: 30, relation: 20 });
       expect(result.value.injection.defaultMaxTokens).toBe(600);
       expect(result.value.closure).toEqual(DEFAULT_CONFIGURATION.closure);
+      expect(result.value.version).toBe(2);
+      expect(result.value.compilation.mode).toBe("PREVIEW_ONLY");
     }
   });
 
   it("returns a specific diagnostic for an unsupported version", () => {
-    const result = loadConfiguration({ version: 2 });
+    const result = loadConfiguration({ version: 3 });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("UNSUPPORTED_CONFIG_VERSION");
+  });
+
+  it("loads strict version 2 overrides and enforces automatic-publication evidence", () => {
+    const safe = structuredClone(DEFAULT_CONFIGURATION);
+    safe.compilation.mode = "SAFE_AUTO_PUBLICATION";
+    safe.compilation.publication = {
+      enabled: true, allowedKinds: ["IMPLEMENTATION"], allowedProjectIds: ["project-a"], requireFreshCodeEvidence: true,
+      goldenDatasetId: "golden-a", goldenDatasetVersion: 1, goldenConfigFingerprint: "a".repeat(64),
+    };
+    expect(loadConfiguration(safe).ok).toBe(true);
+    expect(loadConfiguration({ version: 2, compilation: { publication: { enabled: true } } }).ok).toBe(false);
+  });
+
+  it.each([
+    ["retry ordering", (value: typeof DEFAULT_CONFIGURATION) => { value.compilation.worker.retry.baseDelayMs = 2_000; value.compilation.worker.retry.maximumDelayMs = 1_000; }],
+    ["trigger ordering", (value: typeof DEFAULT_CONFIGURATION) => { value.compilation.triggers.idleMs = 2_000; value.compilation.triggers.maxWaitMs = 1_000; }],
+    ["partial golden identity", (value: typeof DEFAULT_CONFIGURATION) => { value.compilation.publication.goldenDatasetId = "golden"; }],
+    ["safe mode without publication", (value: typeof DEFAULT_CONFIGURATION) => { value.compilation.mode = "SAFE_AUTO_PUBLICATION"; }],
+    ["duplicate publication kinds", (value: typeof DEFAULT_CONFIGURATION) => { value.compilation.publication.allowedKinds = ["IMPLEMENTATION", "IMPLEMENTATION"]; }],
+    ["prewarm item overflow", (value: typeof DEFAULT_CONFIGURATION) => { value.prewarm.maxItems = value.injection.levels.L1_POINTER.maxItems + 1; }],
+    ["prewarm token overflow", (value: typeof DEFAULT_CONFIGURATION) => { value.prewarm.maxTokens = value.injection.defaultMaxTokens + 1; }],
+  ])("rejects v2 cross-module invariant: %s", (_name, mutate) => {
+    const value = structuredClone(DEFAULT_CONFIGURATION);
+    mutate(value);
+    expect(loadConfiguration(value).ok).toBe(false);
+  });
+
+  it("migrates v1 deterministically without mutating caller input", () => {
+    const input = { version: 1 as const, retrieval: { topK: { exact: 12 } } };
+    const before = structuredClone(input);
+    const first = loadConfiguration(input);
+    const second = loadConfiguration(input);
+    expect(input).toEqual(before);
+    expect(first).toEqual(second);
+    expect(first.ok && first.value).toMatchObject({ version: 2, retrieval: { topK: { exact: 12 } }, compilation: { mode: "PREVIEW_ONLY" } });
   });
 
   it("rejects malformed and aliased YAML", () => {

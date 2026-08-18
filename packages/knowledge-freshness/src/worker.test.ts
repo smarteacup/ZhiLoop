@@ -57,7 +57,7 @@ describe("KnowledgeFreshnessWorker", () => {
     const worker = new KnowledgeFreshnessWorker(store, { verifyBatch });
     const first = await worker.run(changes());
     expect(first.items[0]).toMatchObject({ writeStatus: "TRANSITIONED", plan: { action: "REFRESH_FINGERPRINT" }, state: { status: "FRESH", revision: 1 } });
-    expect((await worker.run(changes())).items[0]).toMatchObject({ writeStatus: "IDEMPOTENT", state: { revision: 1 } });
+    expect(await worker.run(changes())).toMatchObject({ bounded: false, affectedCount: 0, items: [] });
     status = "REFUTED";
     const conflict = await worker.run(changes("git:head-3"));
     expect(conflict.items[0]).toMatchObject({ plan: { action: "MARK_STALE", preserveBody: true }, state: { status: "CONFLICT", revision: 2 } });
@@ -71,6 +71,11 @@ describe("KnowledgeFreshnessWorker", () => {
       results: Object.fromEntries(input.items.map((item) => [item.assetId, [result(item.assetId.slice(6), "UNKNOWN")]])),
     }) }).run(changes(), 1);
     expect(bounded).toMatchObject({ bounded: true, affectedCount: 1, items: [{ state: { status: "UNKNOWN" } }] });
+    const remainder = await new KnowledgeFreshnessWorker(store, { verifyBatch: async (input) => ({
+      projectId: input.projectId, codeRevision: input.changes.sourceRef, observedAt: at,
+      results: Object.fromEntries(input.items.map((item) => [item.assetId, [result(item.assetId.slice(6), "UNKNOWN")]])),
+    }) }).run(changes(), 1);
+    expect(remainder).toMatchObject({ bounded: false, affectedCount: 1 });
 
     const before = store.getState("asset-one")?.revision;
     const cases: Array<[string, readonly VerificationResult[], string]> = [

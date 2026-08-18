@@ -94,6 +94,7 @@ describe("SqliteKnowledgeFreshnessStore", () => {
     };
     expect(store.transition(transition)).toMatchObject({ status: "TRANSITIONED", state: { revision: 1, status: "REVALIDATE" } });
     expect(store.transition(transition)).toMatchObject({ status: "IDEMPOTENT", state: { revision: 1 } });
+    expect(store.affected(changes()).items).toHaveLength(0);
     expect(store.get("asset-1")?.freshnessStatus).toBe("REVALIDATE");
     expect(store.listStateEvents("asset-1", 1)).toMatchObject([{ revision: 1, previousStatus: "FRESH", status: "REVALIDATE" }]);
     expect(() => store.transition({ ...transition, status: "CONFLICT", codeRevision: "git:head-3" }))

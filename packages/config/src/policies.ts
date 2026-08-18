@@ -1,4 +1,4 @@
-import { ASSERTION_KINDS } from "@zhiloop/domain";
+import { ASSERTION_KINDS, KNOWLEDGE_KINDS } from "@zhiloop/domain";
 import { z } from "zod";
 
 const supportedEligibilityStatuses = ["VERIFIED", "IMPLEMENTED", "ACCEPTED"] as const;
@@ -238,7 +238,7 @@ export const retentionPolicySchema = z.strictObject({
   storeTranscriptBody: z.literal(false),
 });
 
-export const configurationSchema = z.strictObject({
+export const legacyConfigurationSchema = z.strictObject({
   version: z.literal(1),
   verification: verificationPolicySchema,
   retrieval: retrievalPolicySchema,
@@ -248,12 +248,133 @@ export const configurationSchema = z.strictObject({
   retention: retentionPolicySchema,
 });
 
+export const compilationPolicySchema = z.strictObject({
+  enabled: z.boolean(),
+  mode: z.enum(["PREVIEW_ONLY", "POLICY_EVALUATION", "SAFE_AUTO_PUBLICATION"]),
+  triggers: z.strictObject({
+    minNewTurns: integer(1, 100),
+    idleMs: integer(1_000, 86_400_000),
+    onSessionEnd: z.boolean(),
+    maxWaitMs: integer(1_000, 86_400_000),
+    minNewEvents: integer(1, 1_000),
+  }),
+  worker: z.strictObject({
+    pollIntervalMs: integer(100, 60_000),
+    concurrency: integer(1, 8),
+    retry: z.strictObject({
+      maxAttempts: integer(1, 20),
+      baseDelayMs: integer(100, 300_000),
+      maximumDelayMs: integer(100, 3_600_000),
+      jitterRatio: z.number().min(0).max(1),
+    }),
+  }),
+  publication: z.strictObject({
+    enabled: z.boolean(),
+    allowedKinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length),
+    allowedProjectIds: z.array(z.string().min(1).max(200)).max(100),
+    requireFreshCodeEvidence: z.literal(true),
+    goldenDatasetId: z.string().min(1).max(200).optional(),
+    goldenDatasetVersion: integer(1, 1_000_000).optional(),
+    goldenConfigFingerprint: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  }),
+}).superRefine((policy, context) => {
+  if (policy.worker.retry.baseDelayMs > policy.worker.retry.maximumDelayMs) {
+    context.addIssue({ code: "custom", path: ["worker", "retry", "baseDelayMs"], message: "baseDelayMs must not exceed maximumDelayMs" });
+  }
+  if (policy.triggers.idleMs > policy.triggers.maxWaitMs) {
+    context.addIssue({ code: "custom", path: ["triggers", "idleMs"], message: "idleMs must not exceed maxWaitMs" });
+  }
+  const publicationIdentity = [policy.publication.goldenDatasetId, policy.publication.goldenDatasetVersion, policy.publication.goldenConfigFingerprint];
+  if (publicationIdentity.some((value) => value !== undefined) && publicationIdentity.some((value) => value === undefined)) {
+    context.addIssue({ code: "custom", path: ["publication"], message: "golden publication identity must be configured atomically" });
+  }
+  if (policy.publication.enabled && (policy.mode !== "SAFE_AUTO_PUBLICATION" || policy.publication.allowedKinds.length === 0
+    || policy.publication.allowedProjectIds.length === 0 || publicationIdentity.some((value) => value === undefined))) {
+    context.addIssue({ code: "custom", path: ["publication", "enabled"], message: "automatic publication requires safe mode, allowlists and golden evidence identity" });
+  }
+  if (!policy.publication.enabled && policy.mode === "SAFE_AUTO_PUBLICATION") {
+    context.addIssue({ code: "custom", path: ["mode"], message: "SAFE_AUTO_PUBLICATION requires publication.enabled" });
+  }
+  if (new Set(policy.publication.allowedKinds).size !== policy.publication.allowedKinds.length
+    || new Set(policy.publication.allowedProjectIds).size !== policy.publication.allowedProjectIds.length) {
+    context.addIssue({ code: "custom", path: ["publication"], message: "publication allowlists must be unique" });
+  }
+});
+
+export const evolutionPolicySchema = z.strictObject({
+  maxMatchCandidates: integer(1, 20),
+  semanticJudgeEnabled: z.boolean(),
+  failClosed: z.literal(true),
+});
+
+export const codeIntelligencePolicySchema = z.strictObject({
+  provider: z.literal("codegraph"),
+  initializeAutomatically: z.literal(false),
+  queryTimeoutMs: integer(10, 10_000),
+  circuitBreakerFailures: integer(1, 100),
+  circuitBreakerResetMs: integer(1_000, 3_600_000),
+});
+
+export const freshnessPolicySchema = z.strictObject({
+  enabled: z.boolean(),
+  changeDebounceMs: integer(100, 60_000),
+  fallbackScanIntervalMs: integer(10_000, 86_400_000),
+  preInjectionGate: z.literal(true),
+  gateTimeoutMs: integer(10, 1_000),
+  maxAffectedPerJob: integer(1, 10_000),
+});
+
+export const prewarmPolicySchema = z.strictObject({
+  enabled: z.boolean(),
+  onSessionStart: z.boolean(),
+  ttlMs: integer(1_000, 86_400_000),
+  maxItems: integer(1, 50),
+  maxTokens: integer(1, 4_000),
+});
+
+export const evolutionAlertsPolicySchema = z.strictObject({
+  enabled: z.boolean(),
+  onPermanentJobFailure: z.boolean(),
+  onCodeGraphUnavailable: z.boolean(),
+  onStaleKnowledgeDetected: z.boolean(),
+});
+
+export const configurationSchema = z.strictObject({
+  version: z.literal(2),
+  verification: verificationPolicySchema,
+  retrieval: retrievalPolicySchema,
+  injection: injectionPolicySchema,
+  closure: closurePolicySchema,
+  scope: scopePolicySchema,
+  retention: retentionPolicySchema,
+  compilation: compilationPolicySchema,
+  evolution: evolutionPolicySchema,
+  codeIntelligence: codeIntelligencePolicySchema,
+  freshness: freshnessPolicySchema,
+  prewarm: prewarmPolicySchema,
+  alerts: evolutionAlertsPolicySchema,
+}).superRefine((configuration, context) => {
+  if (configuration.prewarm.maxItems > configuration.injection.levels.L1_POINTER.maxItems) {
+    context.addIssue({ code: "custom", path: ["prewarm", "maxItems"], message: "prewarm maxItems must not exceed L1 maxItems" });
+  }
+  if (configuration.prewarm.maxTokens > configuration.injection.defaultMaxTokens) {
+    context.addIssue({ code: "custom", path: ["prewarm", "maxTokens"], message: "prewarm maxTokens must not exceed injection budget" });
+  }
+});
+
 export type VerificationPolicy = z.infer<typeof verificationPolicySchema>;
 export type RetrievalPolicy = z.infer<typeof retrievalPolicySchema>;
 export type InjectionPolicy = z.infer<typeof injectionPolicySchema>;
 export type ClosurePolicy = z.infer<typeof closurePolicySchema>;
 export type ScopePolicy = z.infer<typeof scopePolicySchema>;
 export type RetentionPolicy = z.infer<typeof retentionPolicySchema>;
+export type CompilationPolicy = z.infer<typeof compilationPolicySchema>;
+export type EvolutionPolicy = z.infer<typeof evolutionPolicySchema>;
+export type CodeIntelligencePolicy = z.infer<typeof codeIntelligencePolicySchema>;
+export type FreshnessPolicy = z.infer<typeof freshnessPolicySchema>;
+export type PrewarmPolicy = z.infer<typeof prewarmPolicySchema>;
+export type EvolutionAlertsPolicy = z.infer<typeof evolutionAlertsPolicySchema>;
+export type LegacyZhiLoopConfiguration = z.infer<typeof legacyConfigurationSchema>;
 export type ZhiLoopConfiguration = z.infer<typeof configurationSchema>;
 
 function freezeDefault<T>(value: T): T {
@@ -262,7 +383,7 @@ function freezeDefault<T>(value: T): T {
   return Object.freeze(value);
 }
 
-export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
+export const LEGACY_DEFAULT_CONFIGURATION: LegacyZhiLoopConfiguration = freezeDefault({
   version: 1,
   verification: {
     autoPublish: {
@@ -329,4 +450,21 @@ export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
     tombstoneDays: 365,
     storeTranscriptBody: false,
   },
+});
+
+export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
+  ...LEGACY_DEFAULT_CONFIGURATION,
+  version: 2,
+  compilation: {
+    enabled: true,
+    mode: "PREVIEW_ONLY",
+    triggers: { minNewTurns: 3, idleMs: 120_000, onSessionEnd: true, maxWaitMs: 1_800_000, minNewEvents: 2 },
+    worker: { pollIntervalMs: 1_000, concurrency: 1, retry: { maxAttempts: 5, baseDelayMs: 1_000, maximumDelayMs: 60_000, jitterRatio: 0.2 } },
+    publication: { enabled: false, allowedKinds: [], allowedProjectIds: [], requireFreshCodeEvidence: true },
+  },
+  evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true },
+  codeIntelligence: { provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+  freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
+  prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
+  alerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },
 });

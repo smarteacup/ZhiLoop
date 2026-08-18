@@ -24,6 +24,8 @@
     "@zhiloop/closure-verifier": "0.0.0",
     "@zhiloop/codex-context-injection": "0.0.0",
     "@zhiloop/codex-session-capture": "0.0.0",
+    "@zhiloop/codegraph-adapter": "0.0.0",
+    "@zhiloop/code-intelligence": "0.0.0",
     "@zhiloop/control-api": "0.0.0",
     "@zhiloop/config": "0.0.0",
     "@zhiloop/configuration-service": "0.0.0",

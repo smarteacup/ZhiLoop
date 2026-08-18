@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_CONSOLE_CONFIGURATION, consoleConfigurationSchema, type ConsoleConfiguration } from "./schema.js";
+import { DEFAULT_CONSOLE_CONFIGURATION, consoleConfigurationSchema, migrateConsoleConfiguration, type ConsoleConfiguration } from "./schema.js";
 import type {
   ConfigurationDiagnostic,
   ConfigurationAuditEntry,
@@ -22,6 +22,14 @@ const FUTURE_CAPABILITIES = Object.freeze({
   "future.compilerBatchSize": "knowledge.compile",
   "future.codexQueryTimeoutMs": "codex.query",
   "future.codexQueryConcurrency": "codex.query",
+  "compilation.mode": "knowledge.auto-publication",
+  "compilation.publication.enabled": "knowledge.auto-publication",
+  "compilation.publication.allowedKindsCsv": "knowledge.auto-publication",
+  "compilation.publication.allowedProjectIdsCsv": "knowledge.auto-publication",
+  "compilation.publication.requireFreshCodeEvidence": "knowledge.auto-publication",
+  "compilation.publication.goldenDatasetId": "knowledge.auto-publication",
+  "compilation.publication.goldenDatasetVersion": "knowledge.auto-publication",
+  "compilation.publication.goldenConfigFingerprint": "knowledge.auto-publication",
 } as const);
 const RESTART_PATHS = new Set([
   "runtime.workerPollIntervalMs",
@@ -30,6 +38,13 @@ const RESTART_PATHS = new Set([
   "future.compilerBatchSize",
   "future.codexQueryTimeoutMs",
   "future.codexQueryConcurrency",
+  "evolution.maxMatchCandidates",
+  "evolution.semanticJudgeEnabled",
+  "codeIntelligence.provider",
+  "codeIntelligence.initializeAutomatically",
+  "codeIntelligence.queryTimeoutMs",
+  "codeIntelligence.circuitBreakerFailures",
+  "codeIntelligence.circuitBreakerResetMs",
 ]);
 
 interface RevisionRow {
@@ -250,14 +265,14 @@ export class SqliteConfigurationService {
     this.#assertOpen();
     const global = this.#latest("GLOBAL");
     if (global === undefined) throw new Error("global configuration is missing");
-    const globalConfiguration = deepFreeze(consoleConfigurationSchema.parse(JSON.parse(global.configuration_json) as unknown));
+    const globalConfiguration = deepFreeze(migrateConsoleConfiguration(JSON.parse(global.configuration_json) as unknown));
     const project = projectId === undefined ? undefined : this.#latest("PROJECT", safeProjectId("PROJECT", projectId));
     const projectPaths = project === undefined ? new Set<string>() : new Set(JSON.parse(project.changed_paths_json) as string[]);
     const effective = project === undefined
       ? globalConfiguration
       : overlayPaths(
         globalConfiguration,
-        consoleConfigurationSchema.parse(JSON.parse(project.configuration_json) as unknown),
+        migrateConsoleConfiguration(JSON.parse(project.configuration_json) as unknown),
         [...projectPaths],
       );
     const globalPaths = new Set(JSON.parse(global.changed_paths_json) as string[]);
@@ -346,7 +361,7 @@ export class SqliteConfigurationService {
       baseRevision: row.base_revision,
       scope: row.scope,
       ...(row.project_id === null ? {} : { projectId: row.project_id }),
-      configuration: deepFreeze(consoleConfigurationSchema.parse(JSON.parse(row.configuration_json) as unknown)),
+      configuration: deepFreeze(migrateConsoleConfiguration(JSON.parse(row.configuration_json) as unknown)),
       changedPaths: Object.freeze(JSON.parse(row.changed_paths_json) as string[]),
       requiresRestart: row.requires_restart === 1,
       activatable: row.activatable === 1,

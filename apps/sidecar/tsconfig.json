@@ -15,6 +15,8 @@
     { "path": "../../packages/closure-verifier" },
     { "path": "../../packages/codex-context-injection" },
     { "path": "../../packages/codex-session-capture" },
+    { "path": "../../packages/codegraph-adapter" },
+    { "path": "../../packages/code-intelligence" },
     { "path": "../../packages/control-api" },
     { "path": "../../packages/config" },
     { "path": "../../packages/configuration-service" },

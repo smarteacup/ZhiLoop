@@ -5,7 +5,7 @@ export const runtimeConfigurationSchema = consoleConfigurationSchema.shape.runti
 export const futureConsumerConfigurationSchema = consoleConfigurationSchema.shape.future;
 
 export const DEFAULT_CONSOLE_CONFIGURATION: ConsoleConfiguration = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   runtime: Object.freeze({
     sessionScanIntervalMs: 60_000,
     followDebounceMs: 1_000,
@@ -33,4 +33,53 @@ export const DEFAULT_CONSOLE_CONFIGURATION: ConsoleConfiguration = Object.freeze
     codexQueryTimeoutMs: 30_000,
     codexQueryConcurrency: 2,
   }),
+  compilation: Object.freeze({
+    enabled: true,
+    mode: "PREVIEW_ONLY",
+    minNewTurns: 3,
+    minNewEvents: 2,
+    idleMs: 120_000,
+    maximumWaitMs: 1_800_000,
+    onSessionEnd: true,
+    scanIntervalMs: 1_000,
+    maxSessionsPerRun: 100,
+    maxDispatchesPerRun: 20,
+    publication: Object.freeze({
+      enabled: false,
+      allowedKindsCsv: "",
+      allowedProjectIdsCsv: "",
+      requireFreshCodeEvidence: true,
+      goldenDatasetId: "",
+      goldenDatasetVersion: 0,
+      goldenConfigFingerprint: "",
+    }),
+  }),
+  evolution: Object.freeze({ maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true }),
+  codeIntelligence: Object.freeze({
+    provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250,
+    circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000,
+  }),
+  freshness: Object.freeze({
+    enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000,
+    preInjectionGate: true, gateTimeoutMs: 200, maxAffectedPerJob: 500,
+  }),
+  prewarm: Object.freeze({ enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 }),
+  evolutionAlerts: Object.freeze({
+    enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false,
+  }),
 });
+
+/** Deterministically upgrades persisted Console schema v1 values without weakening strict v2 validation. */
+export function migrateConsoleConfiguration(value: unknown): ConsoleConfiguration {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("console configuration must be an object");
+  const record = value as Record<string, unknown>;
+  if (record["schemaVersion"] === 2) return consoleConfigurationSchema.parse(value);
+  if (record["schemaVersion"] !== 1) throw new Error(`unsupported console configuration schemaVersion: ${String(record["schemaVersion"])}`);
+  const legacyKeys = new Set(["schemaVersion", "runtime", "future"]);
+  if (Object.keys(record).some((key) => !legacyKeys.has(key))) throw new Error("legacy console configuration contains unknown fields");
+  return consoleConfigurationSchema.parse({
+    ...structuredClone(DEFAULT_CONSOLE_CONFIGURATION),
+    ...structuredClone(record),
+    schemaVersion: 2,
+  });
+}

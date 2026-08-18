@@ -883,6 +883,12 @@ flowchart LR
 - 首先按项目、知识类型和用户 opt-in 灰度。
 - 任一错误发布指标越界立即退回 `POLICY_EVALUATION`。
 
+### 2026-08-19 实施状态
+
+M1～M10 已按本设计落地并完成模块级测试：自动 Candidate、执行模式、用户承诺、Evolution、CodeGraph、Freshness 投影/复验、预热/注入门禁、控制台可观测性以及配置 v2 均已接通。生产默认仍为 `PREVIEW_ONLY + SHADOW`。
+
+安全自动发布的逐 Candidate 门禁已经实现并测试；当前在线配置 consumer 故意保持 `NOT_CONFIGURED`，所以不能从控制台开启自动提交。只有后续 Golden 指标达标并显式组合发布 consumer 后，才允许按项目和知识类型灰度启用阶段 6，不得仅通过修改布尔配置绕过。
+
 **可并行边界**：阶段 0 接口冻结后，自动调度、Evolution、CodeGraph Adapter 和控制台只读原型可以并行；Freshness Worker 依赖 CodeGraph/Anchor；自动发布必须最后启用。
 
 ## 16. 后续 OpenSpec 拆分建议

@@ -369,8 +369,14 @@ const captureRetryConfigurationSchema = z.strictObject({
   path: ["baseDelayMs"], message: "baseDelayMs must not exceed maximumDelayMs",
 });
 
+const publicationKindCsvSchema = z.string().max(1_000).refine((value) => value.length === 0 || value.split(",").every((item) =>
+  ["FACT", "REQUIREMENT", "DESIGN", "DECISION", "IMPLEMENTATION", "EXPERIENCE", "RULE", "PREFERENCE", "PROCEDURE", "CONSTRAINT"].includes(item.trim())),
+{ message: "allowedKindsCsv contains an unsupported knowledge kind" });
+const safeCsvSchema = z.string().max(10_000).refine((value) => value.length === 0 || value.split(",").every((item) => /^[A-Za-z0-9._:-]{1,200}$/u.test(item.trim())),
+  { message: "CSV contains an unsafe identifier" });
+
 export const consoleConfigurationSchema = z.strictObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   runtime: z.strictObject({
     sessionScanIntervalMs: configurationInteger(5_000, 86_400_000),
     followDebounceMs: configurationInteger(100, 60_000),
@@ -404,6 +410,59 @@ export const consoleConfigurationSchema = z.strictObject({
     codexQueryTimeoutMs: configurationInteger(1_000, 300_000),
     codexQueryConcurrency: configurationInteger(1, 32),
   }),
+  compilation: z.strictObject({
+    enabled: z.boolean(),
+    mode: z.enum(["PREVIEW_ONLY", "POLICY_EVALUATION", "SAFE_AUTO_PUBLICATION"]),
+    minNewTurns: configurationInteger(1, 100),
+    minNewEvents: configurationInteger(1, 1_000),
+    idleMs: configurationInteger(1_000, 86_400_000),
+    maximumWaitMs: configurationInteger(1_000, 86_400_000),
+    onSessionEnd: z.boolean(),
+    scanIntervalMs: configurationInteger(1_000, 86_400_000),
+    maxSessionsPerRun: configurationInteger(1, 10_000),
+    maxDispatchesPerRun: configurationInteger(1, 1_000),
+    publication: z.strictObject({
+      enabled: z.boolean(),
+      allowedKindsCsv: publicationKindCsvSchema,
+      allowedProjectIdsCsv: safeCsvSchema,
+      requireFreshCodeEvidence: z.literal(true),
+      goldenDatasetId: z.string().max(200),
+      goldenDatasetVersion: configurationInteger(0, 1_000_000),
+      goldenConfigFingerprint: z.string().max(64).refine((value) => value.length === 0 || /^[a-f0-9]{64}$/u.test(value)),
+    }),
+  }),
+  evolution: z.strictObject({ maxMatchCandidates: configurationInteger(1, 20), semanticJudgeEnabled: z.boolean(), failClosed: z.literal(true) }),
+  codeIntelligence: z.strictObject({
+    provider: z.literal("codegraph"), initializeAutomatically: z.literal(false), queryTimeoutMs: configurationInteger(10, 10_000),
+    circuitBreakerFailures: configurationInteger(1, 100), circuitBreakerResetMs: configurationInteger(1_000, 3_600_000),
+  }),
+  freshness: z.strictObject({
+    enabled: z.boolean(), changeDebounceMs: configurationInteger(100, 60_000), fallbackScanIntervalMs: configurationInteger(10_000, 86_400_000),
+    preInjectionGate: z.literal(true), gateTimeoutMs: configurationInteger(10, 1_000), maxAffectedPerJob: configurationInteger(1, 10_000),
+  }),
+  prewarm: z.strictObject({
+    enabled: z.boolean(), onSessionStart: z.boolean(), ttlMs: configurationInteger(1_000, 86_400_000),
+    maxItems: configurationInteger(1, 50), maxTokens: configurationInteger(1, 4_000),
+  }),
+  evolutionAlerts: z.strictObject({
+    enabled: z.boolean(), onPermanentJobFailure: z.boolean(), onCodeGraphUnavailable: z.boolean(), onStaleKnowledgeDetected: z.boolean(),
+  }),
+}).superRefine((configuration, context) => {
+  if (configuration.compilation.idleMs > configuration.compilation.maximumWaitMs) {
+    context.addIssue({ code: "custom", path: ["compilation", "idleMs"], message: "idleMs must not exceed maximumWaitMs" });
+  }
+  const publication = configuration.compilation.publication;
+  const completeEvidence = publication.goldenDatasetId.length > 0 && publication.goldenDatasetVersion > 0 && publication.goldenConfigFingerprint.length === 64;
+  if (publication.enabled && (configuration.compilation.mode !== "SAFE_AUTO_PUBLICATION" || publication.allowedKindsCsv.length === 0
+    || publication.allowedProjectIdsCsv.length === 0 || !completeEvidence)) {
+    context.addIssue({ code: "custom", path: ["compilation", "publication", "enabled"], message: "automatic publication requires safe mode, allowlists and golden evidence" });
+  }
+  if (!publication.enabled && configuration.compilation.mode === "SAFE_AUTO_PUBLICATION") {
+    context.addIssue({ code: "custom", path: ["compilation", "mode"], message: "SAFE_AUTO_PUBLICATION requires publication.enabled" });
+  }
+  if (configuration.prewarm.maxTokens > configuration.future.injectionMaxTokens) {
+    context.addIssue({ code: "custom", path: ["prewarm", "maxTokens"], message: "prewarm maxTokens must not exceed injectionMaxTokens" });
+  }
 });
 
 export const configurationDiagnosticSchema = z.strictObject({

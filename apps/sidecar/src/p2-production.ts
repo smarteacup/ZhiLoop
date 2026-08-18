@@ -200,6 +200,7 @@ export interface P2ProductionCompositionOptions {
   readonly extraction: () => SessionExtractionService;
   readonly compilerTimeoutMs: number;
   readonly compilerBatchSize: number;
+  readonly evolutionMaxCandidates?: number;
   readonly compiler?: KnowledgeExtractionPort;
   readonly compilerExecutable?: string;
   readonly compilerModel?: string;
@@ -298,6 +299,7 @@ export class P2ProductionComposition {
           maxLedgerRecords: MAX_SNAPSHOT_RECORDS,
           maxCandidates: options.compilerBatchSize,
           maxPublishItems: options.compilerBatchSize,
+          maxEvolutionCandidates: options.evolutionMaxCandidates ?? 5,
         },
       }),
     });

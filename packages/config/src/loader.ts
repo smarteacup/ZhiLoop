@@ -6,12 +6,15 @@ import {
   configurationSchema,
   DEFAULT_CONFIGURATION,
   injectionPolicySchema,
+  LEGACY_DEFAULT_CONFIGURATION,
+  legacyConfigurationSchema,
   retentionPolicySchema,
   retrievalPolicySchema,
   scopePolicySchema,
   verificationPolicySchema,
   type ClosurePolicy,
   type InjectionPolicy,
+  type LegacyZhiLoopConfiguration,
   type RetentionPolicy,
   type RetrievalPolicy,
   type ScopePolicy,
@@ -236,7 +239,7 @@ export function loadConfiguration(
 
   if (isPlainObject(deserialized.value)) {
     const version = deserialized.value["version"];
-    if (version !== undefined && version !== 1) {
+    if (version !== undefined && version !== 1 && version !== 2) {
       return {
         ok: false,
         error: {
@@ -246,15 +249,40 @@ export function loadConfiguration(
             {
               path: "$.version",
               code: "unsupported_version",
-              message: "only version 1 is supported",
+              message: "only versions 1 and 2 are supported",
             },
           ],
         },
       };
     }
   }
-
+  const version = isPlainObject(deserialized.value) ? deserialized.value["version"] : undefined;
+  if (version === undefined || version === 1) {
+    const legacy = loadPolicy(deserialized.value, LEGACY_DEFAULT_CONFIGURATION, legacyConfigurationSchema);
+    if (!legacy.ok) return legacy;
+    return { ok: true, value: migrateConfigurationV1(legacy.value) };
+  }
   return loadPolicy(deserialized.value, DEFAULT_CONFIGURATION, configurationSchema);
+}
+
+/** Deterministic, allocation-only v1 to v2 migration. Caller-owned input is never mutated. */
+export function migrateConfigurationV1(input: LegacyZhiLoopConfiguration): ZhiLoopConfiguration {
+  const parsed = legacyConfigurationSchema.parse(cloneConfiguration(input));
+  const migrated = {
+    ...parsed,
+    version: 2 as const,
+    compilation: cloneConfiguration(DEFAULT_CONFIGURATION.compilation),
+    evolution: cloneConfiguration(DEFAULT_CONFIGURATION.evolution),
+    codeIntelligence: cloneConfiguration(DEFAULT_CONFIGURATION.codeIntelligence),
+    freshness: cloneConfiguration(DEFAULT_CONFIGURATION.freshness),
+    prewarm: {
+      ...cloneConfiguration(DEFAULT_CONFIGURATION.prewarm) as typeof DEFAULT_CONFIGURATION.prewarm,
+      maxItems: Math.min(DEFAULT_CONFIGURATION.prewarm.maxItems, parsed.injection.levels.L1_POINTER.maxItems),
+      maxTokens: Math.min(DEFAULT_CONFIGURATION.prewarm.maxTokens, parsed.injection.defaultMaxTokens),
+    },
+    alerts: cloneConfiguration(DEFAULT_CONFIGURATION.alerts),
+  };
+  return deepFreeze(configurationSchema.parse(migrated));
 }
 
 export const loadVerificationPolicy = (input: string | unknown = {}) =>

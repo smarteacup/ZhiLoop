@@ -24,7 +24,7 @@ import {
   type UserPromptInjectionResult,
   type UserPromptSubmitInput,
 } from "@zhiloop/codex-context-injection";
-import { DEFAULT_CONFIGURATION, type ClosurePolicy, type InjectionPolicy, type VerificationPolicy } from "@zhiloop/config";
+import { DEFAULT_CONFIGURATION, type ClosurePolicy, type InjectionPolicy, type PrewarmPolicy, type VerificationPolicy } from "@zhiloop/config";
 import {
   ConfirmationWritebackService,
   SqliteConfirmationWritebackRepository,
@@ -80,10 +80,13 @@ export interface P4ActiveSidecarDependencies {
   readonly rollout: ActiveRolloutService;
   readonly authority: P4AuthoritativeContextPort;
   readonly captureUserPrompt: (input: UserPromptSubmitInput) => void | Promise<void>;
+  readonly observeProject?: (project: { readonly projectId: string; readonly projectRoot: string }) => void | Promise<void>;
+  readonly scanProjectChanges?: () => void | Promise<void>;
   readonly closureEvidence: P4ClosureEvidencePort;
   readonly contextDelta: StopContextDeltaPort;
   readonly confirmationEffects: ConfirmationEffectPort;
   readonly injectionPolicy?: () => InjectionPolicy;
+  readonly prewarmPolicy?: () => PrewarmPolicy;
   readonly closurePolicy?: ClosurePolicy;
   readonly verificationPolicy?: VerificationPolicy;
   readonly semanticClosure?: SemanticClosurePort;
@@ -289,7 +292,6 @@ export class P4ActiveSidecarRuntime {
   readonly #operations: SqliteActiveClosureOperationStore;
   readonly #confirmations: SqliteConfirmationWritebackRepository;
   readonly #prewarmStore: SqliteContextPrewarmStore;
-  readonly #prewarm: ContextPrewarmService;
   readonly #freshnessGate: ProjectionFreshnessGate | undefined;
   readonly #eligibility: RegistryEligibility;
   readonly #mcp: VersionedKnowledgeMcpRuntime;
@@ -304,7 +306,6 @@ export class P4ActiveSidecarRuntime {
     this.#operations = new SqliteActiveClosureOperationStore(join(dependencies.stateDirectory, "p4-closure-operations.sqlite"));
     this.#confirmations = new SqliteConfirmationWritebackRepository(join(dependencies.stateDirectory, "p4-confirmations.sqlite"));
     this.#prewarmStore = new SqliteContextPrewarmStore(join(dependencies.stateDirectory, "context-prewarm.sqlite"));
-    this.#prewarm = new ContextPrewarmService(this.#prewarmStore, { ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 });
     this.#freshnessGate = dependencies.p2.freshnessStore === undefined
       ? undefined : new ProjectionFreshnessGate(dependencies.p2.freshnessStore);
     this.#eligibility = new RegistryEligibility(dependencies.p2.registry, this.#feedback);
@@ -363,7 +364,16 @@ export class P4ActiveSidecarRuntime {
 
   refreshContext(sessionId: string): number {
     this.#assertOpen();
-    return this.#prewarm.refresh(sessionId);
+    return this.#prewarmService().refresh(sessionId);
+  }
+
+  #prewarmService(): ContextPrewarmService {
+    const policy = this.#dependencies.prewarmPolicy?.() ?? DEFAULT_CONFIGURATION.prewarm;
+    return new ContextPrewarmService(this.#prewarmStore, {
+      ttlMs: policy.ttlMs,
+      maxItems: policy.maxItems,
+      maxTokens: policy.maxTokens,
+    });
   }
 
   async inspectKnowledgeEligibility(request: {
@@ -454,12 +464,17 @@ export class P4ActiveSidecarRuntime {
         diagnostic: `${timedOut ? "SCOPE_AUTHORITY_TIMEOUT" : "SCOPE_AUTHORITY_FAILED"}:${safeError(error)}`,
       };
     }
+    if (authority.projectId !== undefined && authority.worktree !== undefined) {
+      void Promise.resolve(this.#dependencies.observeProject?.({ projectId: authority.projectId, projectRoot: authority.worktree })).catch(() => undefined);
+    }
     try {
+      const prewarmPolicy = this.#dependencies.prewarmPolicy?.() ?? DEFAULT_CONFIGURATION.prewarm;
+      if (!prewarmPolicy.enabled || !prewarmPolicy.onSessionStart) throw new Error("CONTEXT_PREWARM_DISABLED");
       const injection = this.#dependencies.injectionPolicy?.() ?? structuredClone(DEFAULT_CONFIGURATION.injection);
       const registryRevision = this.#dependencies.p2.registry.activeIndexVersion;
       const prewarmStartedAt = performance.now();
       await withinRemainingDeadline(
-        async () => await this.#prewarm.prepare({
+        async () => await this.#prewarmService().prepare({
           sessionId: input.session_id,
           projectId: authority.projectId ?? "UNSCOPED",
           worktree: authority.worktree ?? input.cwd,
@@ -571,6 +586,7 @@ export class P4ActiveSidecarRuntime {
   }
 
   async #handleStop(input: StopHookInput): Promise<P4ActiveHookResult> {
+    void Promise.resolve(this.#dependencies.scanProjectChanges?.()).catch(() => undefined);
     if (input.stop_hook_active) {
       return { hookEventName: "Stop", status: "HOOK_ALREADY_ACTIVE", decision: "ASK_USER", diagnostic: "RECURSIVE_STOP_REJECTED" };
     }

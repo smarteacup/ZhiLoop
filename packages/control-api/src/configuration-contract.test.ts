@@ -9,7 +9,7 @@ import {
 } from "./index.js";
 
 const configuration = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   runtime: {
     sessionScanIntervalMs: 60_000,
     followDebounceMs: 1_000,
@@ -32,6 +32,16 @@ const configuration = {
     },
   },
   future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
+  compilation: {
+    enabled: true, mode: "PREVIEW_ONLY", minNewTurns: 3, minNewEvents: 2, idleMs: 120_000, maximumWaitMs: 1_800_000,
+    onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20,
+    publication: { enabled: false, allowedKindsCsv: "", allowedProjectIdsCsv: "", requireFreshCodeEvidence: true, goldenDatasetId: "", goldenDatasetVersion: 0, goldenConfigFingerprint: "" },
+  },
+  evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true },
+  codeIntelligence: { provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+  freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
+  prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
+  evolutionAlerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },
 } as const;
 
 describe("configuration Control API contract", () => {

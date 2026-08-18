@@ -2,16 +2,39 @@
 
 ## 审查统计
 
-| 指标 | 本轮（M9 控制台可观测性） | 累计 |
+| 指标 | 本轮（0.4.0 生产闭环完成度复核） | 累计 |
 |---|---:|---:|
-| Review 次数 | 1 | 10 |
-| 风险发现 | 8 | 77 |
-| 高风险 | 3 | 36 |
-| 中风险 | 4 | 33 |
-| 低风险 | 1 | 8 |
-| 已修复 | 8 | 77 |
-| 未解决 | 0 | 0 |
-| 本轮耗时 | 15 分 00 秒 | 已知耗时 2 小时 11 分 03 秒（首轮历史报告未记录耗时） |
+| Review 次数 | 1 | 11 |
+| 风险发现 | 8 | 85 |
+| 高风险 | 4 | 40 |
+| 中风险 | 4 | 37 |
+| 低风险 | 0 | 8 |
+| 已修复 | 1 | 78 |
+| 未解决 | 7 | 7 |
+| 本轮耗时 | 31 分 00 秒 | 已知耗时 2 小时 42 分 03 秒（首轮历史报告未记录耗时） |
+
+## 0.4.0 生产闭环完成度复核结论
+
+本轮不是重新否定 M1～M10 的模块级实现，而是从 Sidecar 生产组合、真实 consumer、持久化恢复和端到端验收角度复核“是否已经全部接通”。领域包和专项测试仍然成立，但发现 7 个需要后续实现的生产缺口；原设计中“均已接通”的表述已修正，并新增 `docs/design/continuous-knowledge-evolution-production-closure.md` 作为可实施方案。自动发布保持 `NOT_CONFIGURED` 是正确安全边界，不计为缺陷。
+
+## 本轮风险矩阵
+
+| 等级 | 发现 | 生产风险 | 当前处理 |
+|---|---|---|---|
+| 高 | `p2-production.ts` 对非用户断言统一生成 `UNKNOWN/VERIFICATION_SOURCE_UNAVAILABLE` | Candidate 初次生产验证没有消费已实现的 CodeGraph/本地 Probe，代码类知识不能获得真实 Evidence | 未实现；纳入 Production Evidence Hub |
+| 高 | `p2-freshness-runtime.ts` 只组合 `SYMBOL_EXISTS` Probe | 文件、配置、依赖、命令、测试、调用链和影响断言无法保鲜 | 未实现；初次验证与复验统一到 Evidence Hub |
+| 高 | Freshness 使用独立进程内 Scheduler，不使用 Durable Job | Sidecar 崩溃时缺少租约恢复、尝试记录和稳定幂等审计 | 未实现；纳入 Evolution Durable Job Runtime |
+| 高 | `CONFLICT/MARK_STALE` 只形成计划或 Freshness 状态，没有 Repair Draft consumer | 过期知识虽能退出注入，却不能自动进入可审查修复闭环 | 未实现；增加幂等 Repair Draft Job |
+| 中 | `semanticJudgeEnabled` 与 `evolutionAlerts` 已进入配置，但没有生产 consumer | 控制台可能把“字段已保存”误解为“能力已生效” | 未实现；配置必须对账 READY/DEGRADED/NOT_CONFIGURED |
+| 中 | 没有旧代码知识的 Recipe/Freshness 迁移操作 | 升级前知识长期缺失投影，无法证明当前一致性 | 未实现；增加 dry-run/commit/checkpoint/rollback |
+| 中 | CodeGraph 初始化、主动复验、修复和迁移没有完整控制台操作闭环 | 操作员只能看部分结果，无法完成诊断和恢复 | 未实现；纳入操作面和浏览器 Gate |
+| 中 | 原设计状态写成 M1～M10 “均已接通” | 文档声明高于真实生产组合，后续可能错误启动灰度发布 | 已修复：改为分层完成度并链接生产闭环方案 |
+
+## 本轮审查边界
+
+- 已直接核对 M1～M10 OpenSpec、上位设计、Sidecar 生产组合、Evidence/Freshness 类型、Job Runtime 使用点、控制台字段与配置 consumer。
+- 没有把“安全自动发布 consumer 故意未组合”当作缺陷；Golden Gate 通过前继续关闭。
+- 本轮只产出方案和修正文档状态，未提前实现业务代码；7 个未解决项必须在各自 Change 完成后逐条销项。
 
 ## M9 审查结论
 

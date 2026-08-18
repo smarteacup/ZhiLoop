@@ -885,7 +885,9 @@ flowchart LR
 
 ### 2026-08-19 实施状态
 
-M1～M10 已按本设计落地并完成模块级测试：自动 Candidate、执行模式、用户承诺、Evolution、CodeGraph、Freshness 投影/复验、预热/注入门禁、控制台可观测性以及配置 v2 均已接通。生产默认仍为 `PREVIEW_ONLY + SHADOW`。
+M1～M10 的领域模块、基础生产组合和模块级测试已经落地：自动 Candidate、执行模式、用户承诺、确定性 Evolution、CodeGraph 只读适配、Freshness 投影与 Symbol 复验、预热/注入门禁、控制台基础视图以及配置 v2 均可运行。生产默认仍为 `PREVIEW_ONLY + SHADOW`。
+
+完成度复核发现，不能把上述状态表述为“全部生产闭环已经接通”：Candidate 初次生产验证仍未组合真实非用户 Evidence Probe；Freshness 尚未接入完整 Probe 和 Durable Job；Repair Draft、语义裁决 consumer、告警 consumer、旧代码知识迁移、CodeGraph 显式初始化操作及 Golden 发布门禁仍需实施。具体差距、模块接口、迁移和验收顺序见 [持续知识演进生产闭环技术方案](./continuous-knowledge-evolution-production-closure.md)。
 
 安全自动发布的逐 Candidate 门禁已经实现并测试；当前在线配置 consumer 故意保持 `NOT_CONFIGURED`，所以不能从控制台开启自动提交。只有后续 Golden 指标达标并显式组合发布 consumer 后，才允许按项目和知识类型灰度启用阶段 6，不得仅通过修改布尔配置绕过。
 

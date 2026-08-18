@@ -40,6 +40,8 @@ import { P1SidecarRuntime, type P1RuntimeConfiguration } from "./p1-runtime.js";
 import { P2SidecarRuntime } from "./p2-runtime.js";
 import { P2ProductionComposition } from "./p2-production.js";
 import { P2ConsoleRuntime, type P2ConsoleRequest } from "./p2-console.js";
+import { P2AutomaticCompilationRuntime } from "./p2-automatic-compilation.js";
+import { P2AutomaticCompilationAdapter, P2CandidatePreviewCoordinator } from "./p2-preview-coordinator.js";
 import { P3SidecarConsole } from "./p3-console.js";
 import { P4ActiveSidecarRuntime, type P4ActiveHookResult } from "./p4-active-runtime.js";
 import { P4SidecarConsole, type P4ConsoleTransportRequest } from "./p4-console.js";
@@ -87,6 +89,10 @@ function p1Configuration(configuration: ConsoleConfiguration): P1RuntimeConfigur
   });
 }
 
+function consoleConfigurationHash(configuration: ConsoleConfiguration): string {
+  return createHash("sha256").update(JSON.stringify(configuration)).digest("hex");
+}
+
 export class SidecarApplication {
   readonly #runtime: ZhiLoopDaemonRuntime;
   readonly #ledger: SqliteEventLedger;
@@ -101,6 +107,7 @@ export class SidecarApplication {
   #p2Runtime: P2SidecarRuntime | undefined;
   #p2Production: P2ProductionComposition | undefined;
   #p2Console: P2ConsoleRuntime | undefined;
+  #p2AutomaticCompilation: P2AutomaticCompilationRuntime | undefined;
   #p3Console: P3SidecarConsole | undefined;
   #p4Active: P4ActiveSidecarRuntime | undefined;
   #p4Console: P4SidecarConsole | undefined;
@@ -243,6 +250,8 @@ export class SidecarApplication {
     let p1Runtime: P1SidecarRuntime | undefined;
     let p2Runtime: P2SidecarRuntime | undefined;
     let p2Production: P2ProductionComposition | undefined;
+    let p2AutomaticCompilation: P2AutomaticCompilationRuntime | undefined;
+    let p2PreviewCoordinator: P2CandidatePreviewCoordinator | undefined;
     let p3Console: P3SidecarConsole | undefined;
     let p3CodexModelComposed = false;
     let p4Active: P4ActiveSidecarRuntime | undefined;
@@ -264,6 +273,22 @@ export class SidecarApplication {
           apply: async (next) => {
             if (p1Runtime === undefined) throw new Error("P1 runtime is not composed");
             return await p1Runtime.applyConfiguration(p1Configuration(next));
+          },
+        }, {
+          componentId: "p2-automatic-knowledge-compilation",
+          prepare: async () => {
+            if (p2AutomaticCompilation === undefined || p2PreviewCoordinator === undefined) {
+              throw new Error("automatic knowledge compilation runtime is not composed");
+            }
+          },
+          apply: async (next) => {
+            if (p2AutomaticCompilation === undefined || p2PreviewCoordinator === undefined) {
+              throw new Error("automatic knowledge compilation runtime is not composed");
+            }
+            return await p2AutomaticCompilation.applyConfiguration(
+              config.automaticKnowledgeCompilation ?? {},
+              { ...p2PreviewCoordinator.pipelineIdentity(), configurationHash: consoleConfigurationHash(next) },
+            );
           },
         }],
       });
@@ -447,6 +472,34 @@ export class SidecarApplication {
       });
       composedApplication.#p2Runtime = p2Runtime;
       composedApplication.#p2Production = p2Production;
+      p2PreviewCoordinator = new P2CandidatePreviewCoordinator({
+        runtime: p2Runtime,
+        ledger,
+        inspectTranscriptSource: async (sessionId) => {
+          const source = await composedApplication.#controlPlane?.inspectTranscriptSource(sessionId);
+          if (source === undefined) throw new Error("Control plane is unavailable");
+          return source;
+        },
+        configurationHash: () => configuration?.get().hash ?? "",
+      });
+      const automaticAdapter = new P2AutomaticCompilationAdapter(
+        composedApplication.#controlPlane.sessionCatalog(),
+        ledger,
+        p2PreviewCoordinator,
+      );
+      p2AutomaticCompilation = new P2AutomaticCompilationRuntime({
+        stateDirectory: dirname(config.ledgerPath),
+        catalog: composedApplication.#controlPlane.sessionCatalog(),
+        adapter: automaticAdapter,
+        pipeline: p2PreviewCoordinator.pipelineIdentity(),
+        configuration: config.automaticKnowledgeCompilation ?? {},
+        onReport: (report) => {
+          const code = report.diagnostics[0]?.code ?? (report.bounded ? "SESSION_SCAN_BOUNDED" : "COMPLETE");
+          void composedApplication.#log.write({ component: "worker", code: `automatic-knowledge-compilation:${code}`, count: report.queuedSessions }).catch(() => undefined);
+        },
+      });
+      composedApplication.#p2AutomaticCompilation = p2AutomaticCompilation;
+      p2Runtime.setAutomaticCompilationStateProvider(() => p2AutomaticCompilation!.state());
       composedApplication.#p2Console = new P2ConsoleRuntime({
         runtime: p2Runtime,
         production: p2Production,
@@ -457,6 +510,7 @@ export class SidecarApplication {
           return source;
         },
         configurationHash: () => configuration?.get().hash ?? "",
+        previewCoordinator: p2PreviewCoordinator,
       });
       const stateDirectory = dirname(config.ledgerPath);
       const queryModel = config.codexQuery?.enabled === true
@@ -538,6 +592,7 @@ export class SidecarApplication {
       p4Console?.close();
       p4Active?.close();
       p3Console?.close();
+      await p2AutomaticCompilation?.close().catch(() => undefined);
       await p2Runtime?.close().catch(() => undefined);
       p2Production?.close();
       await p1Runtime?.close().catch(() => undefined);
@@ -553,10 +608,12 @@ export class SidecarApplication {
     await this.#runtime.start();
     try {
       await this.#p2Runtime?.start();
+      this.#p2AutomaticCompilation?.start();
       const p2State = this.#p2Runtime?.state();
       if (p2State !== undefined) this.#controlPlane?.setP2RuntimeReady(p2State.knowledgeCompile === "READY");
       if (await this.#p1Runtime?.start()) this.#controlPlane?.setAutomaticIngestionReady();
     } catch (error) {
+      await this.#p2AutomaticCompilation?.stop().catch(() => undefined);
       await this.#runtime.stop();
       throw error;
     }
@@ -754,11 +811,21 @@ export class SidecarApplication {
     return Object.freeze({ ...(await this.#runtime.health()), rolloutMode, socketStatus: "READY" });
   }
 
+  automaticCompilationState() {
+    return this.#p2AutomaticCompilation?.state() ?? Object.freeze({ automaticCompile: "DISABLED" as const });
+  }
+
+  async triggerAutomaticKnowledgeCompilation() {
+    if (this.#p2AutomaticCompilation === undefined) throw new Error("automatic knowledge compilation is not composed");
+    return await this.#p2AutomaticCompilation.trigger();
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     await this.#captureTail;
     await this.#workerTail;
     await this.#p1Runtime?.close();
+    await this.#p2AutomaticCompilation?.close();
     await this.#p2Runtime?.close();
     this.#p4Console?.close();
     this.#p4Active?.close();

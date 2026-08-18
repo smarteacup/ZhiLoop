@@ -1,6 +1,11 @@
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
+import {
+  normalizeKnowledgeCompilationConfiguration,
+  type NormalizedKnowledgeCompilationConfiguration,
+} from "@zhiloop/knowledge-compilation-scheduler";
+
 const MAX_CONFIG_BYTES = 1_048_576;
 
 export interface SidecarConfig {
@@ -21,6 +26,7 @@ export interface SidecarConfig {
     readonly model?: string;
     readonly userConfiguration: "ALLOW" | "IGNORE";
   };
+  readonly automaticKnowledgeCompilation?: NormalizedKnowledgeCompilationConfiguration;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,19 +77,35 @@ function codexQuery(value: unknown): SidecarConfig["codexQuery"] {
   });
 }
 
+function automaticKnowledgeCompilation(value: unknown): NormalizedKnowledgeCompilationConfiguration | undefined {
+  if (value === undefined) return undefined;
+  const allowed = new Set([
+    "enabled", "scanIntervalMs", "minimumNewTurns", "minimumNewEvents", "idleAfterMs", "maximumWaitMs",
+    "retryDelayMs", "pageSize", "maxScanPages", "maxSessionsPerRun", "maxDispatchesPerRun", "checkpointConflictRetries",
+  ]);
+  if (!isRecord(value) || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error("automaticKnowledgeCompilation configuration is invalid");
+  }
+  if (value["enabled"] !== undefined && typeof value["enabled"] !== "boolean") {
+    throw new Error("automaticKnowledgeCompilation.enabled is invalid");
+  }
+  return normalizeKnowledgeCompilationConfiguration(value);
+}
+
 export function parseSidecarConfig(value: unknown): SidecarConfig {
   if (!isRecord(value) || value["schemaVersion"] !== 1) {
     throw new Error("sidecar configuration schemaVersion must be 1");
   }
   const allowed = new Set([
     "schemaVersion", "rolloutMode", "socketPath", "codexSessionsRoot", "ledgerPath", "spoolPath", "logPath",
-    "hookMaxInputBytes", "hookTimeoutMs", "logMaxBytes", "logRetainFiles", "codexQuery",
+    "hookMaxInputBytes", "hookTimeoutMs", "logMaxBytes", "logRetainFiles", "codexQuery", "automaticKnowledgeCompilation",
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("sidecar configuration contains unknown fields");
   if (value["rolloutMode"] !== "SHADOW") {
     throw new Error("this release permits SHADOW rollout only");
   }
   const query = codexQuery(value["codexQuery"]);
+  const compilation = automaticKnowledgeCompilation(value["automaticKnowledgeCompilation"]);
   return Object.freeze({
     schemaVersion: 1,
     rolloutMode: "SHADOW",
@@ -97,6 +119,7 @@ export function parseSidecarConfig(value: unknown): SidecarConfig {
     logMaxBytes: boundedInteger(value["logMaxBytes"] ?? 5_242_880, "logMaxBytes", 1_024, 104_857_600),
     logRetainFiles: boundedInteger(value["logRetainFiles"] ?? 3, "logRetainFiles", 1, 20),
     ...(query === undefined ? {} : { codexQuery: query }),
+    ...(compilation === undefined ? {} : { automaticKnowledgeCompilation: compilation }),
   });
 }
 

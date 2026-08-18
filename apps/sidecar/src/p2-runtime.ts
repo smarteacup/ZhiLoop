@@ -20,6 +20,9 @@ import {
   type WorkerCycleResult,
 } from "@zhiloop/job-runtime";
 import type {
+  KnowledgeCompilationRunReport,
+} from "@zhiloop/knowledge-compilation-scheduler";
+import type {
   KnowledgeWorkerRuntime,
   CandidatePolicyRecord,
   KnowledgeWorkerCheckpoint,
@@ -56,7 +59,8 @@ export interface P2KnowledgeWorkerComposition {
 export interface P2RuntimeState {
   readonly extraction: "READY" | "STOPPED" | "FAILED";
   readonly knowledgeCompile: "READY" | "NOT_CONFIGURED";
-  readonly automaticCompile: "DISABLED";
+  readonly automaticCompile: "READY" | "STOPPED" | "DEGRADED" | "DISABLED";
+  readonly lastAutomaticCompileReport?: KnowledgeCompilationRunReport;
   readonly provenance: "READY" | "FAILED";
 }
 
@@ -147,6 +151,7 @@ export class P2SidecarRuntime {
   #started = false;
   #pollTimer: NodeJS.Timeout | undefined;
   #pollTail: Promise<void> | undefined;
+  #automaticCompilationState: (() => Pick<P2RuntimeState, "automaticCompile" | "lastAutomaticCompileReport">) | undefined;
 
   private constructor(dependencies: P2SidecarRuntimeDependencies) {
     this.#dependencies = dependencies;
@@ -176,12 +181,20 @@ export class P2SidecarRuntime {
 
   public state(): P2RuntimeState {
     this.#assertOpen();
+    const automatic = this.#automaticCompilationState?.() ?? { automaticCompile: "DISABLED" as const };
     return Object.freeze({
       extraction: this.#started ? "READY" : "STOPPED",
       knowledgeCompile: this.#dependencies.knowledgeWorker === undefined ? "NOT_CONFIGURED" : "READY",
-      automaticCompile: "DISABLED",
+      ...automatic,
       provenance: "READY",
     });
+  }
+
+  public setAutomaticCompilationStateProvider(
+    provider: () => Pick<P2RuntimeState, "automaticCompile" | "lastAutomaticCompileReport">,
+  ): void {
+    this.#assertOpen();
+    this.#automaticCompilationState = provider;
   }
 
   public async start(): Promise<void> {

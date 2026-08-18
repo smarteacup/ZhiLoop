@@ -9,6 +9,7 @@
     { "path": "./packages/operational-read-model" },
     { "path": "./packages/job-runtime" },
     { "path": "./packages/automatic-ingestion" },
+    { "path": "./packages/knowledge-compilation-scheduler" },
     { "path": "./packages/configuration-service" },
     { "path": "./packages/observability" },
     { "path": "./packages/ingestion-codex" },

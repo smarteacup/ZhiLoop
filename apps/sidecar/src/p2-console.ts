@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { p2KnowledgeFilterSchema, type CapturePreview, type JobSnapshot, type ProvenanceNode } from "@zhiloop/control-api";
-import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
-import type { TranscriptCursor } from "@zhiloop/codex-session-capture";
-import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
+import type { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import type { EvidenceRef, KnowledgeKind, KnowledgeScope, KnowledgeStatus } from "@zhiloop/domain";
 import {
   GovernanceError,
@@ -11,18 +9,12 @@ import {
   type KnowledgeListFilter,
   type KnowledgeProvenanceRecord,
 } from "@zhiloop/knowledge-governance-service";
-import {
-  snapshotIdempotencyKey,
-} from "@zhiloop/session-extraction";
 
 import type { P2ProductionComposition } from "./p2-production.js";
-import { p2CommitRequest, p2PreviewRequest, type P2SidecarRuntime } from "./p2-runtime.js";
+import { P2CandidatePreviewCoordinator, type P2CandidatePreviewPort } from "./p2-preview-coordinator.js";
+import { p2CommitRequest, type P2SidecarRuntime } from "./p2-runtime.js";
 
-const COMPILER_VERSION = "mvp-compiler-v3";
 const MAX_PROVENANCE_VISITS = 1_000;
-const LEDGER_PAGE_SIZE = 1_000;
-const MAX_MANUAL_EXTRACTION_RECORDS = 5_000;
-const MAX_MANUAL_SEQUENCE_SPAN = 50_000;
 
 export type P2ConsoleRequest =
   | { readonly schemaVersion: 1; readonly requestId: string; readonly type: "p2.session.get"; readonly sessionId: string }
@@ -63,6 +55,7 @@ export interface P2ConsoleRuntimeOptions {
   readonly ledger: SqliteEventLedger;
   readonly inspectTranscriptSource: (sessionId: string) => Promise<CapturePreview>;
   readonly configurationHash: () => string;
+  readonly previewCoordinator?: P2CandidatePreviewPort;
   readonly clock?: () => Date;
 }
 
@@ -209,38 +202,15 @@ function policyStatus(decision: "PUBLISH" | "KEEP_PROPOSED" | "REQUIRE_CONFIRMAT
   return "PROPOSED";
 }
 
-function ledgerRange(ledger: SqliteEventLedger, sessionId: string, from: number, to: number) {
-  const span = to - from + 1;
-  if (span < 1 || span > MAX_MANUAL_SEQUENCE_SPAN) {
-    throw Object.assign(new Error("manual extraction sequence span exceeds the bounded scan limit"), { code: "CONFLICT" });
-  }
-  const records: LedgerEventRecord[] = [];
-  let cursor = from - 1;
-  while (cursor < to && records.length <= MAX_MANUAL_EXTRACTION_RECORDS) {
-    const page = ledger.readAfter(cursor, Math.min(LEDGER_PAGE_SIZE, to - cursor));
-    if (page.length === 0 || page[0]!.sequence !== cursor + 1) {
-      throw Object.assign(new Error("manual extraction ledger range is incomplete"), { code: "CONFLICT" });
-    }
-    for (const item of page) {
-      if (item.sequence > to) break;
-      if (item.event.sessionId === sessionId) records.push(item);
-      if (records.length > MAX_MANUAL_EXTRACTION_RECORDS) break;
-    }
-    cursor = Math.min(page.at(-1)!.sequence, to);
-  }
-  if (records.length > MAX_MANUAL_EXTRACTION_RECORDS) {
-    throw Object.assign(new Error("manual extraction exceeds the maximum snapshot size"), { code: "CONFLICT" });
-  }
-  return records;
-}
-
 export class P2ConsoleRuntime {
   readonly #options: P2ConsoleRuntimeOptions;
   readonly #clock: () => Date;
+  readonly #previewCoordinator: P2CandidatePreviewPort;
 
   constructor(options: P2ConsoleRuntimeOptions) {
     this.#options = options;
     this.#clock = options.clock ?? (() => new Date());
+    this.#previewCoordinator = options.previewCoordinator ?? new P2CandidatePreviewCoordinator(options);
   }
 
   async handle(request: P2ConsoleRequest): Promise<unknown> {
@@ -343,63 +313,17 @@ export class P2ConsoleRuntime {
     if (request.expectedRevision !== revision || request.idempotencyKey !== `extract:${request.sessionId}:${revision}`) {
       throw Object.assign(new Error("session extraction revision is stale"), { code: "STALE_REVISION" });
     }
-    const source = await this.#options.inspectTranscriptSource(request.sessionId);
-    const captured = this.#options.ledger.loadIngestionCursor<TranscriptCursor>(`codex-transcript:${request.sessionId}`);
-    if (captured === undefined || source.projectedEvents !== 0 || source.hasMore
-      || captured.cursor.byteOffset !== source.cursor.byteOffset || captured.cursor.lineNumber !== source.cursor.lineNumber) {
+    const result = await this.#previewCoordinator.coordinate({
+      sessionId: request.sessionId,
+      expectedLedgerSequence: revision,
+      requestId: request.requestId,
+    });
+    if (result.status === "STALE") {
       throw Object.assign(new Error("capture must be current before extraction"), { code: "CONFLICT" });
     }
-    const previous = this.#options.runtime.service().listSnapshots({ sessionId: request.sessionId, limit: 1 }).items[0];
-    const policyHash = hash(DEFAULT_CONFIGURATION.verification);
-    const configurationHash = this.#options.configurationHash();
-    const previousMatchesPipeline = previous !== undefined
-      && previous.transcriptIdentityHash === source.transcriptIdentityHash
-      && previous.compilerVersion === COMPILER_VERSION
-      && previous.policyHash === policyHash
-      && previous.configurationHash === configurationHash;
-    const fromSequence = (previous?.sourceSequence.to ?? 0) + 1;
-    if (fromSequence > revision && previousMatchesPipeline) return this.sessionView(request.sessionId);
-    let records = fromSequence > revision
-      ? []
-      : ledgerRange(this.#options.ledger, request.sessionId, fromSequence, revision);
-    if (records.length === 0 && previousMatchesPipeline) return this.sessionView(request.sessionId);
-    if (records.length === 0 && previous !== undefined) {
-      // A compiler/policy/configuration revision must be able to recompile the
-      // same immutable source range. It creates a new snapshot identity and
-      // never mutates or aliases the previous failed run.
-      records = ledgerRange(
-        this.#options.ledger,
-        request.sessionId,
-        previous.sourceSequence.from,
-        previous.sourceSequence.to,
-      );
+    if (result.status === "INELIGIBLE") {
+      throw Object.assign(new Error("captured session contains no extractable events"), { code: "CONFLICT" });
     }
-    if (records.length === 0) throw Object.assign(new Error("captured session contains no extractable events"), { code: "CONFLICT" });
-    const from = records[0]!.sequence;
-    const to = records.at(-1)!.sequence;
-    const sourceClosed = records.at(-1)?.event.eventType === "session.ended" && source.ignoredRecords === 0;
-    const completeness = {
-      status: sourceClosed ? "COMPLETE_SNAPSHOT" as const : "PARTIAL_SNAPSHOT" as const,
-      sourceClosed,
-      unsupportedEventTypes: source.ignoredRecords === 0 ? [] : ["unsupported_transcript_record"],
-    };
-    const draft = {
-      schemaVersion: 1 as const,
-      requestId: request.requestId,
-      type: "extraction.snapshot.create" as const,
-      sessionId: request.sessionId,
-      expectedCaptureRevision: revision,
-      transcriptIdentityHash: source.transcriptIdentityHash,
-      sourceSequence: { from, to },
-      cursor: source.cursor,
-      completeness,
-      compilerVersion: COMPILER_VERSION,
-      policyHash,
-      configurationHash,
-    };
-    const created = await this.#options.runtime.createSnapshot({ ...draft, idempotencyKey: snapshotIdempotencyKey(draft) });
-    const previewRequest = p2PreviewRequest(created.snapshot, request.requestId);
-    await this.#options.runtime.enqueueCandidatePreview(previewRequest);
     return this.sessionView(request.sessionId);
   }
 

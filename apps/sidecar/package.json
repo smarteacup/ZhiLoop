@@ -37,6 +37,7 @@
     "@zhiloop/job-runtime": "0.0.0",
     "@zhiloop/knowledge-worker-runtime": "0.0.0",
     "@zhiloop/knowledge-compiler": "0.0.0",
+    "@zhiloop/knowledge-compilation-scheduler": "0.0.0",
     "@zhiloop/knowledge-governance-service": "0.0.0",
     "@zhiloop/knowledge-indexer": "0.0.0",
     "@zhiloop/knowledge-mcp": "0.0.0",

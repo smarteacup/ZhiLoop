@@ -13,6 +13,7 @@ import type {
   IngestionCursorRecord,
   LedgerEventRecord,
   RetentionResult,
+  SessionLedgerStats,
 } from "./types.js";
 
 const CURRENT_MIGRATION_VERSION = 1;
@@ -338,6 +339,35 @@ export class SqliteEventLedger {
       SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events WHERE session_id = ?
     `).get(sessionId) as { sequence: number };
     return row.sequence;
+  }
+
+  /** Aggregate session progress without materializing or exposing Ledger payloads. */
+  sessionStats(sessionId: string): SessionLedgerStats {
+    this.#assertOpen();
+    assertSessionId(sessionId);
+    const row = this.#database.prepare(`
+      SELECT
+        COALESCE(MAX(sequence), 0) AS latest_sequence,
+        COUNT(*) AS event_count,
+        COUNT(DISTINCT turn_id) AS turn_count,
+        (SELECT event_type FROM events latest WHERE latest.session_id = ? ORDER BY sequence DESC LIMIT 1) AS latest_event_type,
+        (SELECT occurred_at FROM events latest WHERE latest.session_id = ? ORDER BY sequence DESC LIMIT 1) AS last_occurred_at
+      FROM events WHERE session_id = ?
+    `).get(sessionId, sessionId, sessionId) as {
+      latest_sequence: number;
+      event_count: number;
+      turn_count: number;
+      latest_event_type: EventEnvelope["eventType"] | null;
+      last_occurred_at: string | null;
+    };
+    return Object.freeze({
+      sessionId,
+      latestSequence: row.latest_sequence,
+      eventCount: row.event_count,
+      turnCount: row.turn_count,
+      ...(row.latest_event_type === null ? {} : { latestEventType: row.latest_event_type }),
+      ...(row.last_occurred_at === null ? {} : { lastOccurredAt: row.last_occurred_at }),
+    });
   }
 
   loadIngestionCursor<TCursor = unknown>(ingestionId: string): IngestionCursorRecord<TCursor> | undefined {

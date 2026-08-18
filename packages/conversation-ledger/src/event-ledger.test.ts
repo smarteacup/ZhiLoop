@@ -66,6 +66,29 @@ describe("SQLite Event Ledger", () => {
     ledger.close();
   });
 
+  it("reports bounded session stats without reading payloads", () => {
+    const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
+    ledger.append({ ...event(1), turnId: "turn-1", eventType: "user.prompted" });
+    ledger.append({ ...event(2), turnId: "turn-1", eventType: "turn.stopped" });
+    ledger.append({ ...event(3), turnId: "turn-2", eventType: "session.ended" });
+    ledger.append({ ...event(4), sessionId: "session-ledger-2", turnId: "other-turn" });
+    expect(ledger.sessionStats("session-ledger-1")).toEqual({
+      sessionId: "session-ledger-1",
+      latestSequence: 3,
+      eventCount: 3,
+      turnCount: 2,
+      latestEventType: "session.ended",
+      lastOccurredAt: "2026-08-01T10:00:03.000Z",
+    });
+    expect(ledger.sessionStats("missing")).toEqual({
+      sessionId: "missing",
+      latestSequence: 0,
+      eventCount: 0,
+      turnCount: 0,
+    });
+    ledger.close();
+  });
+
   it("writes and reads a batch of 1000 events in sequence order", () => {
     const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
     const results = ledger.appendBatch(Array.from({ length: 1000 }, (_, index) => event(index + 1)));

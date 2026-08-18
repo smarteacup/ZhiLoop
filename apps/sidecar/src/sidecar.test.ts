@@ -145,6 +145,19 @@ describe("sidecar configuration", () => {
       .toThrow("userConfiguration");
     expect(() => parseSidecarConfig({ ...config, unknownPermission: "cross-project" })).toThrow("unknown fields");
   });
+
+  it("validates bounded automatic knowledge compilation configuration", async () => {
+    const { config } = await temporaryConfig();
+    expect(parseSidecarConfig({
+      ...config,
+      automaticKnowledgeCompilation: { enabled: true, minimumNewTurns: 5, scanIntervalMs: 10_000 },
+    })).toMatchObject({
+      automaticKnowledgeCompilation: { enabled: true, minimumNewTurns: 5, scanIntervalMs: 10_000, minimumNewEvents: 2 },
+    });
+    expect(() => parseSidecarConfig({ ...config, automaticKnowledgeCompilation: { pageSize: 101 } })).toThrow("pageSize");
+    expect(() => parseSidecarConfig({ ...config, automaticKnowledgeCompilation: { enabled: "yes" } })).toThrow("enabled");
+    expect(() => parseSidecarConfig({ ...config, automaticKnowledgeCompilation: { publish: true } })).toThrow("invalid");
+  });
 });
 
 describe("sidecar service", () => {
@@ -152,6 +165,12 @@ describe("sidecar service", () => {
     const { config } = await temporaryConfig();
     const application = await SidecarApplication.create(config);
     await application.start();
+    expect(application.automaticCompilationState().automaticCompile).toBe("READY");
+    await expect(application.triggerAutomaticKnowledgeCompilation()).resolves.toMatchObject({
+      scannedSessions: 0,
+      queuedSessions: 0,
+      failedSessions: 0,
+    });
     const server = await startSidecarServer(config.socketPath, application);
     cleanups.push(async () => { await stopSidecarServer(server, config.socketPath); await application.close(); });
 

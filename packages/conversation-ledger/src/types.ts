@@ -9,6 +9,16 @@ export interface LedgerEventRecord<TPayload = unknown> {
   readonly insertedAt: string;
 }
 
+/** Bounded metadata for background consumers that must not materialize payloads. */
+export interface SessionLedgerStats {
+  readonly sessionId: string;
+  readonly latestSequence: number;
+  readonly eventCount: number;
+  readonly turnCount: number;
+  readonly latestEventType?: EventEnvelope["eventType"];
+  readonly lastOccurredAt?: string;
+}
+
 export type AppendResult =
   | { readonly status: "appended"; readonly sequence: number; readonly redactionCount: number }
   | { readonly status: "duplicate"; readonly sequence: number };

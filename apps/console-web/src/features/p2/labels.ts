@@ -194,6 +194,13 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   COMPILE: "知识编译",
   REPAIR: "知识修复",
   CODEGRAPH: "CodeGraph",
+  COMPILE_EMPTY: "当前没有知识编译任务",
+  REVALIDATION_EMPTY: "当前没有知识复验任务",
+  REPAIR_EMPTY: "当前没有知识修复草稿",
+  FRESHNESS_EMPTY: "当前没有知识保鲜记录",
+  MIGRATION_EMPTY: "当前没有历史迁移任务",
+  ALERT_EMPTY: "当前没有运行告警",
+  INJECTION_READ_MODEL_SEPARATE: "注入记录在召回与注入页面独立展示",
 });
 
 const details: Readonly<Record<string, string>> = Object.freeze({

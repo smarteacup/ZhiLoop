@@ -21,6 +21,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   DISCOVERED_NOT_CAPTURED: "待采集",
   EFFECTIVE: "已生效",
   ELIGIBLE: "符合条件",
+  EMPTY: "暂无记录",
   ERROR: "错误",
   FAILED: "失败",
   FRESH: "数据新鲜",

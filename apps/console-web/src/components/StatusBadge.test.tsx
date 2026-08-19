@@ -12,6 +12,7 @@ describe("StatusBadge", () => {
     const badge = screen.getByText("已采集至最新");
     expect(badge.getAttribute("title")).toBe("CAPTURED_CURRENT");
     expect(statusLabel("CAPTURED_PARTIAL")).toBe("部分采集");
+    expect(statusLabel("EMPTY")).toBe("暂无记录");
   });
 
   it("falls back to an unknown protocol value without inventing a translation", () => {

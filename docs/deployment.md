@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.4.1
+npm run release:local -- --output /absolute/path/to/zhiloop-0.4.2
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,14 +52,14 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.4.1
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.4.1 --json
+  install --artifact /absolute/path/to/zhiloop-0.4.2 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.4.1 \
+  install --artifact /absolute/path/to/zhiloop-0.4.2 \
   --codex-executable /absolute/path/to/codex --apply --json
 ```
 

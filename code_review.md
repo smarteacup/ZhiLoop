@@ -48,7 +48,7 @@
 | 中 | `apps/sidecar/src/p2-codegraph-lifecycle.ts` repository boundary | 已观察 root 未验证 POSIX 文件 owner | 当前用户可能对其他用户拥有的目录执行索引写入 | 在 realpath/目录校验后要求 `stats.uid === process.getuid()`；非 POSIX 保持兼容 |
 | 低 | Alert/Migration 页面 | 首版只显示 next cursor/ordinal，无继续操作入口 | 操作者无法查看安全上限后的记录 | 增加“下一页”操作并只使用服务端游标；UI 测试验证参数透传 |
 | 低 | `StatusBadge` / P2 labels | 未知未来枚举直接显示纯英文 | 不符合中文安全回退要求，且易被误认为正常原始状态 | 显示“未知状态（RAW）”，同时 `title`/诊断代码保留原值；组件测试更新 |
-| 低 | 总览浏览器冒烟 | 已知 `EMPTY` 与八区域空态原因落入“未知状态”兜底 | 页面可用但违背已知枚举中文化验收标准 | 补齐状态和原因码中文映射；原始码继续保留在 `title`；0.4.2 浏览器复验 |
+| 低 | 总览/会话浏览器冒烟 | 已知 `EMPTY`、八区域空态与会话采集状态落入“未知状态”兜底 | 页面可用但违背已知枚举中文化验收标准 | 已知操作码先查 P2 语义表，再统一回退状态中文表；原始码继续保留在 `title`；0.4.3 浏览器复验 |
 
 ## Evolution Operations Console 配置检查
 
@@ -62,7 +62,7 @@
 | ESLint、TypeScript build/test typecheck | 通过 |
 | Architecture/P0～P7/隔离部署 | 60/60 通过 |
 | Vitest | 201 files，1,692/1,692 通过 |
-| Coverage | statements 90.01%，branches 85.00%，functions 92.20%，lines 93.87% |
+| Coverage | statements 90.02%，branches 85.01%，functions 92.20%，lines 93.87% |
 | 当前未解决风险 | 0 |
 
 ## Legacy Code Knowledge Migration 审查结论

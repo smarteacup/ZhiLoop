@@ -1,6 +1,6 @@
 # 演进运维控制台实施报告
 
-**交付版本**：ZhiLoop 0.4.2
+**交付版本**：ZhiLoop 0.4.3
 **完成日期**：2026-08-19  
 **OpenSpec Change**：`complete-evolution-operations-console`
 
@@ -58,7 +58,7 @@
 | ESLint、TypeScript build/test typecheck | 通过 |
 | Architecture/P0～P7/隔离部署 Gate | 60/60 通过 |
 | Vitest 单元/集成/UI/安全测试 | 201 files，1,692/1,692 通过 |
-| Coverage | statements 90.01%，branches 85.00%，functions 92.20%，lines 93.87% |
+| Coverage | statements 90.02%，branches 85.01%，functions 92.20%，lines 93.87% |
 | CodeGraph 真实 Job 回归 | preview、commit、初始化、status/version/query smoke、READY 发布与过期后幂等重放通过 |
 | HTTP 安全边界 | Session、Origin、CSRF、严格字段、大小/分页边界和 malformed request 测试通过 |
 

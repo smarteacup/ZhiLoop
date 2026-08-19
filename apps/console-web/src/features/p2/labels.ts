@@ -1,3 +1,5 @@
+import { statusLabel } from "../../components/StatusBadge.js";
+
 const labels: Readonly<Record<string, string>> = Object.freeze({
   SNAPSHOT: "快照固化",
   CANDIDATE_PREVIEW: "候选知识生成",
@@ -221,7 +223,7 @@ const details: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export function p2EnumLabel(value: string): string {
-  return labels[value] ?? `未知状态（${value}）`;
+  return labels[value] ?? statusLabel(value);
 }
 
 export function p2ReasonDetail(value: string): string | undefined {
@@ -229,5 +231,5 @@ export function p2ReasonDetail(value: string): string | undefined {
 }
 
 export function operationLabel(value: string): string {
-  return labels[value] ?? `未知状态（${value}）`;
+  return labels[value] ?? statusLabel(value);
 }

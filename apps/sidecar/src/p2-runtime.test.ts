@@ -104,7 +104,7 @@ function workerCheckpoint(
     status,
     createdAt: now,
     updatedAt: now,
-    stages: (status === "FAILED" ? {
+    stages: (status === "FAILED" || status === "RETRYABLE" ? {
       COMPILE: {
         status: "FAILED",
         attempts: 5,
@@ -135,7 +135,7 @@ function knowledgeWorker(options: { failCommitOnce?: boolean; failPreview?: bool
       run: async (_request, runOptions) => {
         if (snapshot === undefined) throw new Error("requestFor was not called");
         if (runOptions?.executionMode === "PREVIEW_ONLY") {
-          return workerCheckpoint(snapshot, options.failPreview === true ? "FAILED" : "AWAITING_COMMIT");
+          return workerCheckpoint(snapshot, options.failPreview === true ? "RETRYABLE" : "AWAITING_COMMIT");
         }
         if (runOptions?.executionMode !== "SAFE_AUTO_PUBLICATION"
           || runOptions.publicationAuthorization?.kind !== "EXPLICIT_COMMIT"
@@ -266,9 +266,10 @@ describe("P2SidecarRuntime", () => {
       const job = await runtime.enqueueCandidatePreview(p2PreviewRequest(created.snapshot, "preview-failed"));
       const failed = await waitFor(
         () => projected.find((snapshot) => snapshot.jobId === job.jobId && snapshot.status === "FAILED"),
-        5_000,
+        8_000,
       );
       expect(failed.lastFailure?.retryable).toBe(true);
+      expect(failed.lastFailure?.code).toBe("COMPILER_ADAPTER_UNAVAILABLE");
       expect(runtime.candidatePreviewJobForSnapshot(created.snapshot.snapshotId)).toMatchObject({
         jobId: job.jobId,
         status: "FAILED",
@@ -286,7 +287,7 @@ describe("P2SidecarRuntime", () => {
     } finally {
       await runtime.close();
     }
-  });
+  }, 10_000);
 
   it("rejects a stale source revision before it can persist a snapshot", async () => {
     const directory = await mkdtemp(join(tmpdir(), "zhiloop-p2-stale-"));

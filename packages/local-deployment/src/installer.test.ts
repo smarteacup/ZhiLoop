@@ -187,6 +187,27 @@ describe("local installer", () => {
     expect(service.calls).toEqual([]);
   });
 
+  it("keeps the default readiness window open for a slow but healthy sidecar startup", async () => {
+    const targetHome = await home();
+    const source = await artifact(targetHome);
+    const service = new FakeService();
+    let checks = 0;
+
+    await expect(installLocalRelease({
+      home: targetHome,
+      artifactDirectory: source,
+      service,
+      health: { health: async () => {
+        checks += 1;
+        return checks < 70 ? { ...ready(), status: "DEGRADED" } : ready();
+      } },
+      compatibility,
+      hookTrustControl,
+      readinessDelayMs: 0,
+    })).resolves.toMatchObject({ journal: { state: "COMMITTED" } });
+    expect(checks).toBe(70);
+  });
+
   it("binds an explicit regular Codex executable and rejects unsafe bindings", async () => {
     const targetHome = await home();
     const source = await artifact(targetHome);
@@ -206,7 +227,7 @@ describe("local installer", () => {
     });
     const paths = resolveDeploymentPaths(targetHome, "0.1.0");
     expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
-      codexQuery: { enabled: true, executable, userConfiguration: "ALLOW" },
+      codexQuery: { enabled: true, executable, userConfiguration: "IGNORE" },
     });
     await installLocalRelease({
       home: targetHome,
@@ -219,7 +240,7 @@ describe("local installer", () => {
       readinessDelayMs: 0,
     });
     expect(JSON.parse(await readFile(paths.configPath, "utf8"))).toMatchObject({
-      codexQuery: { enabled: true, executable, userConfiguration: "ALLOW" },
+      codexQuery: { enabled: true, executable, userConfiguration: "IGNORE" },
     });
     const invalidInherited = JSON.parse(await readFile(paths.configPath, "utf8")) as Record<string, unknown>;
     invalidInherited["codexQuery"] = { enabled: false, executable };

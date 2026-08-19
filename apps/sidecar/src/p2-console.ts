@@ -364,6 +364,7 @@ export class P2ConsoleRuntime {
       sessionId: request.sessionId,
       expectedLedgerSequence: revision,
       requestId: request.requestId,
+      priority: "INTERACTIVE",
     });
     if (result.status === "STALE") {
       throw Object.assign(new Error("capture must be current before extraction"), { code: "CONFLICT" });

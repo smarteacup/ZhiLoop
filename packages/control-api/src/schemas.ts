@@ -421,6 +421,7 @@ export const consoleConfigurationSchema = z.strictObject({
     scanIntervalMs: configurationInteger(1_000, 86_400_000),
     maxSessionsPerRun: configurationInteger(1, 10_000),
     maxDispatchesPerRun: configurationInteger(1, 1_000),
+    maxOutstandingJobs: configurationInteger(1, 1_000).default(2),
     publication: z.strictObject({
       enabled: z.boolean(),
       allowedKindsCsv: publicationKindCsvSchema,

@@ -59,6 +59,7 @@ flowchart LR
 | `maxScanPages` | `50` | 每轮最大扫描页数 |
 | `maxSessionsPerRun` | `1000` | 每轮最大处理会话数 |
 | `maxDispatchesPerRun` | `25` | 每轮最大 Preview 投递数 |
+| `maxOutstandingJobs` | `2` | 自动编译允许的全局未完成任务上限；手动提取不受该背压限制并使用交互优先级 |
 | `checkpointConflictRetries` | `3` | CAS 冲突重算次数 |
 
 配置位于 Sidecar 配置根节点的 `automaticKnowledgeCompilation`。解析器拒绝未知字段、非整数和越界值；热更新会先构造并验证候选 Runtime，失败时回滚并继续使用旧配置。
@@ -98,4 +99,3 @@ P2 状态提供：
 - Coordinator/Adapter：覆盖真实 P2 Worker、当前范围、流水线重编译、伪造幂等键、源变化和 PREVIEW_ONLY 门禁。
 - Sidecar：覆盖启用、禁用、降级、重启、关闭排空和非法热更新回滚。
 - 全量回归：154 个测试文件、1,329 项测试通过；Statements 90.21%、Branches 85%、Functions 91.84%、Lines 93.76%。
-

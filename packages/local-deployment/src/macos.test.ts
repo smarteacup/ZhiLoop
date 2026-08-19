@@ -80,12 +80,29 @@ describe("macOS deployment adapter", () => {
       sleep: async (milliseconds) => { sleeps.push(milliseconds); },
     });
     await expect(delayed.bootout()).resolves.toBeUndefined();
-    expect(sleeps).toEqual([100, 200]);
+    expect(sleeps).toEqual([250, 250]);
     const absent = new MacOsLaunchctlController(501, { run: async () => ({ code: 113, stderr: "No such process" }) });
     await expect(absent.bootout()).resolves.toBeUndefined();
     const denied = new MacOsLaunchctlController(501, { run: async () => ({ code: 1, stderr: "permission denied" }) });
     await expect(denied.bootout()).rejects.toThrow("permission denied");
     const stuck = new MacOsLaunchctlController(501, { run: async (args) => args[0] === "bootout" ? { code: 0, stderr: "" } : { code: 0, stderr: "" }, sleep: async () => undefined });
     await expect(stuck.bootout()).rejects.toThrow("did not reach STOPPED");
+  });
+
+  it("allows launchd's configured exit window before declaring bootout stuck", async () => {
+    let statusChecks = 0;
+    const controller = new MacOsLaunchctlController(501, {
+      run: async (args) => {
+        if (args[0] === "bootout") return { code: 0, stderr: "" };
+        statusChecks += 1;
+        return statusChecks < 12
+          ? { code: 0, stderr: "" }
+          : { code: 113, stderr: "Could not find service" };
+      },
+      sleep: async () => undefined,
+    });
+
+    await expect(controller.bootout()).resolves.toBeUndefined();
+    expect(statusChecks).toBe(12);
   });
 });

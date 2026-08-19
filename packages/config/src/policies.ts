@@ -463,7 +463,7 @@ export const DEFAULT_CONFIGURATION: ZhiLoopConfiguration = freezeDefault({
     publication: { enabled: false, allowedKinds: [], allowedProjectIds: [], requireFreshCodeEvidence: true },
   },
   evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: false, failClosed: true },
-  codeIntelligence: { provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
+  codeIntelligence: { provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 2_000, circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000 },
   freshness: { enabled: true, changeDebounceMs: 1_000, fallbackScanIntervalMs: 3_600_000, preInjectionGate: true, gateTimeoutMs: 200, maxAffectedPerJob: 500 },
   prewarm: { enabled: true, onSessionStart: true, ttlMs: 1_800_000, maxItems: 8, maxTokens: 800 },
   alerts: { enabled: false, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false },

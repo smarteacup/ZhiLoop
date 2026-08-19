@@ -50,6 +50,7 @@ export function normalizeKnowledgeCompilationConfiguration(
     maxScanPages: boundedInteger(input.maxScanPages, 50, 1, 1_000, "maxScanPages"),
     maxSessionsPerRun: boundedInteger(input.maxSessionsPerRun, 1_000, 1, 50_000, "maxSessionsPerRun"),
     maxDispatchesPerRun: boundedInteger(input.maxDispatchesPerRun, 25, 1, 1_000, "maxDispatchesPerRun"),
+    maxOutstandingJobs: boundedInteger(input.maxOutstandingJobs, 2, 1, 1_000, "maxOutstandingJobs"),
     checkpointConflictRetries: boundedInteger(input.checkpointConflictRetries, 3, 1, 10, "checkpointConflictRetries"),
   });
 }

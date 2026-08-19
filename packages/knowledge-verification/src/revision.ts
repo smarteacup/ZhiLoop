@@ -23,6 +23,13 @@ export interface ProjectFingerprintPort {
 }
 
 const IGNORED_DIRECTORIES = new Set([".git", ".codegraph", ".zhiloop", "node_modules"]);
+const GIT_STATUS_SOURCE_PATHSPEC = [
+  ".",
+  ":(exclude).codegraph",
+  ":(exclude).codegraph/**",
+  ":(exclude).zhiloop",
+  ":(exclude).zhiloop/**",
+] as const;
 
 export class NodeBoundedProjectFingerprint implements ProjectFingerprintPort {
   constructor(
@@ -134,7 +141,9 @@ export class GitProjectRevisionPort implements ProjectRevisionPort {
       capability: "DEGRADED", reasonCode: "PROJECT_ROOT_UNAVAILABLE" });
     const [head, status] = await Promise.all([
       this.process.run(root, ["rev-parse", "--verify", "HEAD"], this.timeoutMs, 1_024),
-      this.process.run(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], this.timeoutMs, this.maxOutputBytes),
+      this.process.run(root, [
+        "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...GIT_STATUS_SOURCE_PATHSPEC,
+      ], this.timeoutMs, this.maxOutputBytes),
     ]);
     if (head.exitCode !== 0 || status.exitCode !== 0 || head.timedOut || status.timedOut || head.outputExceeded || status.outputExceeded) {
       return this.#fallbackRevision(root, project.projectId);

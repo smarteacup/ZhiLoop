@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
 import type { EventEnvelope } from "@zhiloop/domain";
 import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import {
@@ -151,6 +156,7 @@ describe("P2AutomaticCompilationAdapter", () => {
       sessionId: "session-1",
       expectedLedgerSequence: 3,
       requestId: expect.stringMatching(/^auto-[a-f0-9]{64}$/u),
+      priority: "BACKGROUND",
     });
 
     current = catalogEntry({ sourceVersion: "source-v2" });
@@ -222,10 +228,15 @@ describe("P2CandidatePreviewCoordinator", () => {
       configurationHash: () => configurationHash,
     });
     expect(ledger.readAfter(0).map((record) => record.sequence)).toEqual([1, 3, 4]);
-    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "first" }))
+    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "first", priority: "BACKGROUND" }))
       .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 4 });
-    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "current" }))
+    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "current", priority: "INTERACTIVE" }))
       .resolves.toEqual({ status: "CURRENT", compiledThroughSequence: 4 });
+    const jobs = new DatabaseSync(join(stateDirectory, "p2-jobs.sqlite"));
+    const priority = jobs.prepare("SELECT priority FROM durable_jobs WHERE job_type='CANDIDATE_PREVIEW' ORDER BY created_at LIMIT 1")
+      .get() as { priority: number };
+    jobs.close();
+    expect(priority.priority).toBe(20);
     configurationHash = "d".repeat(64);
     await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "recompile" }))
       .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 4 });
@@ -287,6 +298,3 @@ describe("P2CandidatePreviewCoordinator", () => {
     ledger.close();
   });
 });
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";

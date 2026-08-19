@@ -83,7 +83,7 @@ function automaticKnowledgeCompilation(value: unknown): NormalizedKnowledgeCompi
   if (value === undefined) return undefined;
   const allowed = new Set([
     "enabled", "scanIntervalMs", "minimumNewTurns", "minimumNewEvents", "idleAfterMs", "maximumWaitMs",
-    "retryDelayMs", "pageSize", "maxScanPages", "maxSessionsPerRun", "maxDispatchesPerRun", "checkpointConflictRetries",
+    "retryDelayMs", "pageSize", "maxScanPages", "maxSessionsPerRun", "maxDispatchesPerRun", "maxOutstandingJobs", "checkpointConflictRetries",
   ]);
   if (!isRecord(value) || Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error("automaticKnowledgeCompilation configuration is invalid");

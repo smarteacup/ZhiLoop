@@ -58,6 +58,69 @@ function enqueue(store: SqliteDurableJobStore, suffix = "one", maxAttempts = 3) 
 }
 
 describe("durable job identity and persistence", () => {
+  it("migrates a version 2 queue to prioritized claims without losing queued work", async () => {
+    const test = await fixture();
+    const store = test.create();
+    const existing = enqueue(store, "migration-v2").job.snapshot;
+    store.close();
+
+    const legacy = new DatabaseSync(test.database);
+    legacy.exec(`
+      DROP INDEX durable_jobs_claim_idx;
+      ALTER TABLE durable_jobs DROP COLUMN priority;
+      CREATE INDEX durable_jobs_claim_idx
+        ON durable_jobs(status, next_attempt_at_ms, lease_expires_at_ms, created_at_ms, job_id);
+      UPDATE durable_job_meta SET version=2 WHERE component='job-runtime';
+    `);
+    legacy.close();
+
+    const migrated = test.create();
+    expect(migrated.get(existing.jobId)).toMatchObject({ snapshot: { jobId: existing.jobId, status: "QUEUED" } });
+    const database = new DatabaseSync(test.database);
+    const meta = database.prepare("SELECT version FROM durable_job_meta WHERE component='job-runtime'").get() as { version: number };
+    const index = database.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='durable_jobs_claim_idx'").get() as { sql: string };
+    database.close();
+    expect(meta.version).toBe(3);
+    expect(index.sql).toContain("priority DESC");
+    expect(migrated.claimNext("worker", 100)).toMatchObject({ status: "ACQUIRED", claim: { jobId: existing.jobId } });
+    migrated.close();
+  });
+
+  it("claims interactive work ahead of normal and background backlog", async () => {
+    const test = await fixture();
+    const store = test.create();
+    const background = store.enqueue({ jobType: "BACKFILL", idempotencyKey: "priority:background",
+      input: { id: "background" }, maxAttempts: 3, priority: "BACKGROUND" }).job.snapshot;
+    test.advance(1);
+    const normal = enqueue(store, "normal").job.snapshot;
+    test.advance(1);
+    const interactive = store.enqueue({ jobType: "BACKFILL", idempotencyKey: "priority:interactive",
+      input: { id: "interactive" }, maxAttempts: 3, priority: "INTERACTIVE" }).job.snapshot;
+
+    const order = [interactive.jobId, normal.jobId, background.jobId];
+    for (const jobId of order) {
+      const claimed = store.claimNext("worker", 100);
+      expect(claimed).toMatchObject({ status: "ACQUIRED", claim: { jobId } });
+      if (claimed.status === "ACQUIRED") store.succeed(claimed.claim);
+    }
+    store.close();
+  });
+
+  it("promotes an existing background job when an interactive caller requests the same work", async () => {
+    const test = await fixture();
+    const store = test.create();
+    store.enqueue({ jobType: "BACKFILL", idempotencyKey: "priority:promote",
+      input: { id: "same" }, maxAttempts: 3, priority: "BACKGROUND" });
+    const normal = enqueue(store, "normal-after-background").job.snapshot;
+    expect(store.enqueue({ jobType: "BACKFILL", idempotencyKey: "priority:promote",
+      input: { id: "same" }, maxAttempts: 3, priority: "INTERACTIVE" })).toMatchObject({ status: "EXISTING" });
+    const claimed = store.claimNext("worker", 100);
+    expect(claimed).toMatchObject({ status: "ACQUIRED" });
+    if (claimed.status !== "ACQUIRED") throw new Error("expected promoted claim");
+    expect(claimed.claim.jobId).not.toBe(normal.jobId);
+    store.close();
+  });
+
   it("returns the original durable job for a semantic duplicate and rejects a conflicting key", async () => {
     const test = await fixture();
     const store = test.create();
@@ -353,6 +416,29 @@ describe("retry and side-effect idempotency", () => {
     store.close();
   });
 
+  it("orders eligible queued and retry jobs by ready time so one failure cannot starve the queue", async () => {
+    const test = await fixture({ retryBaseMs: 100 });
+    const store = test.create();
+    enqueue(store, "failing");
+    const failing = store.claimNext("worker", 100);
+    if (failing.status !== "ACQUIRED") throw new Error("expected failing claim");
+    store.fail(failing.claim, { code: "SOURCE_UNAVAILABLE", retryable: true });
+
+    test.advance(50);
+    const queued = enqueue(store, "queued").job.snapshot;
+    test.advance(50);
+
+    const fair = store.claimNext("worker", 100);
+    expect(fair).toMatchObject({ status: "ACQUIRED", claim: { jobId: queued.jobId } });
+    if (fair.status !== "ACQUIRED") throw new Error("expected queued claim");
+    store.succeed(fair.claim);
+    expect(store.claimNext("worker", 100)).toMatchObject({
+      status: "ACQUIRED",
+      claim: { jobId: failing.claim.jobId },
+    });
+    store.close();
+  });
+
   it("applies deterministic bounded jitter to the retry deadline", async () => {
     const test = await fixture({ retryBaseMs: 100, random: 0 });
     const store = test.create();
@@ -465,6 +551,31 @@ describe("worker classification and cancellation boundaries", () => {
     }, { workerId: "worker", leaseMs: 100, heartbeatMs: 20 });
     const result = await worker.runOnce();
     expect(result).toMatchObject({
+      status: "CANCELLED",
+      job: { snapshot: { status: "CANCELLED", cancellation: { status: "ACKNOWLEDGED" } } },
+    });
+    store.close();
+  });
+
+  it("propagates a requested cancellation through the handler signal at a heartbeat boundary", async () => {
+    const test = await fixture();
+    const store = test.create();
+    const queued = enqueue(store, "cancel-signal");
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => { started = resolve; });
+    const worker = new DurableJobWorker(store, {
+      BACKFILL: async (context) => {
+        started();
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });
+        });
+      },
+    }, { workerId: "worker", leaseMs: 100, heartbeatMs: 20 });
+
+    const running = worker.runOnce();
+    await didStart;
+    expect(store.requestCancellation(queued.job.snapshot.jobId).status).toBe("REQUESTED");
+    await expect(running).resolves.toMatchObject({
       status: "CANCELLED",
       job: { snapshot: { status: "CANCELLED", cancellation: { status: "ACKNOWLEDGED" } } },
     });

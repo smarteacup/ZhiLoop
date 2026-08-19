@@ -44,6 +44,7 @@ export const DEFAULT_CONSOLE_CONFIGURATION: ConsoleConfiguration = Object.freeze
     scanIntervalMs: 1_000,
     maxSessionsPerRun: 100,
     maxDispatchesPerRun: 20,
+    maxOutstandingJobs: 2,
     publication: Object.freeze({
       enabled: false,
       allowedKindsCsv: "",
@@ -56,7 +57,7 @@ export const DEFAULT_CONSOLE_CONFIGURATION: ConsoleConfiguration = Object.freeze
   }),
   evolution: Object.freeze({ maxMatchCandidates: 5, semanticJudgeEnabled: false, failClosed: true }),
   codeIntelligence: Object.freeze({
-    provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 250,
+    provider: "codegraph", initializeAutomatically: false, queryTimeoutMs: 2_000,
     circuitBreakerFailures: 3, circuitBreakerResetMs: 30_000,
   }),
   freshness: Object.freeze({

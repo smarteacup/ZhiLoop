@@ -363,7 +363,6 @@ export function buildEpisodes(
   };
 
   for (const session of sessions) {
-    const projectContext = normalizeProjectContext(projectResolver(session));
     let draft: EpisodeDraft | undefined;
     let lastStatement: VisibleStatement | undefined;
     const completedDrafts: EpisodeDraft[] = [];
@@ -415,7 +414,7 @@ export function buildEpisodes(
         if (primaryEventId === undefined) continue;
         draft = newDraft(
           session,
-          projectContext,
+          normalizeProjectContext(projectResolver(session, turnRecords)),
           limit(rawGoal, session.sessionId, turn.turnId, primaryEventId),
           primaryEventId,
         );

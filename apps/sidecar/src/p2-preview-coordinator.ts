@@ -101,6 +101,7 @@ export interface P2CandidatePreviewPort {
     readonly sessionId: string;
     readonly expectedLedgerSequence: number;
     readonly requestId: string;
+    readonly priority?: "BACKGROUND" | "INTERACTIVE";
   }): Promise<PreviewCoordinationResult>;
 }
 
@@ -167,9 +168,25 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
     readonly sessionId: string;
     readonly expectedLedgerSequence: number;
     readonly requestId: string;
+    readonly priority?: "BACKGROUND" | "INTERACTIVE";
   }): Promise<PreviewCoordinationResult> {
     const planned = await this.plan(request);
-    if (planned.status !== "READY") return planned;
+    if (planned.status !== "READY") {
+      // A manual request can arrive after automatic compilation already
+      // created the current immutable Snapshot. Re-enqueueing is idempotent,
+      // but promotes the unfinished background job so it cannot remain behind
+      // unrelated automatic work.
+      if (planned.status === "CURRENT" && request.priority === "INTERACTIVE") {
+        const current = this.options.runtime.service().listSnapshots({ sessionId: request.sessionId, limit: 1 }).items[0];
+        if (current !== undefined) {
+          await this.options.runtime.enqueueCandidatePreview(
+            p2PreviewRequest(current, request.requestId),
+            "INTERACTIVE",
+          );
+        }
+      }
+      return planned;
+    }
     const source = await this.options.inspectTranscriptSource(request.sessionId);
     const records = ledgerRange(this.options.ledger, request.sessionId, planned.sourceRange.from, planned.sourceRange.to);
     if (records.length === 0) return Object.freeze({ status: "INELIGIBLE", reasonCode: "NO_EXTRACTABLE_EVENTS" });
@@ -196,7 +213,10 @@ export class P2CandidatePreviewCoordinator implements P2CandidatePreviewPort {
     };
     const created = await this.options.runtime.createSnapshot({ ...draft, idempotencyKey: snapshotIdempotencyKey(draft) });
     const existingJob = this.options.runtime.candidatePreviewJobForSnapshot(created.snapshot.snapshotId);
-    const job = await this.options.runtime.enqueueCandidatePreview(p2PreviewRequest(created.snapshot, request.requestId));
+    const job = await this.options.runtime.enqueueCandidatePreview(
+      p2PreviewRequest(created.snapshot, request.requestId),
+      request.priority ?? "INTERACTIVE",
+    );
     return Object.freeze({
       status: created.status === "EXISTING" && existingJob !== undefined ? "EXISTING" : "ENQUEUED",
       snapshotId: created.snapshot.snapshotId,
@@ -234,6 +254,7 @@ export class P2AutomaticCompilationAdapter implements CompilationObservationPort
       sessionId: request.sessionId,
       expectedLedgerSequence: request.expectedLedgerSequence,
       requestId,
+      priority: "BACKGROUND",
     });
   }
 

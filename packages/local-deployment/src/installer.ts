@@ -132,7 +132,9 @@ function configuration(paths: ReturnType<typeof resolveDeploymentPaths>, codexEx
     logMaxBytes: 5_242_880,
     logRetainFiles: 3,
     ...(codexExecutable === undefined ? {} : {
-      codexQuery: { enabled: true, executable: codexExecutable, userConfiguration: "ALLOW" },
+      // Background structured generation reuses Codex authentication but must
+      // not recursively load interactive hooks, skills, plugins, or MCP setup.
+      codexQuery: { enabled: true, executable: codexExecutable, userConfiguration: "IGNORE" },
     }),
   }, null, 2)}\n`;
 }
@@ -317,7 +319,7 @@ function hookTrustStep(
 }
 
 async function waitUntilReady(options: LocalInstallOptions, expectedSidecarVersion: string): Promise<void> {
-  const attempts = options.readinessAttempts ?? 60;
+  const attempts = options.readinessAttempts ?? 120;
   const delayMs = options.readinessDelayMs ?? 250;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 200 || !Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 5_000) {
     throw new Error("readiness settings are outside supported bounds");

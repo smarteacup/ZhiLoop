@@ -12,6 +12,7 @@ import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import type { EventEnvelope } from "@zhiloop/domain";
 import { snapshotCommandHash, snapshotTestId } from "@zhiloop/evidence-probes";
 import type { KnowledgeExtractionPort } from "@zhiloop/knowledge-compiler";
+import { resolveProjectIdentity } from "@zhiloop/project-identity";
 
 import { deriveP2ProjectContext, P2ProductionComposition } from "./p2-production.js";
 
@@ -30,7 +31,7 @@ function event(index: number, root: string, eventType: EventEnvelope["eventType"
 function extractionSnapshot(): ExtractionSnapshot {
   return { schemaVersion: 1, snapshotId: `snapshot_${"a".repeat(48)}`, revision: 1, identityHash: sha("identity"), sessionId: "session-1",
     transcriptIdentityHash: sha("transcript"), sourceSequence: { from: 1, to: 4 }, cursor: { byteOffset: 400, lineNumber: 4 },
-    completeness: { status: "COMPLETE_SNAPSHOT", sourceClosed: true, unsupportedEventTypes: [] }, compilerVersion: "mvp-compiler-v3",
+    completeness: { status: "COMPLETE_SNAPSHOT", sourceClosed: true, unsupportedEventTypes: [] }, compilerVersion: "mvp-compiler-v4",
     policyHash: sha("policy"), configurationHash: sha("configuration"), createdAt: "2026-08-19T00:01:00.000Z" };
 }
 
@@ -50,7 +51,7 @@ describe("P2 production verification composition", () => {
     const commandHash = snapshotCommandHash("npm test")!;
     for (const item of [
       event(1, repository, "user.prompted", { prompt: "implement production evidence" }, "turn-1"),
-      event(2, repository, "tool.completed", { toolName: "commandExecution", toolInput: { command: "npm test" },
+      event(2, repository, "tool.completed", { toolName: "commandExecution", toolInput: { command: "npm test", projectPath: repository },
         toolResponse: { exitCode: 0, aggregatedOutput: "private output" } }, "turn-1"),
       event(3, repository, "turn.stopped", { lastAssistantMessage: "implemented", stopHookActive: false }, "turn-1"),
       event(4, repository, "session.ended", { reason: "other" }),
@@ -72,7 +73,9 @@ describe("P2 production verification composition", () => {
       extraction: () => ({ getSnapshot: (id: string) => id === snapshot.snapshotId ? snapshot : undefined }) as never,
       compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 5_000, verificationTimeoutMs: 10_000, compiler });
     try {
-      const preview = await production.worker.runtime.run(production.worker.requestFor(snapshot));
+      const preview = await production.worker.runtime.run(await production.worker.requestFor(snapshot));
+      expect(preview.payload.episodes?.[0]?.projectContext).toEqual((await resolveProjectIdentity(repository)).context);
+      expect(preview.stages.CANDIDATE_POLICY.error).toBeUndefined();
       expect(preview.status).toBe("AWAITING_COMMIT");
       expect(preview.payload.policies?.[0]?.verificationResults.map((result) => [result.assertionKind, result.status]))
         .toEqual([["FILE_CONTAINS", "SUPPORTED"], ["DEPENDENCY_PRESENT", "SUPPORTED"], ["CONFIG_EQUALS", "SUPPORTED"],
@@ -94,7 +97,7 @@ describe("P2 production verification composition", () => {
       expect(persisted.map((row) => row.result_summary_json).join("\n")).not.toMatch(/private output|production verifier reads/iu);
       runDatabase.close();
 
-      const committed = await production.worker.runtime.run(production.worker.requestFor(snapshot), {
+      const committed = await production.worker.runtime.run(await production.worker.requestFor(snapshot), {
         executionMode: "SAFE_AUTO_PUBLICATION", publicationAuthorization: { kind: "EXPLICIT_COMMIT", authorizationId: "commit-1" },
       });
       expect(committed.status).toBe("COMPLETED");
@@ -134,7 +137,7 @@ describe("P2 production verification composition", () => {
       extraction: () => ({ getSnapshot: (id: string) => id === snapshot.snapshotId ? snapshot : undefined }) as never,
       compilerTimeoutMs: 1_000, compilerBatchSize: 10, codeGraphTimeoutMs: 5_000, verificationTimeoutMs: 10_000, compiler });
     try {
-      const preview = await production.worker.runtime.run(production.worker.requestFor(snapshot));
+      const preview = await production.worker.runtime.run(await production.worker.requestFor(snapshot));
       expect(preview.status).toBe("AWAITING_COMMIT");
       expect(preview.payload.policies?.[0]?.verificationResults.map((result) => [result.assertionKind, result.status]))
         .toEqual([["SYMBOL_EXISTS", "UNKNOWN"]]);

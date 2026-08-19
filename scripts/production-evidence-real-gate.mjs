@@ -114,7 +114,7 @@ async function replayCodexTranscript(transcriptPath, root) {
         sourceClosed: false,
         unsupportedEventTypes: projection.ignoredRecords === 0 ? [] : ["unsupported_transcript_record"],
       }),
-      compilerVersion: "mvp-compiler-v3",
+      compilerVersion: "mvp-compiler-v4",
       policyHash: sha256("production-evidence-real-gate-policy-v1"),
       configurationHash: sha256("production-evidence-real-gate-configuration-v1"),
       createdAt: last.event.occurredAt,

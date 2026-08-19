@@ -1,6 +1,6 @@
 const good = new Set(["READY", "SUCCEEDED", "COMPLETED", "ROLLED_BACK", "CAPTURED_CURRENT", "INJECTED", "FRESH", "SUPPORTED", "USER_ACCEPTED"]);
-const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "REVALIDATE", "CONFLICT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE", "COMMITTING", "ROLLING_BACK", "ROLLBACK_CONFLICT", "CORRECTION"]);
-const bad = new Set(["FAILED", "ERROR", "REFUTED", "CRITICAL", "USER_REJECTED"]);
+const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "REVALIDATE", "CONFLICT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE", "COMMITTING", "ROLLING_BACK", "ROLLBACK_CONFLICT", "CORRECTION", "INCONCLUSIVE"]);
+const bad = new Set(["FAILED", "ERROR", "REFUTED", "CRITICAL", "USER_REJECTED", "CONTRADICTS"]);
 
 const labels: Readonly<Record<string, string>> = Object.freeze({
   ACCEPTED: "已接受",
@@ -29,6 +29,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   IMPLEMENTED: "已实现",
   INELIGIBLE: "不符合条件",
   INJECTED: "已注入",
+  INCONCLUSIVE: "证据不足",
   INVALID_INPUT: "输入无效",
   IRREVERSIBLE: "不可逆",
   NO_CONTEXT: "无可用上下文",
@@ -57,6 +58,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   REFUTED: "验证不支持",
   REVERSIBLE: "可回滚",
   CONFLICT: "与当前代码冲突",
+  CONTRADICTS: "存在矛盾",
   RETRY_WITH_CONTEXT: "补充上下文后重试",
   RETRY_WITH_CORRECTION: "修正后重试",
   ROLLED_BACK: "已回滚",

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,7 +34,10 @@ describe("GitProjectRevisionPort", () => {
     const revision = await new GitProjectRevisionPort(process).capture({ projectId: "project-1", repositoryRoot: "/repo", portable: false });
     expect(revision).toMatchObject({ capability: "READY", revision: expect.stringMatching(/^git:[a-f0-9]{40}:[a-f0-9]{64}$/u) });
     expect(JSON.stringify(revision)).not.toContain("secret-name.ts");
-    expect(process.calls).toEqual([["rev-parse", "--verify", "HEAD"], ["status", "--porcelain=v1", "-z", "--untracked-files=all"]]);
+    expect(process.calls).toEqual([["rev-parse", "--verify", "HEAD"], [
+      "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".",
+      ":(exclude).codegraph", ":(exclude).codegraph/**", ":(exclude).zhiloop", ":(exclude).zhiloop/**",
+    ]]);
   });
 
   it("degrades deterministically without a usable Git repository", async () => {
@@ -64,6 +68,26 @@ describe("GitProjectRevisionPort", () => {
       expect(await fingerprint.fingerprint(root, "project-1")).toEqual(first);
       writeFileSync(path.join(root, "source.ts"), "export const value = 2;\n");
       expect((await fingerprint.fingerprint(root, "project-1")).revision).not.toBe(first.revision);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps a Git revision stable when CodeGraph updates its generated state", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "zhiloop-git-revision-codegraph-"));
+    try {
+      execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+      writeFileSync(path.join(root, "source.ts"), "export const value = 1;\n");
+      execFileSync("git", ["add", "source.ts"], { cwd: root });
+      execFileSync("git", ["-c", "user.name=ZhiLoop", "-c", "user.email=zhiloop@example.invalid", "commit", "-m", "baseline"],
+        { cwd: root, stdio: "ignore" });
+      const port = new GitProjectRevisionPort();
+      const project = { projectId: "project-1", repositoryRoot: root, portable: false } as const;
+      const before = await port.capture(project);
+      mkdirSync(path.join(root, ".codegraph"));
+      writeFileSync(path.join(root, ".codegraph", ".gitignore"), "*\n");
+      writeFileSync(path.join(root, ".codegraph", "index.sqlite"), "generated");
+      expect(await port.capture(project)).toEqual(before);
+      writeFileSync(path.join(root, "source.ts"), "export const value = 2;\n");
+      expect((await port.capture(project)).revision).not.toBe(before.revision);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 

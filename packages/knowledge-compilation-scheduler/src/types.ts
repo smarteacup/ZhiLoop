@@ -34,6 +34,7 @@ export type KnowledgeCompilationReasonCode =
   | "CHECKPOINT_INVALID"
   | "CATALOG_ENTRY_INVALID"
   | "CATALOG_CURSOR_LOOP"
+  | "DISPATCH_CAPACITY_EXHAUSTED"
   | "SESSION_SCAN_BOUNDED";
 
 export interface KnowledgeCompilationCheckpoint {
@@ -83,6 +84,7 @@ export interface KnowledgeCompilationConfiguration {
   readonly maxScanPages?: number;
   readonly maxSessionsPerRun?: number;
   readonly maxDispatchesPerRun?: number;
+  readonly maxOutstandingJobs?: number;
   readonly checkpointConflictRetries?: number;
 }
 
@@ -98,6 +100,7 @@ export interface NormalizedKnowledgeCompilationConfiguration {
   readonly maxScanPages: number;
   readonly maxSessionsPerRun: number;
   readonly maxDispatchesPerRun: number;
+  readonly maxOutstandingJobs: number;
   readonly checkpointConflictRetries: number;
 }
 
@@ -160,6 +163,10 @@ export interface CompilationDispatchPort {
   dispatchPreview(request: AutomaticPreviewDispatchRequest): Promise<AutomaticPreviewDispatchResult>;
 }
 
+export interface CompilationCapacityPort {
+  outstandingJobs(): number | Promise<number>;
+}
+
 export interface TriggerEvaluation {
   readonly eligible: boolean;
   readonly reasonCode: KnowledgeCompilationReasonCode;
@@ -194,6 +201,7 @@ export interface KnowledgeCompilationDependencies {
   readonly observations: CompilationObservationPort;
   readonly checkpoints: KnowledgeCompilationCheckpointPort;
   readonly dispatcher: CompilationDispatchPort;
+  readonly capacity?: CompilationCapacityPort;
   readonly pipeline: KnowledgeCompilationPipelineIdentity;
   readonly now?: () => Date;
 }

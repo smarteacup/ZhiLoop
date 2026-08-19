@@ -9,6 +9,7 @@ import type {
   KnowledgeRelation,
   KnowledgeScope,
   KnowledgeStatus,
+  ProjectContext,
 } from "@zhiloop/domain";
 import { buildEpisodes } from "@zhiloop/episode-builder";
 import { evaluateEvidencePolicy } from "@zhiloop/evidence-policy";
@@ -412,6 +413,32 @@ function evolutionQueries(candidate: KnowledgeCandidate): readonly string[] {
     .map((value) => value.slice(0, 512));
 }
 
+function projectForCandidate(
+  candidate: KnowledgeCandidate,
+  episodes: readonly Episode[],
+  fallback: ProjectContext,
+): ProjectContext {
+  const contexts = new Map<string, ProjectContext>();
+  const byId = new Map(episodes.map((episode) => [episode.episodeId, episode]));
+  for (const episodeId of candidate.sourceEpisodes) {
+    const episode = byId.get(episodeId);
+    if (episode === undefined) {
+      throw new KnowledgeWorkerError("CANDIDATE_EPISODE_MISSING", "candidate source Episode is unavailable", false);
+    }
+    const context = episode.projectContext;
+    contexts.set(canonical([
+      context.projectId,
+      context.repositoryRoot ?? null,
+      context.repositoryRemote ?? null,
+      context.branch ?? null,
+    ]), context);
+  }
+  if (contexts.size > 1) {
+    throw new KnowledgeWorkerError("CANDIDATE_PROJECT_AMBIGUOUS", "candidate spans multiple project contexts", false);
+  }
+  return contexts.values().next().value ?? fallback;
+}
+
 function evolutionTargetIds(decision: EvolutionDecision): readonly string[] {
   return [...new Set(decision.targetKnowledgeVersions.map((target) => target.id))].sort();
 }
@@ -666,7 +693,11 @@ export class KnowledgeWorkerRuntime {
         throw new KnowledgeWorkerError("MISSING_NORMALIZATION_CHECKPOINT", "normalization checkpoint is missing", false);
       }
       const episodeBuild = buildEpisodes(ledger.records, normalization.sessions, {
-        projectResolver: () => request.project,
+        projectResolver: (session, openingTurnRecords) => this.#ports.projectResolution?.resolve(
+          session,
+          openingTurnRecords,
+          request.project,
+        ) ?? request.project,
       });
       const episodes = episodeBuild.episodes.filter((episode) => episode.status === "COMPLETED");
       if (episodes.length > resolvedLimits.maxEpisodes) {
@@ -764,11 +795,14 @@ export class KnowledgeWorkerRuntime {
       const candidates = checkpoint?.payload.candidates;
       if (candidates === undefined) throw new KnowledgeWorkerError("MISSING_EVOLUTION_INPUT", "evolution input checkpoint is missing", false);
       const correctionDrafts = checkpoint?.payload.userCommitments?.correctionDrafts ?? [];
+      const episodes = checkpoint?.payload.episodes;
+      if (episodes === undefined) throw new KnowledgeWorkerError("MISSING_EPISODE_CHECKPOINT", "episode checkpoint is missing", false);
       const records: CandidateEvolutionRecord[] = [];
       for (const candidate of candidates) {
+        const project = projectForCandidate(candidate, episodes, request.project);
         const scope = resolveKnowledgeScope({
           candidate,
-          projectContext: request.project,
+          projectContext: project,
           ...(request.allowGlobal === undefined ? {} : { allowGlobal: request.allowGlobal }),
           ...(request.projectTerms === undefined ? {} : { projectTerms: request.projectTerms }),
         });
@@ -818,14 +852,17 @@ export class KnowledgeWorkerRuntime {
       const policies: CandidatePolicyRecord[] = [];
       const outbox: PublicationOutboxItem[] = [];
       const claimedAssetIds = new Map<string, string>();
+      const episodes = checkpoint?.payload.episodes;
+      if (episodes === undefined) throw new KnowledgeWorkerError("MISSING_EPISODE_CHECKPOINT", "episode checkpoint is missing", false);
       for (const evolution of evolutionRecords) {
         const { candidate, scope, decision: evolutionDecision } = evolution;
+        const project = projectForCandidate(candidate, episodes, request.project);
         const snapshot = checkpoint?.payload.ledger;
         if (snapshot === undefined) throw new KnowledgeWorkerError("MISSING_EVIDENCE_SNAPSHOT", "evidence snapshot checkpoint is missing", false);
         const verificationResults = await external("EVIDENCE_VERIFICATION_FAILED", () =>
           this.#ports.evidence.verify({
             candidate,
-            project: request.project,
+            project,
             requestedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
             purpose: "CANDIDATE",
             snapshot,
@@ -874,8 +911,8 @@ export class KnowledgeWorkerRuntime {
             resolvedScope: scope.scope,
             projectScope: {
               level: "PROJECT",
-              projectId: request.project.projectId,
-              ...(request.project.repositoryRemote === undefined ? {} : { repositoryRemote: request.project.repositoryRemote }),
+              projectId: project.projectId,
+              ...(project.repositoryRemote === undefined ? {} : { repositoryRemote: project.repositoryRemote }),
             },
             projectSpecificSignals: scope.projectSpecificSignals,
             verificationResults,
@@ -981,17 +1018,20 @@ export class KnowledgeWorkerRuntime {
     if (!await execute("FRESHNESS_PROJECT", async () => {
       const outbox = [...(checkpoint?.payload.outbox ?? [])];
       const policies = new Map((checkpoint?.payload.policies ?? []).map((policy) => [policy.candidate.candidateId, policy]));
+      const episodes = checkpoint?.payload.episodes;
+      if (episodes === undefined) throw new KnowledgeWorkerError("MISSING_EPISODE_CHECKPOINT", "episode checkpoint is missing", false);
       for (let index = 0; index < outbox.length; index += 1) {
         const item = outbox[index];
         if (item === undefined || item.freshness !== undefined) continue;
         if (item.projection === undefined) throw new KnowledgeWorkerError("MISSING_REGISTRY_OUTBOX", "Registry outbox is incomplete", false);
         const policy = policies.get(item.candidateId);
         if (policy === undefined) throw new KnowledgeWorkerError("MISSING_POLICY_OUTBOX", "Policy outbox is incomplete", false);
+        const project = projectForCandidate(policy.candidate, episodes, request.project);
         const freshness = await external("FRESHNESS_PROJECTION_FAILED", () => this.#ports.freshness.project({
           asset: item.asset,
           candidate: policy.candidate,
           verificationResults: policy.verificationResults,
-          projectId: request.project.projectId,
+          projectId: project.projectId,
           observedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
         }));
         if (freshness.assetId !== item.asset.id || freshness.assetVersion !== item.asset.version) {

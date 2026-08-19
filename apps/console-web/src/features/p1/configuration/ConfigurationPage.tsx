@@ -91,6 +91,7 @@ function fieldLabel(path: string): string {
     "compilation.scanIntervalMs": "后台扫描间隔（毫秒）",
     "compilation.maxSessionsPerRun": "单轮最多扫描会话",
     "compilation.maxDispatchesPerRun": "单轮最多派发任务",
+    "compilation.maxOutstandingJobs": "后台编译最大积压任务数",
     "compilation.publication.enabled": "启用安全自动发布",
     "compilation.publication.allowedKindsCsv": "允许发布的知识类型（逗号分隔）",
     "compilation.publication.allowedProjectIdsCsv": "允许发布的项目（逗号分隔）",

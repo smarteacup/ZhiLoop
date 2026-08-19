@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { CodeGraphCliAdapter } from "@zhiloop/codegraph-adapter";
@@ -39,6 +40,7 @@ import {
 } from "@zhiloop/knowledge-worker-runtime";
 import { MarkdownKnowledgeRepository } from "@zhiloop/markdown-repository";
 import { CodexExecStructuredGenerationModel } from "@zhiloop/model-codex-exec";
+import { resolveProjectIdentity } from "@zhiloop/project-identity";
 import {
   CodexSemanticEvolutionJudge,
   type SemanticEvolutionCapability,
@@ -53,6 +55,7 @@ const LEDGER_PAGE_SIZE = 1_000;
 const MAX_SNAPSHOT_RECORDS = 5_000;
 const MAX_SNAPSHOT_SEQUENCE_SPAN = 50_000;
 const MAX_PROVENANCE_VISITS = 1_000;
+const MAX_EPISODE_PROJECTS_PER_SNAPSHOT = 16;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -60,6 +63,98 @@ function sha256(value: string): string {
 
 function workId(snapshotId: string): string {
   return `knowledge-${snapshotId}`;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function containedBy(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+function nearestGitRoot(value: string, boundary: string): string | undefined {
+  if (!isAbsolute(value) || value.length > 16_384) return undefined;
+  let resolved: string;
+  try {
+    resolved = realpathSync(value);
+  } catch {
+    return undefined;
+  }
+  if (!containedBy(boundary, resolved)) return undefined;
+  let cursor = resolved;
+  while (containedBy(boundary, cursor)) {
+    if (existsSync(join(cursor, ".git"))) return cursor;
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return undefined;
+}
+
+/**
+ * Resolves an Episode from explicit structured tool working-directory hints.
+ * Free-form commands/responses are deliberately ignored: they are ambiguous
+ * and must never be able to escape the captured session boundary.
+ */
+export function deriveP2EpisodeProjectContext(
+  openingTurnRecords: readonly LedgerEventRecord[],
+  fallback: ProjectContext,
+  resolvedProjects: ReadonlyMap<string, ProjectContext> = new Map(),
+): ProjectContext {
+  if (fallback.repositoryRoot === undefined) return fallback;
+  let boundary: string;
+  try {
+    boundary = realpathSync(fallback.repositoryRoot);
+  } catch {
+    return fallback;
+  }
+  const counts = new Map<string, number>();
+  for (const { event } of openingTurnRecords) {
+    if (event.eventType !== "tool.completed" || !isRecord(event.payload)) continue;
+    const input = event.payload["toolInput"];
+    if (!isRecord(input)) continue;
+    for (const key of ["projectPath", "workdir", "cwd"] as const) {
+      const value = input[key];
+      if (typeof value !== "string") continue;
+      const root = nearestGitRoot(value, boundary);
+      if (root !== undefined) counts.set(root, (counts.get(root) ?? 0) + 1);
+    }
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const winner = ranked[0];
+  if (winner === undefined || (ranked[1]?.[1] ?? -1) === winner[1]) return fallback;
+  const resolved = resolvedProjects.get(winner[0]);
+  if (resolved !== undefined) return resolved;
+  return Object.freeze({
+    projectId: `project-${sha256(JSON.stringify(["episode-project-root", winner[0]])).slice(0, 24)}`,
+    repositoryRoot: winner[0],
+    portable: false,
+  });
+}
+
+function explicitEpisodeProjectRoots(records: readonly LedgerEventRecord[], boundaryRoot: string): readonly string[] {
+  let boundary: string;
+  try {
+    boundary = realpathSync(boundaryRoot);
+  } catch {
+    return [];
+  }
+  const roots = new Set<string>();
+  for (const { event } of records) {
+    if (event.eventType !== "tool.completed" || !isRecord(event.payload)) continue;
+    const input = event.payload["toolInput"];
+    if (!isRecord(input)) continue;
+    for (const key of ["projectPath", "workdir", "cwd"] as const) {
+      const value = input[key];
+      if (typeof value !== "string") continue;
+      const root = nearestGitRoot(value, boundary);
+      if (root !== undefined) roots.add(root);
+      if (roots.size >= MAX_EPISODE_PROJECTS_PER_SNAPSHOT) return [...roots].sort();
+    }
+  }
+  return [...roots].sort();
 }
 
 export function readP2SnapshotRecords(
@@ -78,7 +173,10 @@ export function readP2SnapshotRecords(
   let cursor = snapshot.sourceSequence.from - 1;
   while (cursor < snapshot.sourceSequence.to && records.length < resultLimit) {
     const page = ledger.readAfter(cursor, Math.min(LEDGER_PAGE_SIZE, snapshot.sourceSequence.to - cursor));
-    if (page.length === 0 || page[0]!.sequence !== cursor + 1) {
+    // SQLite AUTOINCREMENT values may contain legal gaps after an ignored
+    // duplicate insert. Snapshot boundaries refer to persisted records, not
+    // to every integer in the sequence range, so a gap is not corruption.
+    if (page.length === 0) {
       throw Object.assign(new Error("snapshot ledger range is incomplete"), { retryable: false, code: "SNAPSHOT_RANGE_INCOMPLETE" });
     }
     for (const record of page) {
@@ -91,8 +189,7 @@ export function readP2SnapshotRecords(
   return records;
 }
 
-export function deriveP2ProjectContext(snapshot: ExtractionSnapshot, ledger: SqliteEventLedger, fallbackRoot: string): ProjectContext {
-  const records = readP2SnapshotRecords(ledger, snapshot, MAX_SNAPSHOT_RECORDS + 1);
+function deriveP2ProjectContextFromRecords(records: readonly LedgerEventRecord[], fallbackRoot: string): ProjectContext {
   if (records.length > MAX_SNAPSHOT_RECORDS) {
     throw Object.assign(new Error("snapshot contains more records than the bounded compiler input"), {
       retryable: false,
@@ -110,6 +207,13 @@ export function deriveP2ProjectContext(snapshot: ExtractionSnapshot, ledger: Sql
     repositoryRoot,
     portable: false,
   });
+}
+
+export function deriveP2ProjectContext(snapshot: ExtractionSnapshot, ledger: SqliteEventLedger, fallbackRoot: string): ProjectContext {
+  return deriveP2ProjectContextFromRecords(
+    readP2SnapshotRecords(ledger, snapshot, MAX_SNAPSHOT_RECORDS + 1),
+    fallbackRoot,
+  );
 }
 
 function extractionMetadata(service: () => SessionExtractionService): KnowledgeMetadataPort {
@@ -218,6 +322,7 @@ export class P2ProductionVerificationRuntime implements EvidenceVerificationPort
 /** Owns the P2 Markdown/Registry/index boundary shared by compile and governance. */
 export class P2ProductionComposition {
   readonly worker: P2KnowledgeWorkerComposition;
+  readonly #episodeProjectContexts = new Map<string, ProjectContext>();
   readonly query: KnowledgeGovernanceQueryService;
   readonly mutations: KnowledgeGovernanceMutationService;
   readonly markdown: MarkdownKnowledgeRepository;
@@ -301,6 +406,10 @@ export class P2ProductionComposition {
           return [...assets.values()].sort((left, right) => left.id.localeCompare(right.id)).slice(0, limit);
         },
       },
+      projectResolution: {
+        resolve: (_session, openingTurnRecords, fallback) =>
+          deriveP2EpisodeProjectContext(openingTurnRecords, fallback, this.#episodeProjectContexts),
+      },
       ...(semanticJudge === undefined ? {} : { evolutionSemantic: semanticJudge }),
       markdown: this.markdown,
       registry: this.registry,
@@ -315,23 +424,38 @@ export class P2ProductionComposition {
     }, this.#checkpointStore);
     this.worker = Object.freeze({
       runtime,
-      requestFor: (snapshot: ExtractionSnapshot): KnowledgeWorkerRunRequest => ({
-        workId: workId(snapshot.snapshotId),
-        snapshot: { snapshotId: snapshot.snapshotId, sessionId: snapshot.sessionId, sourceVersion: snapshot.identityHash },
-        asOf: snapshot.createdAt,
-        project: deriveP2ProjectContext(snapshot, options.ledger, options.stateDirectory),
-        compilerVersion: DEFAULT_MVP_COMPILER_VERSION,
-        promptVersion: DEFAULT_MVP_PROMPT_VERSION,
-        policyHash: snapshot.policyHash,
-        verificationPolicy: DEFAULT_CONFIGURATION.verification,
-        extraction: { maxAttempts: 2, perAttemptTimeoutMs: options.compilerTimeoutMs, retryDelayMs: 250 },
-        limits: {
-          maxLedgerRecords: MAX_SNAPSHOT_RECORDS,
-          maxCandidates: options.compilerBatchSize,
-          maxPublishItems: options.compilerBatchSize,
-          maxEvolutionCandidates: options.evolutionMaxCandidates ?? 5,
-        },
-      }),
+      requestFor: async (snapshot: ExtractionSnapshot): Promise<KnowledgeWorkerRunRequest> => {
+        const records = readP2SnapshotRecords(options.ledger, snapshot, MAX_SNAPSHOT_RECORDS + 1);
+        const project = deriveP2ProjectContextFromRecords(records, options.stateDirectory);
+        if (project.repositoryRoot !== undefined) {
+          const roots = explicitEpisodeProjectRoots(records, project.repositoryRoot);
+          const resolved = await Promise.all(roots.map(async (root) => {
+            try {
+              return [root, (await resolveProjectIdentity(root)).context] as const;
+            } catch {
+              return undefined;
+            }
+          }));
+          for (const item of resolved) if (item !== undefined) this.#episodeProjectContexts.set(item[0], item[1]);
+        }
+        return {
+          workId: workId(snapshot.snapshotId),
+          snapshot: { snapshotId: snapshot.snapshotId, sessionId: snapshot.sessionId, sourceVersion: snapshot.identityHash },
+          asOf: snapshot.createdAt,
+          project,
+          compilerVersion: DEFAULT_MVP_COMPILER_VERSION,
+          promptVersion: DEFAULT_MVP_PROMPT_VERSION,
+          policyHash: snapshot.policyHash,
+          verificationPolicy: DEFAULT_CONFIGURATION.verification,
+          extraction: { maxAttempts: 2, perAttemptTimeoutMs: options.compilerTimeoutMs, retryDelayMs: 250 },
+          limits: {
+            maxLedgerRecords: MAX_SNAPSHOT_RECORDS,
+            maxCandidates: options.compilerBatchSize,
+            maxPublishItems: options.compilerBatchSize,
+            maxEvolutionCandidates: options.evolutionMaxCandidates ?? 5,
+          },
+        };
+      },
     });
     const metadata = extractionMetadata(options.extraction);
     this.query = new KnowledgeGovernanceQueryService(this.registry, metadata, this.governanceStore, Buffer.from(sha256(options.stateDirectory), "hex"));

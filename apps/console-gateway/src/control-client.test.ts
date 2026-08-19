@@ -36,7 +36,7 @@ const configuration = {
   future: { injectionMaxTokens: 800, compilerBatchSize: 50, codexQueryTimeoutMs: 30_000, codexQueryConcurrency: 2 },
   compilation: {
     enabled: true, mode: "PREVIEW_ONLY" as const, minNewTurns: 3, minNewEvents: 2, idleMs: 120_000, maximumWaitMs: 1_800_000,
-    onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20,
+    onSessionEnd: true, scanIntervalMs: 1_000, maxSessionsPerRun: 100, maxDispatchesPerRun: 20, maxOutstandingJobs: 2,
     publication: { enabled: false, allowedKindsCsv: "", allowedProjectIdsCsv: "", requireFreshCodeEvidence: true as const, goldenDatasetId: "", goldenDatasetVersion: 0, goldenConfigFingerprint: "" },
   },
   evolution: { maxMatchCandidates: 5, semanticJudgeEnabled: true, failClosed: true as const },

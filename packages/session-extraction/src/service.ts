@@ -7,7 +7,7 @@ import {
   type CandidatePreview,
   type ExtractionSnapshot,
 } from "@zhiloop/control-api";
-import { jobEffectKey, serializeJobJson } from "@zhiloop/job-runtime";
+import { jobEffectKey, serializeJobJson, type JobPriority } from "@zhiloop/job-runtime";
 
 import type { SessionExtractionStore } from "./store.js";
 import { ExtractionConflictError, ExtractionNotFoundError, ExtractionStaleRevisionError } from "./types.js";
@@ -180,7 +180,7 @@ export class SessionExtractionService {
     return snapshot;
   }
 
-  public enqueueCandidatePreview(requestInput: CandidatePreviewRequest) {
+  public enqueueCandidatePreview(requestInput: CandidatePreviewRequest, priority: JobPriority = "NORMAL") {
     const request = candidatePreviewRequestSchema.parse(requestInput);
     const snapshot = this.#resolveSnapshot(request.snapshot);
     if (snapshot.compilerVersion !== request.compilerVersion || snapshot.policyHash !== request.policyHash) {
@@ -203,6 +203,7 @@ export class SessionExtractionService {
         policyHash: request.policyHash,
       },
       maxAttempts: this.#maxAttempts,
+      priority,
     });
   }
 

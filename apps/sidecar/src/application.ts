@@ -102,6 +102,7 @@ function knowledgeCompilationConfiguration(configuration: ConsoleConfiguration) 
     maximumWaitMs: configuration.compilation.maximumWaitMs,
     maxSessionsPerRun: configuration.compilation.maxSessionsPerRun,
     maxDispatchesPerRun: configuration.compilation.maxDispatchesPerRun,
+    maxOutstandingJobs: configuration.compilation.maxOutstandingJobs,
   });
 }
 
@@ -114,8 +115,12 @@ function freshnessSchedulerConfiguration(configuration: ConsoleConfiguration) {
   });
 }
 
-function verificationTimeoutMs(configuration: ConsoleConfiguration): number {
-  return Math.min(60_000, Math.max(1_000, configuration.codeIntelligence.queryTimeoutMs * 5));
+export function verificationTimeoutMs(configuration: ConsoleConfiguration): number {
+  // Verification includes repository revision capture plus CodeGraph capability
+  // snapshots before and after the assertion probes. Keep the per-query timeout
+  // configurable, but never shrink the end-to-end budget below the verification
+  // service's safe default.
+  return Math.min(60_000, Math.max(5_000, configuration.codeIntelligence.queryTimeoutMs * 5));
 }
 
 function consoleConfigurationHash(configuration: ConsoleConfiguration): string {
@@ -659,6 +664,9 @@ export class SidecarApplication {
         },
       });
       composedApplication.#p2Evolution = p2Evolution;
+      if (p2Runtime === undefined) throw new Error("P2 runtime is unavailable for automatic compilation capacity");
+      const capacityRuntime = p2Runtime;
+      const capacityEvolution = p2Evolution;
       const automaticAdapter = new P2DurableAutomaticCompilationAdapter(
         composedApplication.#controlPlane.sessionCatalog(),
         ledger,
@@ -670,6 +678,9 @@ export class SidecarApplication {
         stateDirectory: dirname(config.ledgerPath),
         catalog: composedApplication.#controlPlane.sessionCatalog(),
         adapter: automaticAdapter,
+        capacity: {
+          outstandingJobs: () => capacityRuntime.outstandingJobCount() + capacityEvolution.state().activeJobs,
+        },
         pipeline: p2PreviewCoordinator.pipelineIdentity(),
         configuration: {
           ...knowledgeCompilationConfiguration(configuration.get().effective),

@@ -4,6 +4,8 @@ import process from "node:process";
 import type { DeploymentPaths, ServiceController } from "./types.js";
 
 const LAUNCH_AGENT_LABEL = "dev.zhiloop.sidecar";
+const BOOTOUT_STATUS_ATTEMPTS = 40;
+const BOOTOUT_STATUS_INTERVAL_MS = 250;
 
 function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
@@ -108,9 +110,9 @@ export class MacOsLaunchctlController implements ServiceController {
     if (result.code !== 0 && !/could not find service|no such process|not found/iu.test(result.stderr)) {
       throw new Error(`launchctl bootout failed: ${result.stderr || result.code}`);
     }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 0; attempt < BOOTOUT_STATUS_ATTEMPTS; attempt += 1) {
       if (await this.status() === "STOPPED") return;
-      await this.#sleep(100 * (attempt + 1));
+      if (attempt + 1 < BOOTOUT_STATUS_ATTEMPTS) await this.#sleep(BOOTOUT_STATUS_INTERVAL_MS);
     }
     throw new Error("launchctl bootout did not reach STOPPED state");
   }

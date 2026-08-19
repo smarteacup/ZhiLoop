@@ -10,6 +10,8 @@ describe("P2 Chinese enum labels", () => {
     expect(p2EnumLabel("CALL_PATH_EXISTS")).toBe("调用路径存在");
     expect(p2EnumLabel("CODEGRAPH_NOT_INITIALIZED")).toBe("当前项目尚未初始化 CodeGraph");
     expect(p2EnumLabel("SNAPSHOT_TEST_OBSERVATION_NOT_FOUND")).toBe("当前快照没有对应测试记录");
+    expect(p2EnumLabel("ASSERTION_REFUTED")).toBe("存在被代码证据否定的断言");
+    expect(p2EnumLabel("MODEL_ONLY_REMAINS_PROPOSED")).toBe("仅有模型结论，继续保留为候选");
     expect(p2EnumLabel("COMPILE_EMPTY")).toBe("当前没有知识编译任务");
     expect(p2EnumLabel("INJECTION_READ_MODEL_SEPARATE")).toBe("注入记录在召回与注入页面独立展示");
     expect(p2EnumLabel("CAPTURED_PARTIAL")).toBe("部分采集");

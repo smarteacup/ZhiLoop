@@ -147,6 +147,20 @@ export class KnowledgeCompilationService {
     let bounded = false;
 
     if (this.configuration.enabled) {
+      let dispatchLimit = this.configuration.maxDispatchesPerRun;
+      if (this.#dependencies.capacity !== undefined) {
+        try {
+          const outstanding = await this.#dependencies.capacity.outstandingJobs();
+          if (!Number.isSafeInteger(outstanding) || outstanding < 0) throw new Error("invalid outstanding job count");
+          dispatchLimit = Math.min(dispatchLimit, Math.max(0, this.configuration.maxOutstandingJobs - outstanding));
+        } catch {
+          dispatchLimit = 0;
+        }
+      }
+      if (dispatchLimit === 0) {
+        bounded = true;
+        this.#addDiagnostic(diagnostics, diagnostic("DISPATCH_CAPACITY_EXHAUSTED", true));
+      }
       let after: SessionPagePosition | undefined;
       const seenCursors = new Set<string>();
       const seenSessions = new Set<string>();
@@ -161,7 +175,7 @@ export class KnowledgeCompilationService {
           ...(after === undefined ? {} : { after }),
         });
         for (const entry of page.items) {
-          if (counters.queuedSessions >= this.configuration.maxDispatchesPerRun) {
+          if (counters.queuedSessions >= dispatchLimit) {
             bounded = true;
             break;
           }

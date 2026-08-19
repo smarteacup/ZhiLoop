@@ -3,11 +3,14 @@ import type { JobAttemptSnapshot, JobCheckpoint, JobCommandResult, JobSnapshot }
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
+export type JobPriority = "BACKGROUND" | "NORMAL" | "INTERACTIVE";
+
 export interface EnqueueJobRequest {
   readonly jobType: string;
   readonly idempotencyKey: string;
   readonly input: unknown;
   readonly maxAttempts: number;
+  readonly priority?: JobPriority;
 }
 
 export interface JobRetryPolicy {

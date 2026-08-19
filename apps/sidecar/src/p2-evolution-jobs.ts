@@ -28,6 +28,7 @@ export class P2DurableKnowledgeCompilationPort implements DurableKnowledgeCompil
       sessionId: input.sessionId,
       expectedLedgerSequence: input.sourceRange.to,
       requestId: `evolution-${controls.effectKey}`,
+      priority: "BACKGROUND",
     });
     if (result.status === "STALE") throw new RetryableJobError(`KNOWLEDGE_COMPILE_${result.reasonCode}`);
     if (result.status === "INELIGIBLE") throw new NonRetryableJobError(`KNOWLEDGE_COMPILE_${result.reasonCode}`);

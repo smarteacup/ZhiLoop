@@ -44,7 +44,7 @@ describe("P2DurableKnowledgeCompilationPort", () => {
     await expect(port.startOrResume(input, { effectKey: "a".repeat(64), signal: new AbortController().signal }))
       .resolves.toEqual({ snapshotId: "snapshot-1", previewJobId: "job-1" });
     expect(coordinate).toHaveBeenCalledWith({ sessionId: "session-1", expectedLedgerSequence: 5,
-      requestId: `evolution-${"a".repeat(64)}` });
+      requestId: `evolution-${"a".repeat(64)}`, priority: "BACKGROUND" });
   });
 
   it("resolves CURRENT to the existing durable preview job and rejects range drift", async () => {

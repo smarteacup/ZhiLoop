@@ -13,6 +13,8 @@ describe("StatusBadge", () => {
     expect(badge.getAttribute("title")).toBe("CAPTURED_CURRENT");
     expect(statusLabel("CAPTURED_PARTIAL")).toBe("部分采集");
     expect(statusLabel("EMPTY")).toBe("暂无记录");
+    expect(statusLabel("CONTRADICTS")).toBe("存在矛盾");
+    expect(statusLabel("INCONCLUSIVE")).toBe("证据不足");
   });
 
   it("falls back to an unknown protocol value without inventing a translation", () => {
@@ -26,5 +28,7 @@ describe("StatusBadge", () => {
     expect(screen.getByText("失败").classList.contains("bad")).toBe(true);
     rerender(<StatusBadge status="PENDING" />);
     expect(screen.getByText("等待中").classList.contains("neutral")).toBe(true);
+    rerender(<StatusBadge status="CONTRADICTS" />);
+    expect(screen.getByText("存在矛盾").classList.contains("bad")).toBe(true);
   });
 });

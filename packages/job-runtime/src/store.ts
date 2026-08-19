@@ -31,13 +31,14 @@ import {
   type JobOperatorCommandRequest,
   type JobOperatorCommandResult,
   type JobRetryPolicy,
+  type JobPriority,
   type ListJobsRequest,
   JobStaleRevisionError,
   JobStateConflictError,
   JobNotFoundError,
 } from "./types.js";
 
-const CURRENT_MIGRATION_VERSION = 2;
+const CURRENT_MIGRATION_VERSION = 3;
 const DEFAULT_LEASE_MS = 30_000;
 const MAX_LEASE_MS = 3_600_000;
 const DEFAULT_RETRY_POLICY: JobRetryPolicy = { baseDelayMs: 1_000, maxDelayMs: 300_000, jitterRatio: 0.2 };
@@ -46,11 +47,13 @@ const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,119}$/u;
 const SAFE_IDENTIFIER = /^[^\0\r\n]+$/u;
 const TERMINAL = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
 const JOB_STATUSES = new Set<JobRow["status"]>(["QUEUED", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED"]);
+const JOB_PRIORITIES: Readonly<Record<JobPriority, number>> = Object.freeze({ BACKGROUND: 0, NORMAL: 10, INTERACTIVE: 20 });
 
 interface JobRow {
   readonly job_id: string;
   readonly job_type: string;
   readonly revision: number;
+  readonly priority: number;
   readonly idempotency_key: string;
   readonly idempotency_fingerprint: string;
   readonly input_json: string;
@@ -230,7 +233,7 @@ export class SqliteDurableJobStore {
         this.#database.exec("COMMIT");
         return;
       }
-      if (lockedExisting !== undefined && lockedExisting.version !== 1) {
+      if (lockedExisting !== undefined && lockedExisting.version !== 1 && lockedExisting.version !== 2) {
         throw new Error(`job runtime migration ${lockedExisting.version} is not supported`);
       }
       if (lockedExisting?.version === 1) {
@@ -247,7 +250,22 @@ export class SqliteDurableJobStore {
             created_at TEXT NOT NULL
           );
           CREATE INDEX durable_job_commands_job_idx ON durable_job_commands(job_id, created_at);
-          UPDATE durable_job_meta SET version=2 WHERE component='job-runtime';
+          ALTER TABLE durable_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 10 CHECK(priority BETWEEN 0 AND 100);
+          DROP INDEX IF EXISTS durable_jobs_claim_idx;
+          CREATE INDEX durable_jobs_claim_idx
+            ON durable_jobs(status, priority DESC, next_attempt_at_ms, lease_expires_at_ms, created_at_ms, job_id);
+          UPDATE durable_job_meta SET version=3 WHERE component='job-runtime';
+        `);
+        this.#database.exec("COMMIT");
+        return;
+      }
+      if (lockedExisting?.version === 2) {
+        this.#database.exec(`
+          ALTER TABLE durable_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 10 CHECK(priority BETWEEN 0 AND 100);
+          DROP INDEX IF EXISTS durable_jobs_claim_idx;
+          CREATE INDEX durable_jobs_claim_idx
+            ON durable_jobs(status, priority DESC, next_attempt_at_ms, lease_expires_at_ms, created_at_ms, job_id);
+          UPDATE durable_job_meta SET version=3 WHERE component='job-runtime';
         `);
         this.#database.exec("COMMIT");
         return;
@@ -257,6 +275,7 @@ export class SqliteDurableJobStore {
           job_id TEXT PRIMARY KEY,
           job_type TEXT NOT NULL,
           revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+          priority INTEGER NOT NULL DEFAULT 10 CHECK(priority BETWEEN 0 AND 100),
           idempotency_key TEXT NOT NULL UNIQUE,
           idempotency_fingerprint TEXT NOT NULL,
           input_json TEXT NOT NULL,
@@ -296,7 +315,7 @@ export class SqliteDurableJobStore {
           CHECK((status IN ('SUCCEEDED','FAILED','CANCELLED')) = (completed_at IS NOT NULL))
         );
         CREATE INDEX IF NOT EXISTS durable_jobs_claim_idx
-          ON durable_jobs(status, next_attempt_at_ms, lease_expires_at_ms, created_at_ms, job_id);
+          ON durable_jobs(status, priority DESC, next_attempt_at_ms, lease_expires_at_ms, created_at_ms, job_id);
         CREATE TABLE IF NOT EXISTS durable_job_attempts (
           attempt_id TEXT PRIMARY KEY,
           job_id TEXT NOT NULL REFERENCES durable_jobs(job_id) ON DELETE RESTRICT,
@@ -341,7 +360,7 @@ export class SqliteDurableJobStore {
         );
         CREATE INDEX IF NOT EXISTS durable_job_commands_job_idx
           ON durable_job_commands(job_id, created_at);
-        INSERT INTO durable_job_meta(component, version) VALUES ('job-runtime', 2)
+        INSERT INTO durable_job_meta(component, version) VALUES ('job-runtime', 3)
           ON CONFLICT(component) DO UPDATE SET version=excluded.version;
       `);
       this.#database.exec("COMMIT");
@@ -462,6 +481,9 @@ export class SqliteDurableJobStore {
     if (!Number.isSafeInteger(request.maxAttempts) || request.maxAttempts < 1 || request.maxAttempts > 1_000) {
       throw new Error("maxAttempts must be between 1 and 1000");
     }
+    const priorityName = request.priority ?? "NORMAL";
+    if (!(priorityName in JOB_PRIORITIES)) throw new Error("priority is invalid");
+    const priority = JOB_PRIORITIES[priorityName];
     const input = serializeJobJson(request.input);
     const fingerprint = serializeJobJson({ jobType: request.jobType, inputHash: input.hash, maxAttempts: request.maxAttempts }).hash;
     const created = timestamp(this.#clock);
@@ -471,17 +493,22 @@ export class SqliteDurableJobStore {
       ).get(request.idempotencyKey) as JobRow | undefined;
       if (existing !== undefined) {
         if (existing.idempotency_fingerprint !== fingerprint) throw new JobIdempotencyConflictError();
+        if (priority > existing.priority && !TERMINAL.has(existing.status)) {
+          this.#database.prepare("UPDATE durable_jobs SET priority = ?, updated_at = ? WHERE job_id = ?")
+            .run(priority, created.iso, existing.job_id);
+          return Object.freeze({ status: "EXISTING" as const, job: this.#record(this.#jobRow(existing.job_id) as JobRow) });
+        }
         return Object.freeze({ status: "EXISTING" as const, job: this.#record(existing) });
       }
       const jobId = this.#idFactory();
       validateIdentifier(jobId, "jobId");
       this.#database.prepare(`
         INSERT INTO durable_jobs (
-          job_id, job_type, idempotency_key, idempotency_fingerprint, input_json, input_hash,
+          job_id, job_type, priority, idempotency_key, idempotency_fingerprint, input_json, input_hash,
           status, max_attempts, reason_code, created_at, created_at_ms, updated_at, last_transition_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, 'JOB_QUEUED', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'QUEUED', ?, 'JOB_QUEUED', ?, ?, ?, ?)
       `).run(
-        jobId, request.jobType, request.idempotencyKey, fingerprint, input.json, input.hash,
+        jobId, request.jobType, priority, request.idempotencyKey, fingerprint, input.json, input.hash,
         request.maxAttempts, created.iso, created.ms, created.iso, created.iso,
       );
       const row = this.#jobRow(jobId);
@@ -587,8 +614,13 @@ export class SqliteDurableJobStore {
              OR (status='RETRY_WAIT' AND next_attempt_at_ms <= ?)
              OR (status='RUNNING' AND lease_expires_at_ms <= ?)
           ORDER BY
-            CASE status WHEN 'RUNNING' THEN 0 WHEN 'RETRY_WAIT' THEN 1 ELSE 2 END,
-            COALESCE(lease_expires_at_ms, next_attempt_at_ms, created_at_ms) ASC,
+            CASE status WHEN 'RUNNING' THEN 0 ELSE 1 END,
+            priority DESC,
+            CASE status
+              WHEN 'RUNNING' THEN lease_expires_at_ms
+              WHEN 'RETRY_WAIT' THEN next_attempt_at_ms
+              ELSE created_at_ms
+            END ASC,
             created_at_ms ASC, job_id ASC
           LIMIT 1
         `).get(now.ms, now.ms) as JobRow | undefined;

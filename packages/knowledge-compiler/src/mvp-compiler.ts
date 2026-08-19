@@ -18,7 +18,7 @@ export const MVP_KNOWLEDGE_KINDS = Object.freeze([
   "EXPERIENCE",
 ] as const satisfies readonly KnowledgeKind[]);
 
-export const DEFAULT_MVP_COMPILER_VERSION = "mvp-compiler-v3";
+export const DEFAULT_MVP_COMPILER_VERSION = "mvp-compiler-v4";
 export const DEFAULT_MVP_PROMPT_VERSION = "mvp-extraction-prompt-v2";
 
 const SAFE_VERSION = /^[A-Za-z0-9._-]{1,100}$/;

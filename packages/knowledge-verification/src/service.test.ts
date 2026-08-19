@@ -158,6 +158,28 @@ describe("KnowledgeVerificationService", () => {
     expect(graphStore.runs).toHaveLength(0);
   });
 
+  it("uses a new verification identity when the observed code revision changes between retries", async () => {
+    const { project, candidate } = fixture();
+    const first = `git:${"a".repeat(40)}:${"b".repeat(64)}`;
+    const second = `git:${"a".repeat(40)}:${"c".repeat(64)}`;
+    const store = new MemoryStore();
+    const service = new KnowledgeVerificationService({
+      revisions: new ScriptedRevisions([first, first, second, second]),
+      store,
+    });
+    const assertionId = candidate.assertions.find((item) => item.kind === "FILE_CONTAINS")!.assertionId;
+    const request = { candidate, project, requestedAt: time, purpose: "CANDIDATE" as const, assertionIds: [assertionId] };
+
+    const initial = await service.verifyBatch(request);
+    const retried = await service.verifyBatch(request);
+
+    expect(initial.codeRevision).toBe(first);
+    expect(retried.codeRevision).toBe(second);
+    expect(retried.requestId).not.toBe(initial.requestId);
+    expect(retried.runId).not.toBe(initial.runId);
+    expect(store.runs).toHaveLength(2);
+  });
+
   it("honors cancellation and deadline before durable append", async () => {
     const { project, candidate } = fixture();
     const revision = `git:${"a".repeat(40)}:${"b".repeat(64)}`;

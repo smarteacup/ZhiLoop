@@ -286,7 +286,7 @@ function candidateDraft(input: KnowledgeExtractionInput, options: {
   return {
     subjectKey: options.subjectKey ?? "project.runtime.behavior",
     kind: options.kind ?? (options.implementation === true ? "IMPLEMENTATION" : "FACT"),
-    scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["PROJECT_BOUND"] },
+    scopeHint: { level: "PROJECT", projectId: input.projectContext.projectId, reasonCodes: ["PROJECT_BOUND"] },
     title: "运行时设计",
     summary: "运行时采用可恢复阶段机",
     body: "Markdown 是权威来源，Registry 和索引由 outbox 推进。",
@@ -296,10 +296,10 @@ function candidateDraft(input: KnowledgeExtractionInput, options: {
         ? [{ kind: "TEST_PASSED", parameters: { testId: `test-${options.subjectKey ?? "runtime"}` } }]
         : options.includeAcceptance === false ? [] : [{ kind: "USER_ACCEPTED", parameters: { statementRef: input.goalRef } }]),
       ...(options.withSymbol === true
-        ? [{ kind: "SYMBOL_EXISTS", parameters: { projectId: "project-1", symbol: "KnowledgeWorkerRuntime" } }]
+        ? [{ kind: "SYMBOL_EXISTS", parameters: { projectId: input.projectContext.projectId, symbol: "KnowledgeWorkerRuntime" } }]
         : []),
     ],
-    evidenceHints: [{ type: "USER_STATEMENT", sourceRef: input.goalRef, projectId: "project-1" }],
+    evidenceHints: [{ type: "USER_STATEMENT", sourceRef: input.goalRef, projectId: input.projectContext.projectId }],
   };
 }
 
@@ -426,6 +426,30 @@ function publicationOptions(
 }
 
 describe("KnowledgeWorkerRuntime", () => {
+  it("uses Episode project resolution for scope and evidence instead of the session fallback", async () => {
+    const fallbackEvidence = evidence();
+    const verifiedProjects: string[] = [];
+    const nested = { projectId: "project-nested", repositoryRoot: "/workspace/repo/nested", portable: false } as const;
+    const setup = fixture({
+      projectResolution: { resolve: () => nested },
+      evidence: {
+        verify: async (input) => {
+          verifiedProjects.push(input.project.projectId);
+          return await fallbackEvidence.verify(input);
+        },
+      },
+    });
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
+    const checkpoint = await runtime.run(request(), { executionMode: "POLICY_EVALUATION" });
+    expect({ status: checkpoint.status, stages: checkpoint.stages }).toMatchObject({
+      status: "AWAITING_COMMIT",
+      stages: { CANDIDATE_POLICY: { status: "SUCCEEDED" } },
+    });
+    expect(checkpoint.payload.episodes?.map((episode) => episode.projectContext)).toEqual([nested]);
+    expect(verifiedProjects).toEqual([nested.projectId]);
+    expect(checkpoint.payload.evolution?.[0]?.scope.scope).toMatchObject({ projectId: nested.projectId });
+  });
+
   it("runs the complete chain and replays without duplicate candidate or version", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "zhiloop-worker-"));
     tempDirectories.push(directory);

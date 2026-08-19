@@ -1,6 +1,6 @@
 import type { VerificationPolicy } from "@zhiloop/config";
 import type { LedgerEventRecord } from "@zhiloop/conversation-ledger";
-import type { Episode, KnowledgeAsset, KnowledgeCandidate, KnowledgeStatus, ProjectContext } from "@zhiloop/domain";
+import type { Episode, KnowledgeAsset, KnowledgeCandidate, KnowledgeStatus, NormalizedSession, ProjectContext } from "@zhiloop/domain";
 import type { EpisodeBuildResult } from "@zhiloop/episode-builder";
 import type { VerificationResult } from "@zhiloop/evidence-engine";
 import type { EvidencePolicyDecision } from "@zhiloop/evidence-policy";
@@ -111,11 +111,20 @@ export interface KnowledgeEvolutionLookupPort {
   search(queries: readonly string[], limit: number): readonly KnowledgeAsset[] | Promise<readonly KnowledgeAsset[]>;
 }
 
+export interface EpisodeProjectResolutionPort {
+  resolve(
+    session: NormalizedSession,
+    openingTurnRecords: readonly LedgerEventRecord[],
+    fallback: ProjectContext,
+  ): ProjectContext;
+}
+
 export interface KnowledgeWorkerPorts {
   readonly ledger: LedgerSnapshotPort;
   readonly compiler: KnowledgeExtractionPort;
   readonly evidence: EvidenceVerificationPort;
   readonly evolution: KnowledgeEvolutionLookupPort;
+  readonly projectResolution?: EpisodeProjectResolutionPort;
   readonly evolutionSemantic?: KnowledgeEvolutionSemanticPort;
   readonly markdown: MarkdownKnowledgePort;
   readonly registry: RegistryProjectionPort;

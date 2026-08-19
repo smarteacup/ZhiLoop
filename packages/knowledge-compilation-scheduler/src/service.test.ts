@@ -104,6 +104,7 @@ function service(input: {
   readonly dispatch?: (sessionId: string, sequence: number) => Promise<AutomaticPreviewDispatchResult>;
   readonly maxSessionsPerRun?: number;
   readonly maxDispatchesPerRun?: number;
+  readonly outstandingJobs?: number;
   readonly configuration?: KnowledgeCompilationConfiguration;
   readonly catalog?: SessionCatalogQueryPort;
   readonly checkpointPort?: KnowledgeCompilationCheckpointPort;
@@ -121,6 +122,7 @@ function service(input: {
     observations: { inspect: input.inspect ?? (async (item) => observation(item.sessionId)) },
     checkpoints: input.checkpointPort ?? checkpoints,
     dispatcher: { dispatchPreview },
+    ...(input.outstandingJobs === undefined ? {} : { capacity: { outstandingJobs: () => input.outstandingJobs! } }),
     pipeline: {
       compilerVersion: "compiler-v1",
       promptVersion: "prompt-v1",
@@ -204,6 +206,32 @@ describe("KnowledgeCompilationService", () => {
       bounded: true,
     });
     expect(fixture.dispatchPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies durable queue backpressure before dispatching more model work", async () => {
+    const fixture = service({
+      entries: [entry("session-1"), entry("session-2")],
+      outstandingJobs: 2,
+      configuration: { maxOutstandingJobs: 2 },
+    });
+    await expect(fixture.runtime.runOnce()).resolves.toMatchObject({
+      scannedSessions: 0,
+      queuedSessions: 0,
+      bounded: true,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: "DISPATCH_CAPACITY_EXHAUSTED", retryable: true })]),
+    });
+    expect(fixture.dispatchPreview).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the durable queue reports an invalid capacity value", async () => {
+    const fixture = service({ entries: [entry("session-1")], outstandingJobs: -1 });
+    await expect(fixture.runtime.runOnce()).resolves.toMatchObject({
+      scannedSessions: 0,
+      queuedSessions: 0,
+      bounded: true,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: "DISPATCH_CAPACITY_EXHAUSTED" })]),
+    });
+    expect(fixture.dispatchPreview).not.toHaveBeenCalled();
   });
 
   it("does no work when disabled", async () => {

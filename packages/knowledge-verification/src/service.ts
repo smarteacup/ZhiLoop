@@ -162,12 +162,6 @@ export class KnowledgeVerificationService {
     const serviceDeadline = Date.now() + this.#timeoutMs;
     const deadline = requestedDeadline === undefined ? serviceDeadline : Math.min(requestedDeadline, serviceDeadline);
     const assertions = selectedAssertions(request, this.#maxAssertions);
-    const requestId = `vreq_${digest({ candidateId: request.candidate.candidateId, subjectKey: request.candidate.subjectKey,
-      projectId: request.project.projectId, requestedAt: request.requestedAt, purpose: request.purpose,
-      assertionIds: assertions.map((item) => item.assertionId), snapshot: request.snapshot === undefined ? undefined
-        : { snapshotId: request.snapshot.snapshotId, sourceVersion: request.snapshot.sourceVersion, contentHash: request.snapshot.contentHash },
-      expectedCodeRevision: request.expectedCodeRevision, knowledgeVersion: request.knowledgeVersion })}`;
-    const runId = `vrun_${digest(["verification-run-v1", requestId])}`;
     const before = await bounded(() => this.#options.revisions.capture(request.project), controls, deadline);
     if (request.expectedCodeRevision !== undefined && request.expectedCodeRevision !== before.revision) {
       throw new KnowledgeVerificationError("CODE_REVISION_CONFLICT", true);
@@ -177,6 +171,14 @@ export class KnowledgeVerificationService {
       : { projectRoot: request.project.repositoryRoot, projectFingerprint: before.revision };
     const graphBefore = graphRequired && graphProject !== undefined && this.#options.codeIntelligence !== undefined
       ? await bounded(() => this.#options.codeIntelligence!.capabilities(graphProject, { refresh: true }), controls, deadline) : undefined;
+    const requestId = `vreq_${digest({ candidateId: request.candidate.candidateId, subjectKey: request.candidate.subjectKey,
+      projectId: request.project.projectId, requestedAt: request.requestedAt, purpose: request.purpose,
+      assertionIds: assertions.map((item) => item.assertionId), snapshot: request.snapshot === undefined ? undefined
+        : { snapshotId: request.snapshot.snapshotId, sourceVersion: request.snapshot.sourceVersion, contentHash: request.snapshot.contentHash },
+      expectedCodeRevision: request.expectedCodeRevision, knowledgeVersion: request.knowledgeVersion,
+      observedCodeRevision: before.revision, observedCodeCapability: before.capability,
+      observedGraphSignature: graphSignature(graphBefore) })}`;
+    const runId = `vrun_${digest(["verification-run-v2", requestId])}`;
     const probes: VerifierProbes = {};
     if (request.project.repositoryRoot !== undefined) {
       const repository = new NodeRepositoryReadPort(request.project.repositoryRoot);

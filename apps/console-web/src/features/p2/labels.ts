@@ -33,6 +33,8 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   CANDIDATE_PREVIEW_READY: "候选知识已生成，可检查后提交",
   KNOWLEDGE_PREVIEW_INCOMPLETE: "候选知识生成结果不完整",
   KNOWLEDGE_PREVIEW_FAILED: "知识编译过程失败",
+  COMPILER_TIMEOUT: "知识编译调用模型超时",
+  COMPILER_ADAPTER_UNAVAILABLE: "知识编译模型暂不可用",
   KNOWLEDGE_WORKER_NOT_CONFIGURED: "知识编译器尚未配置",
   EXTRACTION_SNAPSHOT_NOT_FOUND: "提取快照不存在",
   JOB_LEASE_EXPIRED: "后台任务执行租约已过期",
@@ -162,6 +164,10 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   VERIFICATION_CANCELLED: "证据验证已取消",
   VERIFICATION_DEADLINE_EXCEEDED: "证据验证超过时限",
   VERIFICATION_SOURCE_UNAVAILABLE: "缺少可用的证据来源",
+  ASSERTION_REFUTED: "存在被代码证据否定的断言",
+  AUTO_PUBLISH_ASSERTIONS_INCOMPLETE: "自动发布所需断言不完整",
+  MODEL_ONLY_REMAINS_PROPOSED: "仅有模型结论，继续保留为候选",
+  VERIFICATION_UNKNOWN: "证据验证结果不确定",
   COMPONENT_READY: "组件已就绪",
   COMPONENT_DEGRADED: "组件处于降级状态",
   CAPABILITY_DISABLED: "能力已禁用",
@@ -206,6 +212,8 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const details: Readonly<Record<string, string>> = Object.freeze({
+  COMPILER_TIMEOUT: "本地 Codex 未在配置的单次超时时间内返回结构化候选。可以检查模型可用性、输入规模和超时配置后安全重试。",
+  COMPILER_ADAPTER_UNAVAILABLE: "知识编译器无法完成本地 Codex 调用。请检查 Codex 登录状态、可执行文件和本机网络后重试。",
   KNOWLEDGE_PREVIEW_INCOMPLETE: "后台闭环没有产出可提交的候选策略结果。系统会按重试策略重新执行；若达到最大次数仍未成功，任务将转为失败。",
   KNOWLEDGE_PREVIEW_FAILED: "知识编译流水线返回失败。请结合后台任务中的尝试记录判断具体失败阶段。",
   CANDIDATE_PREVIEW_RESULT_MISSING: "后台任务报告成功，但持久化存储中没有对应候选预览，需要检查任务完成与结果写入的原子性。",

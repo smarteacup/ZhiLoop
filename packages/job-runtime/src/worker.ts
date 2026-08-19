@@ -55,6 +55,7 @@ export class DurableJobWorker {
     let checkpoint: JobCheckpointRecord | undefined = claim.checkpoint;
     let leaseLost = false;
     let heartbeatFailed = false;
+    let cancellationRequested = false;
     const abort = (): void => {
       clearInterval(heartbeat);
       controller.abort(signal.reason);
@@ -62,7 +63,12 @@ export class DurableJobWorker {
     signal.addEventListener("abort", abort, { once: true });
     const heartbeat = setInterval(() => {
       try {
-        this.store.heartbeat(reference, this.#leaseMs);
+        const result = this.store.heartbeat(reference, this.#leaseMs);
+        if (result.cancellationRequested) {
+          cancellationRequested = true;
+          clearInterval(heartbeat);
+          controller.abort(new JobCancellationRequestedError());
+        }
       } catch (error) {
         clearInterval(heartbeat);
         leaseLost = error instanceof JobLeaseLostError;
@@ -99,6 +105,10 @@ export class DurableJobWorker {
         return Object.freeze({ status: "FAILED", job });
       }
       await handler(context);
+      if (cancellationRequested) {
+        const job = this.store.acknowledgeCancellation(reference);
+        return Object.freeze({ status: "CANCELLED", job });
+      }
       if (signal.aborted || heartbeatFailed) {
         return Object.freeze({ status: "ABANDONED", jobId: claim.jobId, attemptId: claim.attemptId });
       }
@@ -108,6 +118,10 @@ export class DurableJobWorker {
     } catch (error) {
       if (leaseLost || error instanceof JobLeaseLostError) {
         return Object.freeze({ status: "LEASE_LOST", jobId: claim.jobId, attemptId: claim.attemptId });
+      }
+      if (cancellationRequested) {
+        const job = this.store.acknowledgeCancellation(reference);
+        return Object.freeze({ status: "CANCELLED", job });
       }
       if (signal.aborted || heartbeatFailed) {
         return Object.freeze({ status: "ABANDONED", jobId: claim.jobId, attemptId: claim.attemptId });

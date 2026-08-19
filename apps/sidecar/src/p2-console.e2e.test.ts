@@ -120,7 +120,7 @@ describe("P2 Console real composition", () => {
         return value.previewId === undefined ? undefined : value;
       });
       p2SessionExtractionViewSchema.parse(previewView);
-      expect(previewView.snapshot?.compilerVersion).toBe("mvp-compiler-v3");
+      expect(previewView.snapshot?.compilerVersion).toBe("mvp-compiler-v4");
       expect(runtime.service().listSnapshots({ sessionId: "session-1", limit: 10 }).items).toHaveLength(2);
       expect(previewView.commitAction.enabled).toBe(true);
       await facade.handle({ schemaVersion: 1, requestId: "commit-1", type: "p2.session.commit", sessionId: "session-1", previewId: previewView.previewId!, expectedPreviewRevision: previewView.commitAction.expectedRevision, idempotencyKey: previewView.commitAction.idempotencyKey });

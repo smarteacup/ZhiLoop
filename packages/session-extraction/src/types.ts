@@ -7,7 +7,7 @@ import type {
   ProvenanceNode,
   SnapshotReference,
 } from "@zhiloop/control-api";
-import type { DurableJobRecord, EnqueueJobResult } from "@zhiloop/job-runtime";
+import type { DurableJobRecord, EnqueueJobResult, JobPriority } from "@zhiloop/job-runtime";
 
 export type SnapshotCreateRequest = Extract<P2ControlRequest, { readonly type: "extraction.snapshot.create" }>;
 export type CandidatePreviewRequest = Extract<P2ControlRequest, { readonly type: "extraction.candidates.preview" }>;
@@ -52,6 +52,7 @@ export interface ExtractionJobQueue {
     readonly idempotencyKey: string;
     readonly input: unknown;
     readonly maxAttempts: number;
+    readonly priority?: JobPriority;
   }): EnqueueJobResult;
   get(jobId: string): DurableJobRecord | undefined;
 }

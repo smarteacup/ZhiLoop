@@ -6,6 +6,7 @@ import {
   SqliteKnowledgeCompilationCheckpointStore,
   type KnowledgeCompilationConfiguration,
   type CompilationDispatchPort,
+  type CompilationCapacityPort,
   type CompilationObservationPort,
   type KnowledgeCompilationPipelineIdentity,
   type KnowledgeCompilationRunReport,
@@ -19,6 +20,7 @@ export interface P2AutomaticCompilationRuntimeOptions {
   readonly stateDirectory: string;
   readonly catalog: SessionCatalogQueryPort;
   readonly adapter: CompilationObservationPort & CompilationDispatchPort;
+  readonly capacity?: CompilationCapacityPort;
   readonly pipeline: KnowledgeCompilationPipelineIdentity;
   readonly configuration?: KnowledgeCompilationConfiguration;
   readonly now?: () => Date;
@@ -31,6 +33,7 @@ export class P2AutomaticCompilationRuntime {
   readonly #store: SqliteKnowledgeCompilationCheckpointStore;
   readonly #catalog: SessionCatalogQueryPort;
   readonly #adapter: CompilationObservationPort & CompilationDispatchPort;
+  readonly #capacity: CompilationCapacityPort | undefined;
   readonly #now: (() => Date) | undefined;
   readonly #timer: KnowledgeCompilationTimerPort | undefined;
   readonly #onReport: ((report: KnowledgeCompilationRunReport) => void) | undefined;
@@ -46,6 +49,7 @@ export class P2AutomaticCompilationRuntime {
     this.#store = new SqliteKnowledgeCompilationCheckpointStore(join(options.stateDirectory, "automatic-knowledge-compilation.sqlite"));
     this.#catalog = options.catalog;
     this.#adapter = options.adapter;
+    this.#capacity = options.capacity;
     this.#now = options.now;
     this.#timer = options.timer;
     this.#onReport = options.onReport;
@@ -143,6 +147,7 @@ export class P2AutomaticCompilationRuntime {
       observations: this.#adapter,
       checkpoints: this.#store,
       dispatcher: this.#adapter,
+      ...(this.#capacity === undefined ? {} : { capacity: this.#capacity }),
       pipeline,
       ...(this.#now === undefined ? {} : { now: this.#now }),
     }, configuration);

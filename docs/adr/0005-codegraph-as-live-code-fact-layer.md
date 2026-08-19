@@ -36,7 +36,7 @@ flowchart TB
 
 - 可从当前代码低成本、确定性重建的结构事实不发布为长期知识正文。
 - ZhiLoop 只保存语义结论、来源、作用域、权威等级、`CodeAnchor` 和 `VerificationRecipe`。
-- 调用链、符号定义和影响范围在召回或验证时通过 CodeGraph 实时获得；快照只用于审计和短期诊断，不作为权威知识。
+- 调用链、符号定义和影响范围的权威仍是当前 CodeGraph；ZhiLoop 可保存有界、规范化、带 Git/graph revision 的 `CodeGraphArtifact` 供同版本复用和审计，但不复制完整原始图，也不允许旧 artifact 覆盖实时结果。
 - 代码变化由 CodeGraph/Git Adapter 形成结构化 `KnowledgeChangeSet`，现有失效引擎继续负责 `UNCHANGED`、`REFRESH_FINGERPRINT`、`REVALIDATE` 和 `MARK_STALE` 决策。
 - 知识准备注入 Codex 前执行一次有界的新鲜度门禁；无法确认的代码相关知识不得作为当前事实注入。
 - CodeGraph 不可用时，ZhiLoop 降级到 Git/path/config/dependency Verifier；无法复验的知识保持可见但退出默认注入。
@@ -132,7 +132,7 @@ flowchart LR
 
 - 知识正文不可原地覆盖。内容、Scope、Authority、Anchor 或 Verification Recipe 的语义变化必须创建新版本。
 - 旧版本通过 `SUPERSEDES`、`CONTRADICTS` 或 `DERIVED_FROM` 保留关系；不得因代码变化物理删除。
-- CodeGraph 查询结果只保存有界审计摘要和 revision，不写入 Markdown 正文，不无限保留完整调用图。
+- CodeGraph 查询结果只保存有界 `CodeGraphArtifact`、知识绑定和 revision，不写入 Markdown 正文，不无限保留完整调用图；项目、代码或图 revision 不兼容时立即转为 `SUSPECT` 并重新查询。
 - 需求原因仍成立而实现已变化时，只替代实现相关版本；原始需求、决策原因和来源会话继续有效。
 - 全局知识不会因单一项目代码变化自动失效，除非该全局知识明确绑定了该项目的 CodeAnchor。
 
@@ -183,9 +183,9 @@ CodeGraph 只能验证代码相关事实，其他知识按来源使用不同更�
 
 可以完全控制数据模型，但会重复成熟能力，维护语言解析、增量索引和调用关系的成本高，也更容易产生错误。拒绝。
 
-### 方案 B：把 CodeGraph 查询结果完整写入知识库
+### 方案 B：把 CodeGraph 查询结果完整写入知识正文
 
-首次召回简单，但代码变化后快照迅速过期，并造成“代码事实”和“知识副本”双重权威。拒绝；仅允许有保留期限的审计快照。
+首次召回简单，但代码变化后快照迅速过期，并造成“代码事实”和“知识副本”双重权威。拒绝；仅允许有界、可失效、带 revision 的 `CodeGraphArtifact` 投影。
 
 ### 方案 C：只使用 CodeGraph，不保留 ZhiLoop
 

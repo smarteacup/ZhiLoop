@@ -5,6 +5,8 @@ import { DEFAULT_CONFIGURATION, type InjectionPolicy } from "@zhiloop/config";
 import type { ConfigurationDraft, ConfigurationView } from "@zhiloop/configuration-service";
 import type { SqliteKnowledgeRegistryProjection } from "@zhiloop/knowledge-registry";
 import type { CodexKnowledgeQueryModel } from "@zhiloop/model-codex-exec";
+import { resolveProjectIdentity } from "@zhiloop/project-identity";
+import type { ProjectContext } from "@zhiloop/domain";
 import {
   ExplicitP3PolicyResolver,
   P3ConsoleRuntime,
@@ -20,6 +22,7 @@ export interface P3SidecarConsoleOptions {
   readonly configuration: (projectId?: string) => ConfigurationView;
   readonly drafts: () => readonly ConfigurationDraft[];
   readonly model?: CodexKnowledgeQueryModel;
+  readonly resolveProject?: (root: string) => Promise<ProjectContext>;
   readonly clock?: () => Date;
 }
 
@@ -137,12 +140,30 @@ export class P3SidecarConsole {
       this.capability,
     );
     const policies = new ExplicitP3PolicyResolver([current, ...(draft === undefined ? [] : [draft])]);
+    const resolveProject = async (input: {
+      readonly projectId?: string | undefined;
+      readonly repositoryRoot?: string | undefined;
+      readonly cwd?: string | undefined;
+    }): Promise<ProjectContext | undefined> => {
+      const root = input.cwd ?? input.repositoryRoot;
+      if (root === undefined) {
+        return input.projectId === undefined ? undefined : { projectId: input.projectId, portable: true };
+      }
+      const context = this.options.resolveProject === undefined
+        ? (await resolveProjectIdentity(root)).context
+        : await this.options.resolveProject(root);
+      if (input.projectId !== undefined && input.projectId !== context.projectId) {
+        throw new Error("P3_PROJECT_IDENTITY_MISMATCH");
+      }
+      return context;
+    };
     return {
       runtime: new P3ConsoleRuntime({
         projection: this.options.registry,
         policies,
         traces: this.#traces,
         operations: this.#operations,
+        resolveProject,
         ...(this.options.model === undefined ? {} : { model: this.options.model }),
         ...(this.options.clock === undefined ? {} : { now: this.options.clock }),
       }),

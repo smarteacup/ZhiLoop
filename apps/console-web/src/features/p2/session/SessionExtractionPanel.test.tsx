@@ -13,7 +13,7 @@ const view: SessionExtractionView = {
   sessionId: "session-1", revision: 7,
   snapshot: { snapshotId: "snapshot-7", revision: 7, completeness: "PARTIAL_SNAPSHOT", sourceSequenceFrom: 1, sourceSequenceThrough: 42, compilerVersion: "compiler-2", policyHash: "policy-hash", createdAt: observedAt, unsupportedEventTypes: ["TOOL_STREAM_DELTA"] },
   stages: [{ stage: "EPISODE_BUILD", status: "SUCCEEDED", reasonCode: "STAGE_COMPLETE", retryable: false, completedUnits: 3, totalUnits: 3 }, { stage: "EVIDENCE", status: "DEGRADED", reasonCode: "EVIDENCE_PARTIAL", retryable: true }],
-  candidates: [{ candidateId: "candidate-1", subjectKey: "symbol:Compiler", kind: "DECISION", title: "Compiler boundary", summary: "Keep evidence at the boundary", body: "# Compiler boundary\n\nKeep evidence at the boundary.", scope: "PROJECT", confidence: 0.88, status: "PROPOSED", evidenceVerdict: "INCONCLUSIVE", policy: { action: "KEEP_PROPOSED", targetStatus: "PROPOSED", shouldPublish: false, reasonCodes: ["EVIDENCE_PARTIAL"] }, assertions: [{ assertionId: "assertion-1", kind: "SYMBOL_EXISTS", target: "{\"symbol\":\"Compiler\"}" }], commitments: [{ signalId: "signal-1", kind: "USER_ACCEPTED", turnId: "turn-2", statementRef: "statement-1", statement: "就按这个方案", occurredAt: observedAt, reasonCodes: ["EXPLICIT_TOPIC_MATCH"] }], evolution: { status: "DECIDED", action: "SUPPLEMENT", targetKnowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }], confidence: 0.9, requiresConfirmation: false, reasonCodes: ["SUBJECT_MATCH"] }, provenance: { sessionIds: ["session-1"], turnIds: ["turn-2"], eventIds: ["event-4"], snapshotIds: ["snapshot-7"], episodeIds: ["episode-1"], knowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }] } }],
+  candidates: [{ candidateId: "candidate-1", subjectKey: "symbol:Compiler", kind: "DECISION", title: "Compiler boundary", summary: "Keep evidence at the boundary", body: "# Compiler boundary\n\nKeep evidence at the boundary.", scope: "PROJECT", confidence: 0.88, status: "PROPOSED", evidenceVerdict: "INCONCLUSIVE", localization: { claimMode: "USER_DECISION", projectId: "project-1", repositoryRemote: "example/project", observedBranch: "main", observedCommit: "abcdef1", dirty: false, branchMode: "EXACT_BRANCH", branchValue: "main", scenarioId: "scenario:project-1:compiler.boundary", scenarioKey: "compiler.boundary", scenarioTitle: "维护编译器边界", scenarioSummary: "在编译器边界维护证据。", taskIntents: ["调整编译器证据"], entryPoints: ["Compiler"], applicability: ["项目主分支"], nonApplicability: ["其他项目"], modulePaths: ["packages/compiler"], symbols: ["Compiler"] }, policy: { action: "KEEP_PROPOSED", targetStatus: "PROPOSED", shouldPublish: false, reasonCodes: ["EVIDENCE_PARTIAL"] }, assertions: [{ assertionId: "assertion-1", kind: "SYMBOL_EXISTS", target: "{\"symbol\":\"Compiler\"}" }], evidenceChecks: [{ assertionId: "assertion-1", kind: "SYMBOL_EXISTS", status: "SUPPORTED", reasonCodes: ["SYMBOL_FOUND"], codeGraphArtifact: { artifactId: "artifact-1", operation: "SYMBOL", status: "ACTIVE", codeRevision: "abcdef1", graphRevision: "graph-1", query: "Compiler", factCount: 1, bounded: true, reasonCodes: ["CODEGRAPH_QUERY_SUPPORTED"] } }], commitments: [{ signalId: "signal-1", kind: "USER_ACCEPTED", turnId: "turn-2", statementRef: "statement-1", statement: "就按这个方案", occurredAt: observedAt, reasonCodes: ["EXPLICIT_TOPIC_MATCH"] }], evolution: { status: "DECIDED", action: "SUPPLEMENT", targetKnowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }], confidence: 0.9, requiresConfirmation: false, reasonCodes: ["SUBJECT_MATCH"] }, provenance: { sessionIds: ["session-1"], turnIds: ["turn-2"], eventIds: ["event-4"], snapshotIds: ["snapshot-7"], episodeIds: ["episode-1"], knowledgeVersions: [{ knowledgeId: "knowledge-1", version: 2 }] } }],
   commitmentAmbiguities: [],
   reverseProvenance: [],
   extractAction: { enabled: true, expectedRevision: 7, idempotencyKey: "extract:session-1:7", reasonCode: "ACTION_READY" },
@@ -39,12 +39,26 @@ describe("SessionExtractionPanel", () => {
     expect(screen.getByText(/工具流式增量事件/u)).toBeTruthy();
     expect(screen.getByText(/保留为候选/u)).toBeTruthy();
     expect(screen.getByText(/技术决策/u)).toBeTruthy();
+    await user.click(screen.getByText("项目、分支与使用场景"));
+    expect(screen.getByText("维护编译器边界")).toBeTruthy();
+    expect(screen.getAllByText("main")).toHaveLength(2);
     await user.click(screen.getByText("候选正文、断言与用户承诺"));
     expect(screen.getByText(/Keep evidence at the boundary\./u)).toBeTruthy();
     expect(screen.getByText(/用户已明确接受/u)).toBeTruthy();
+    expect(screen.getByText(/CodeGraph SYMBOL/u)).toBeTruthy();
     await user.click(screen.getByText("演进决策"));
     expect(screen.getByText(/补充现有知识/u)).toBeTruthy();
     expect(screen.getAllByRole("link", { name: "knowledge-1@2" }).every((link) => link.getAttribute("href") === "#/knowledge/knowledge-1")).toBe(true);
+  });
+
+  it("labels legacy candidates without inventing localization or evidence", async () => {
+    const legacy: SessionExtractionView = {
+      ...view,
+      candidates: [{ ...view.candidates[0]!, localization: undefined, evidenceChecks: [] }],
+    };
+    render(<SessionExtractionPanel api={apiWith({ sessionExtraction: async () => legacy })} sessionId="session-1" captureCurrent />);
+    expect(await screen.findByText("旧版候选缺少定位")).toBeTruthy();
+    expect(screen.getByText("该候选不会被当作已定位的当前代码事实。")).toBeTruthy();
   });
 
   it("uses the server expected revision and idempotency key when activated by keyboard", async () => {

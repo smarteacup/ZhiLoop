@@ -1,4 +1,11 @@
-import type { KnowledgeAsset, KnowledgeCandidate, KnowledgeScope } from "@zhiloop/domain";
+import type {
+  KnowledgeAsset,
+  KnowledgeCandidate,
+  KnowledgeLocator,
+  KnowledgeScope,
+  ScenarioDefinition,
+  ScenarioEvolutionDecision,
+} from "@zhiloop/domain";
 
 export const EVOLUTION_ACTIONS = [
   "STORE",
@@ -70,4 +77,22 @@ export interface EvolutionSemanticJudgment {
 
 export interface KnowledgeEvolutionSemanticPort {
   arbitrate(request: EvolutionSemanticRequest): Promise<EvolutionSemanticJudgment>;
+}
+
+export interface ScenarioReconciliationTarget {
+  readonly definition: ScenarioDefinition;
+  readonly locators: readonly KnowledgeLocator[];
+}
+
+export interface ScenarioReconciliationInput {
+  readonly candidate: KnowledgeCandidate;
+  readonly knowledgeVersion: string;
+  readonly current?: ScenarioReconciliationTarget;
+  readonly related: readonly ScenarioReconciliationTarget[];
+  readonly now: string;
+}
+
+export interface ScenarioReconciliationResult {
+  readonly decision: ScenarioEvolutionDecision;
+  readonly next?: ScenarioDefinition;
 }

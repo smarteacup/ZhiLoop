@@ -8,6 +8,9 @@ import { RetrievalPage, type RetrievalConsoleApi } from "./RetrievalPage.js";
 
 const trace: RetrievalTraceView = {
   traceId: "trace-1", outcome: "SUCCEEDED", injectionResult: "SHADOWED", reasonCodes: ["P3_SHADOW_READ_ONLY"],
+  context: { projectId: "project-a", repositoryRoot: "/workspace/project-a", branch: "main", commit: "abcdef1234567", dirty: false },
+  scenarios: [{ scenarioId: "scenario:project-a:config", title: "配置变更", summary: "处理项目配置变更。", score: 0.9,
+    selected: true, knowledgePointers: ["knowledge-1@2"], taskIntents: ["修改配置"], entryPoints: ["ConfigService"] }],
   results: [{ knowledgeId: "knowledge-1", version: 2, title: "Config", summary: "summary", scope: "PROJECT", status: "VERIFIED", retrievalRank: 1, finalRank: 1, rrfScore: 0.1, contributions: [{ channel: "EXACT", rank: 1, reason: "symbol" }], evidenceIds: ["evidence-1"], injected: false }], filters: [],
   envelope: { detailLevel: "L1_POINTER", maxTokens: 2_000, estimatedTokens: 20, truncated: true, omitted: [{ knowledgeId: "knowledge-2", version: 1, reason: "TOKEN_BUDGET" }] },
 };
@@ -27,6 +30,8 @@ describe("RetrievalPage", () => {
     expect(screen.getByText(/EXACT#1: symbol/u)).toBeTruthy();
     expect(screen.getAllByText(/SHADOWED/u).length).toBeGreaterThan(0);
     expect(screen.getByText(/TOKEN_BUDGET/u)).toBeTruthy();
+    expect(screen.getByText(/已选择 · 配置变更/u)).toBeTruthy();
+    expect(screen.getByText("main")).toBeTruthy();
   });
 
   it("shows cited Codex answer and deterministic fallback without claiming model facts", async () => {
@@ -83,7 +88,7 @@ describe("RetrievalPage", () => {
     }) })} />);
     await user.click(screen.getByRole("tab", { name: "问 ZhiLoop" }));
     await user.type(screen.getByLabelText("自然语言问题"), "  how should this work?  ");
-    await user.type(screen.getByLabelText("项目 ID（可选）"), "  project-a  ");
+    await user.type(screen.getByLabelText(/项目 ID/u), "  project-a  ");
     await user.click(screen.getByRole("button", { name: "问 ZhiLoop" }));
     expect(await screen.findByText("Use the project-scoped configuration.")).toBeTruthy();
     expect(screen.getByText("Two revisions disagree")).toBeTruthy();
@@ -130,11 +135,12 @@ describe("RetrievalPage", () => {
     }));
     const first = render(<RetrievalPage api={api({ simulateRetrieval: simulate })} />);
     await user.type(screen.getByLabelText("自然语言问题"), "compare");
-    await user.type(screen.getByLabelText("项目 ID（可选）"), "project-a");
+    await user.type(screen.getByLabelText(/项目 ID/u), "project-a");
+    await user.type(screen.getByLabelText(/项目目录/u), "  /workspace/project-a  ");
     await user.click(screen.getByRole("button", { name: "比较当前/草稿策略" }));
     expect(await screen.findByRole("heading", { name: "策略比较实验室" })).toBeTruthy();
     expect(screen.getByText("knowledge-2@1")).toBeTruthy();
-    expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project-a" }), expect.any(AbortSignal));
+    expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project-a", cwd: "/workspace/project-a" }), expect.any(AbortSignal));
     first.unmount();
 
     const second = render(<RetrievalPage api={api({ simulateRetrieval: async () => ({ current: trace }) })} />);

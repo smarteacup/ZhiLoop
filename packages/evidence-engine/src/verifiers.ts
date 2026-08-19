@@ -105,6 +105,10 @@ function validateObservation(observation: VerificationObservation, expectedTarge
   if (observation.target !== expectedTarget) throw new Error("Observation target does not match Assertion");
   if (!REASON_CODE.test(observation.reasonCode)) throw new Error("Observation reasonCode is invalid");
   validateDetails(observation.details);
+  if (observation.codeGraphArtifact !== undefined && (
+    observation.codeGraphArtifact.sourceRef !== observation.sourceRef
+    || observation.codeGraphArtifact.observedAt !== observation.observedAt
+  )) throw new Error("Observation CodeGraph artifact does not match observation provenance");
 }
 
 function hash(value: string): string {
@@ -187,7 +191,19 @@ class MvpAssertionVerifier<TAssertion extends KnowledgeAssertion> implements Ass
         });
       }
       const typedAssertion = assertion as TAssertion;
-      this.spec.validate(typedAssertion, context);
+      try {
+        this.spec.validate(typedAssertion, context);
+      } catch {
+        return freeze({
+          assertionId: assertion.assertionId,
+          assertionKind: assertion.kind,
+          verifierId: this.verifierId,
+          status: "ERROR",
+          target: fallbackTarget,
+          observedAt: context.requestedAt,
+          reasonCodes: ["INVALID_ASSERTION"],
+        });
+      }
       const target = this.spec.target(typedAssertion);
       if (!isSafeText(target, 2_000)) throw new Error("Assertion target is invalid");
       resolvedTarget = target;
@@ -215,6 +231,7 @@ class MvpAssertionVerifier<TAssertion extends KnowledgeAssertion> implements Ass
         observedAt: observation.observedAt,
         reasonCodes: [observation.reasonCode],
         evidence,
+        ...(observation.codeGraphArtifact === undefined ? {} : { codeGraphArtifact: observation.codeGraphArtifact }),
       });
     } catch {
       return freeze({

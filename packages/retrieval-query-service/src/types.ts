@@ -8,6 +8,7 @@ import type {
   RetrievalChannelContribution,
   RetrievalDiagnostic,
   RetrievalResult,
+  ScenarioDirectoryItem,
   VectorRetrievalDependencies,
 } from "@zhiloop/retrieval-engine";
 import type { RetrievalTrace as EvaluationRetrievalTrace } from "@zhiloop/retrieval-evaluation";
@@ -112,6 +113,7 @@ export interface ConsoleRetrievalTrace {
   readonly requestHash: string;
   readonly replayOfTraceId?: string;
   readonly queryContext: QueryContext;
+  readonly scenarioDirectory: readonly ScenarioDirectoryItem[];
   readonly policy: RetrievalPolicyReference;
   readonly outcome: RetrievalRunOutcome;
   readonly filters: readonly TraceFilterDecision[];

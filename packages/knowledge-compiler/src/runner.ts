@@ -5,6 +5,7 @@ import type {
   KnowledgeCandidate,
   KnowledgeExtractionOutput,
 } from "@zhiloop/domain";
+import { deriveScenarioId, isValidScenarioKey, validateKnowledgeLocator } from "@zhiloop/domain";
 import { parseKnowledgeCandidate, parseKnowledgeExtractionOutput } from "@zhiloop/schemas";
 
 import { KnowledgeExtractionAdapterError } from "./adapter-error.js";
@@ -267,6 +268,14 @@ function materializeCandidates(
   if (groundingDiagnostics.length > 0) return { ok: false, diagnostics: groundingDiagnostics };
   const candidates: KnowledgeCandidate[] = [];
   for (const [candidateIndex, draft] of output.candidates.entries()) {
+    const located = draft.claimMode !== undefined && draft.scenarioHint !== undefined;
+    if ((draft.claimMode === undefined) !== (draft.scenarioHint === undefined)) {
+      return { ok: false, diagnostics: [{ code: "GENERATED_CANDIDATE_INVALID", path: `/candidates/${candidateIndex}/localization` }] };
+    }
+    const scenarioHint = draft.scenarioHint;
+    if (scenarioHint !== undefined && !isValidScenarioKey(scenarioHint.scenarioKey)) {
+      return { ok: false, diagnostics: [{ code: "GENERATED_CANDIDATE_INVALID", path: `/candidates/${candidateIndex}/scenarioHint` }] };
+    }
     const candidateId = hash([extractionKey, "candidate", String(candidateIndex), canonicalJson(draft)]);
     const assertions = draft.assertions.map((assertion, assertionIndex): KnowledgeAssertion => ({
       assertionId: hash([candidateId, "assertion", String(assertionIndex), canonicalJson(assertion)]),
@@ -275,13 +284,46 @@ function materializeCandidates(
       parameters: structuredClone(assertion.parameters),
       createdAt: request.requestedAt,
     }) as KnowledgeAssertion);
+    const project = request.input.projectContext;
+    const observedRevision = {
+      ...(project.branch === undefined ? {} : { branch: project.branch }),
+      ...(project.commit === undefined ? {} : { commit: project.commit }),
+      dirty: project.dirty ?? false,
+    };
+    const branchApplicability = project.commit !== undefined
+      ? { mode: "BRANCH_LINEAGE" as const, baseCommit: project.commit, ...(project.branch === undefined ? {} : { observedBranch: project.branch }) }
+      : project.branch !== undefined
+        ? { mode: "EXACT_BRANCH" as const, branch: project.branch }
+        : { mode: "ALL_BRANCHES" as const, reason: "NO_AUTHORITATIVE_BRANCH" };
+    const locator = scenarioHint === undefined ? undefined : {
+      schemaVersion: 1 as const,
+      projectId: project.projectId,
+      ...(project.repositoryRemote === undefined ? {} : { repositoryRemote: project.repositoryRemote }),
+      observedRevision,
+      branchApplicability,
+      scenarioId: deriveScenarioId(project.projectId, scenarioHint.scenarioKey),
+      scenarioKey: scenarioHint.scenarioKey,
+      scenarioTitle: scenarioHint.title,
+      scenarioSummary: scenarioHint.summary,
+      modulePaths: [...(draft.scopeHint.modulePaths ?? [])],
+      symbols: [...(draft.scopeHint.symbols ?? [])],
+      entryPoints: [...scenarioHint.entryPoints],
+      taskIntents: [...scenarioHint.taskIntents],
+      applicability: [...scenarioHint.applicability],
+      nonApplicability: [...scenarioHint.nonApplicability],
+    };
+    if (locator !== undefined && !validateKnowledgeLocator(locator).valid) {
+      return { ok: false, diagnostics: [{ code: "GENERATED_CANDIDATE_INVALID", path: `/candidates/${candidateIndex}/locator` }] };
+    }
     const candidateInput = {
-      schemaVersion: 1,
+      schemaVersion: located ? 2 : 1,
       candidateId,
       compilerVersion: request.compilerVersion,
       status: "PROPOSED",
       subjectKey: draft.subjectKey,
       kind: draft.kind,
+      ...(draft.claimMode === undefined ? {} : { claimMode: draft.claimMode }),
+      ...(locator === undefined ? {} : { locator }),
       scopeHint: structuredClone(draft.scopeHint),
       title: draft.title,
       summary: draft.summary,

@@ -18,8 +18,8 @@ export const MVP_KNOWLEDGE_KINDS = Object.freeze([
   "EXPERIENCE",
 ] as const satisfies readonly KnowledgeKind[]);
 
-export const DEFAULT_MVP_COMPILER_VERSION = "mvp-compiler-v4";
-export const DEFAULT_MVP_PROMPT_VERSION = "mvp-extraction-prompt-v2";
+export const DEFAULT_MVP_COMPILER_VERSION = "mvp-compiler-v5";
+export const DEFAULT_MVP_PROMPT_VERSION = "mvp-extraction-prompt-v3";
 
 const SAFE_VERSION = /^[A-Za-z0-9._-]{1,100}$/;
 const MVP_KIND_SET = new Set<KnowledgeKind>(MVP_KNOWLEDGE_KINDS);
@@ -34,6 +34,9 @@ A suggestion or proposed approach is not accepted or verified. The caller always
 Use only sourceRef values present in input.evidenceRefs. Do not invent files, symbols, commands, projects, test results, acceptance, or evidence.
 Set every subjectKey to a lowercase dot-separated identifier with at least three segments. Each segment must start with a lowercase letter and contain only lowercase letters, digits, or hyphens; for example retry.policy.device-service.
 Every candidate must contain at least one assertion draft or evidence hint draft. Assertions describe checks to run; they do not prove themselves.
+Classify every candidate claimMode as CURRENT_STATE for facts about code that exists now, USER_DECISION for an explicitly accepted choice, or FUTURE_REQUIREMENT for intended future work or rollout constraints.
+Provide a scenarioHint for every candidate. scenarioKey is a stable lowercase dot-separated activity identifier with at least two segments, not a project or branch name. Include a concise title/summary, task intents that should retrieve it, observable entry points, positive applicability, and explicit non-applicability. Do not put repository, branch, commit, projectId, or CodeGraph revision in scenarioHint; the caller supplies those authoritative coordinates.
+For USER_DECISION and FUTURE_REQUIREMENT, assertions must verify the decision source or relevant current preconditions; do not assert that the future implementation already exists.
 Write concise conclusions and observable facts only. Do not output hidden reasoning, chain-of-thought, analysis, rationale, model metadata, prompts, or commentary.`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -142,6 +145,9 @@ function buildMvpResponseSchema(): Readonly<Record<string, unknown>> {
   if (!isRecord(candidateDraft)) throw new Error("knowledge extraction candidate schema is invalid");
   const properties = candidateDraft["properties"];
   if (!isRecord(properties)) throw new Error("knowledge extraction candidate properties are invalid");
+  const required = candidateDraft["required"];
+  if (!Array.isArray(required)) throw new Error("knowledge extraction candidate required fields are invalid");
+  candidateDraft["required"] = [...new Set([...required, "claimMode", "scenarioHint"])];
   const kind = properties["kind"];
   if (!isRecord(kind)) throw new Error("knowledge extraction candidate kind schema is invalid");
   kind["enum"] = [...MVP_KNOWLEDGE_KINDS];

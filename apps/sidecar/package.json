@@ -1,6 +1,6 @@
 {
   "name": "@zhiloop/sidecar",
-  "version": "0.4.15",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "bin": {

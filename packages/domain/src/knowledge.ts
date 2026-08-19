@@ -1,5 +1,6 @@
 import type { EvidenceHint, EvidenceRef, KnowledgeAssertion } from "./evidence.js";
 import type { KnowledgeScope, ScopeHint } from "./scope.js";
+import type { KnowledgeClaimMode, KnowledgeLocator, ScenarioHint } from "./localization.js";
 
 export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
 
@@ -48,7 +49,7 @@ export interface KnowledgeRelation {
 }
 
 interface KnowledgeCandidateBase {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly candidateId: string;
   readonly compilerVersion: string;
   readonly status: "PROPOSED";
@@ -74,7 +75,10 @@ export type CandidateSupport =
       readonly evidenceHints: NonEmptyReadonlyArray<EvidenceHint>;
     };
 
-export type KnowledgeCandidate = KnowledgeCandidateBase & CandidateSupport;
+export type KnowledgeCandidate = KnowledgeCandidateBase & CandidateSupport & (
+  | { readonly schemaVersion: 1; readonly claimMode?: KnowledgeClaimMode; readonly locator?: KnowledgeLocator }
+  | { readonly schemaVersion: 2; readonly claimMode: KnowledgeClaimMode; readonly locator: KnowledgeLocator }
+);
 
 export type KnowledgeAssertionDraft =
   | { readonly kind: "USER_ACCEPTED" | "USER_REJECTED"; readonly parameters: { readonly statementRef: string } }
@@ -133,6 +137,8 @@ interface KnowledgeCandidateDraftBase {
   readonly summary: string;
   readonly body: string;
   readonly confidence: number;
+  readonly claimMode?: KnowledgeClaimMode;
+  readonly scenarioHint?: ScenarioHint;
 }
 
 export type KnowledgeCandidateDraft = KnowledgeCandidateDraftBase & (
@@ -152,7 +158,7 @@ export interface KnowledgeExtractionOutput {
 }
 
 export interface KnowledgeAsset {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly id: string;
   readonly subjectKey: string;
   readonly kind: KnowledgeKind;
@@ -176,6 +182,8 @@ export interface KnowledgeAsset {
   readonly correlationId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly claimMode?: KnowledgeClaimMode;
+  readonly locator?: KnowledgeLocator;
 }
 
 const SUBJECT_KEY_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*){2,}$/;

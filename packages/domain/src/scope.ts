@@ -43,6 +43,10 @@ export interface ProjectContext {
   readonly repositoryRoot?: string;
   readonly repositoryRemote?: string;
   readonly branch?: string;
+  readonly revision?: {
+    readonly commit: string;
+    readonly dirty: boolean;
+  };
   readonly portable: boolean;
 }
 
@@ -132,4 +136,3 @@ export function validateKnowledgeScope(input: ScopeInput): ScopeValidationResult
 export function hasProjectSpecificScopeFields(input: ScopeInput): boolean {
   return PROJECT_ONLY_FIELDS.some((field) => input[field] !== undefined);
 }
-

@@ -1,5 +1,70 @@
 # ZhiLoop 累计代码审查报告
 
+## 📊 场景化知识定位与 CodeGraph 复用 CR 统计
+
+### 当前 CR 情况
+
+| 指标 | 数值 |
+|---|---:|
+| CR 对象 | `main@ed634f7 + working tree`：scenario-aware knowledge localization |
+| CR 耗时 | 约 18 分钟 |
+| 🔴 高风险 | 2 个 |
+| 🟡 中风险 | 7 个 |
+| 🟢 低风险 | 2 个 |
+| 修复程度 | 已修复 11/11（100%） |
+
+### 累计情况
+
+| 指标 | 累计值 |
+|---|---:|
+| 总 CR 次数 | 18 次 |
+| 总耗时 | 已知约 7 小时 42 分钟（首轮历史报告未记录耗时） |
+| 🔴 高风险累计 | 57 个 |
+| 🟡 中风险累计 | 73 个 |
+| 🟢 低风险累计 | 13 个 |
+| 平均修复程度 | 已修复 138/143（96.5%） |
+
+## 改动说明
+
+本次变更为每条研发知识增加权威项目、Git 分支/提交、claim mode、使用场景及适用/排除边界，并把场景维护实现为可版本化、可重建的投影。CodeGraph 调用结果只以有界、带 revision 的 Artifact 保存和复用；当前代码事实仍由实时图与其他验证器判定。
+
+召回链路先按项目、分支、提交、dirty、新鲜度和场景进行硬过滤，再输出受界场景目录；只有明确选择的场景可以展开正文。控制台同步展示 Candidate/Knowledge 的定位、逐条 Evidence、场景和 Artifact，不再只显示聚合数量或英文状态码。
+
+对外 Schema 使用 v2 严格写入、v1 兼容读取；旧知识迁移只写可回滚投影，不覆盖 Markdown、Asset 或 Ledger。发布模式继续为 `SHADOW + PREVIEW_ONLY`，自动发布和 CodeGraph 自动初始化仍关闭。
+
+## 场景化知识定位风险矩阵
+
+| 等级 | 代码定位 | 问题描述 | 影响范围 | 修复与证据 |
+|---|---|---|---|---|
+| 高 | `packages/markdown-repository/src/repository.ts` | v2 Asset 初版写入 Markdown 时未持久化 `claimMode/locator`，读取后会退化成无定位旧知识 | 已发布知识重启或重建索引后失去项目/分支门禁，存在跨场景误召回风险 | 补齐可读 front matter 序列化/解析和 v2 round-trip 测试 |
+| 高 | `apps/sidecar/src/p3-console.ts` | 查询可沿用请求中的 projectId，而未用 cwd/repository root 重新解析权威 Git 身份 | 恶意或错误调用方可能把查询绑定到不属于当前仓库的项目 | Sidecar 必须解析本地 Git 上下文并拒绝 projectId 不一致；P3 集成测试覆盖 |
+| 中 | `packages/episode-builder/src/builder.ts` | Episode ProjectContext 初版未完整保留 branch/commit/dirty | Compiler 得到的 Locator revision 不完整，CURRENT_STATE 无法可靠发布 | 完整透传 revision，并补 builder 回归 |
+| 中 | `packages/knowledge-registry/src/scenario-projection.ts` | 旧 projection payload 在迁移时未先规范化再计算 hash | 重放可能误报 hash collision 或无法读取历史场景 | v1→v2 canonical migration 后统一 SHA-256；腐损 payload fail closed 测试 |
+| 中 | `apps/sidecar/src/p2-console.ts` / Control API | Worker 已保存 Candidate Locator，但会话预览 DTO 丢弃定位和逐条验证结果 | 操作者看不到候选属于哪个场景，也无法理解为什么被门禁拦截 | 增加严格 localization/evidenceChecks 契约、UI 只读下钻和 legacy 降级测试 |
+| 中 | `packages/codegraph-adapter/src/adapter.ts` | 调用链 BFS 用尽端到端预算时被误报为 provider unavailable | 后台产生错误告警和无意义重试，真实含义“未在边界内证明”被掩盖 | 归类为 `CODEGRAPH_TRACE_BOUNDED`；真实仓库和 deadline 回归均验证 |
+| 中 | `apps/sidecar/src/application.ts` | CodeGraph 前后 capability 快照加 assertion probes 共用 10 秒预算，真实任务连续两次超时 | Candidate Preview 延迟并消耗重试次数 | 总预算改为至少 15 秒、随 query budget 扩展且封顶 60 秒；真实会话第 3 次成功后补回归 |
+| 中 | `packages/p3-console-runtime/src/operation-store.ts` / retrieval trace | 新增 scenario directory 后旧 durable trace 缺少字段会被严格解析拒绝 | 升级后历史召回审计不可读 | 旧记录按空场景目录兼容读取，新写入保持严格完整 |
+| 中 | CodeGraph Artifact projection | 重放已有 Artifact 时可能丢失 `SUSPECT` 状态 | 已失效代码证据被重新当作可复用 | 重放保留最新状态，项目/code/graph/dependency 不兼容均触发重新查询 |
+| 低 | `apps/console-web/src/features/p2/labels.ts` | 新增 claim、branch、Evidence 和 CodeGraph reason code 未全部中文化 | 页面出现原始枚举，影响理解但不改变门禁 | 已补中文标签；未知未来状态仍显示中文兜底并保留 raw title |
+| 低 | release metadata/tests/docs | 版本号升级后存在单测和文档残留旧值 | 发布 Gate 失败或运维误读 | 统一为 `0.5.1`，全仓搜索与部署 doctor 复验 |
+
+## 场景化知识定位配置检查
+
+本轮没有新增 `.properties/.yml` 环境配置。现有 v2 配置字段继续使用默认安全值：`compilation.mode=PREVIEW_ONLY`、`compilation.publication.enabled=false`、`codeIntelligence.initializeAutomatically=false`。验证预算由既有 `codeIntelligence.queryTimeoutMs` 推导，不新增不可迁移字段；旧 v1 持久化数据保持只读兼容。
+
+## 场景化知识定位 Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，75 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7/隔离部署 | 61/61 脚本级 Gate 通过 |
+| Vitest | 208 files，1,747/1,747 通过 |
+| Coverage | statements 90.02%，branches 85.00%，functions 92.24%，lines 93.87% |
+| OpenSpec strict validation | `scenario-aware-knowledge-localization-and-codegraph-reuse` 有效 |
+| 本机部署 | `0.5.1`，READY/SHADOW，doctor 6/6 通过 |
+| 当前未解决风险 | 0 个阻塞项；跨分支历史事实仍要求目标 worktree/revision 重新验证 |
+
 ## 📊 统计概览
 
 ### 当前 CR 情况

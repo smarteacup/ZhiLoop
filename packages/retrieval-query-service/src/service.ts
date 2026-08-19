@@ -379,6 +379,7 @@ function failureTrace(
     requestHash: identity.requestHash,
     ...(identity.replayOfTraceId === undefined ? {} : { replayOfTraceId: identity.replayOfTraceId }),
     queryContext: structuredClone(context),
+    scenarioDirectory: [],
     policy: { ...policy },
     outcome,
     filters: [{
@@ -490,6 +491,8 @@ export class RetrievalQueryService {
         policy: policy.injection,
         automatic: false,
         maxTokens,
+        selectedScenarioIds: retrieval.scenarioDirectory
+          ?.filter((item) => item.selected).map((item) => item.scenarioId) ?? [],
       });
       const evaluation = buildRetrievalTrace({
         traceId: identity.traceId,
@@ -528,6 +531,7 @@ export class RetrievalQueryService {
         requestHash: identity.requestHash,
         ...(identity.replayOfTraceId === undefined ? {} : { replayOfTraceId: identity.replayOfTraceId }),
         queryContext: structuredClone(context),
+        scenarioDirectory: structuredClone(retrieval.scenarioDirectory ?? []),
         policy: { ...policy.reference },
         outcome,
         filters,

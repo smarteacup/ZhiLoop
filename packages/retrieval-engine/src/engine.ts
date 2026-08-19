@@ -11,6 +11,7 @@ import type {
   RetrievalRequest,
   RetrievalResult,
   RetrievalSourceHit,
+  ScenarioDirectoryItem,
   VectorRetrievalDependencies,
 } from "./types.js";
 
@@ -47,11 +48,81 @@ function scopeEligible(asset: KnowledgeAsset, request: RetrievalRequest): boolea
   }
 }
 
+function locatorFilter(asset: KnowledgeAsset, request: RetrievalRequest): RetrievalDiagnostic["code"] | undefined {
+  const context = request.context;
+  const projectBound = asset.scope.level === "PROJECT" || asset.scope.level === "MODULE" || asset.scope.level === "SYMBOL"
+    || (asset.scope.level === "TASK" && asset.scope.projectId !== undefined);
+  if (asset.schemaVersion === 1 || asset.locator === undefined) {
+    return context.commit !== undefined && projectBound && (asset.kind === "IMPLEMENTATION" || asset.kind === "FACT")
+      ? "LOCATOR_LEGACY_FILTERED" : undefined;
+  }
+  const locator = asset.locator;
+  if (context.project === undefined || locator.projectId !== context.project.projectId) return "LOCATOR_PROJECT_FILTERED";
+  if (asset.claimMode === "CURRENT_STATE" && locator.observedRevision.dirty) return "DIRTY_REVISION_FILTERED";
+  if (locator.branchApplicability.mode === "EXACT_BRANCH") {
+    return context.branch === locator.branchApplicability.branch ? undefined : "BRANCH_FILTERED";
+  }
+  if (locator.branchApplicability.mode === "BRANCH_LINEAGE") {
+    if (context.commit === undefined) return "COMMIT_FILTERED";
+    return context.commit === locator.branchApplicability.baseCommit
+      || context.commit === locator.observedRevision.commit ? undefined : "COMMIT_FILTERED";
+  }
+  return undefined;
+}
+
+function normalized(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("en-US").replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function scenarioDirectory(
+  current: readonly ProjectedKnowledgeAsset[],
+  request: RetrievalRequest,
+): { readonly items: readonly ScenarioDirectoryItem[]; readonly selected: ReadonlySet<string> } {
+  const signals = [
+    request.context.prompt,
+    ...request.context.taskIntents.map((item) => item.canonical),
+    ...request.context.entryPoints.map((item) => item.canonical),
+    ...request.context.paths.map((item) => item.canonical),
+    ...request.context.symbols.map((item) => item.canonical),
+  ].map(normalized).filter(Boolean);
+  const grouped = new Map<string, { title: string; summary: string; taskIntents: Set<string>;
+    entryPoints: Set<string>; knowledge: Set<string>; score: number }>();
+  for (const projected of current) {
+    const asset = projected.asset;
+    if (projected.tombstone || !ELIGIBLE_STATUSES.has(asset.status) || !scopeEligible(asset, request)
+      || locatorFilter(asset, request) !== undefined || asset.locator === undefined) continue;
+    const locator = asset.locator;
+    const values = [locator.scenarioTitle, locator.scenarioSummary, ...locator.taskIntents,
+      ...locator.entryPoints, ...locator.symbols, ...locator.modulePaths].map(normalized).filter(Boolean);
+    const score = signals.reduce((total, signal) => total + values.reduce((inner, value) =>
+      inner + (value === signal ? 4 : value.includes(signal) || signal.includes(value) ? 1 : 0), 0), 0);
+    const group = grouped.get(locator.scenarioId) ?? { title: locator.scenarioTitle,
+      summary: locator.scenarioSummary, taskIntents: new Set<string>(), entryPoints: new Set<string>(),
+      knowledge: new Set<string>(), score: 0 };
+    locator.taskIntents.forEach((item) => group.taskIntents.add(item));
+    locator.entryPoints.forEach((item) => group.entryPoints.add(item));
+    group.knowledge.add(`${asset.id}@${asset.version}`);
+    group.score = Math.max(group.score, score);
+    grouped.set(locator.scenarioId, group);
+  }
+  const ranked = [...grouped.entries()].sort((left, right) => right[1].score - left[1].score
+    || left[0].localeCompare(right[0])).slice(0, 20);
+  const selected = new Set(ranked.filter((item) => item[1].score > 0).slice(0, 3).map(([id]) => id));
+  return {
+    selected,
+    items: Object.freeze(ranked.map(([scenarioId, item]) => Object.freeze({ scenarioId, title: item.title,
+      summary: item.summary, score: item.score, selected: selected.has(scenarioId),
+      knowledgePointers: Object.freeze([...item.knowledge].sort()),
+      taskIntents: Object.freeze([...item.taskIntents].sort()), entryPoints: Object.freeze([...item.entryPoints].sort()) }))),
+  };
+}
+
 function eligibility(
   hit: RetrievalSourceHit,
   channel: RetrievalChannel,
   request: RetrievalRequest,
   diagnostics: RetrievalDiagnostic[],
+  selectedScenarios: ReadonlySet<string>,
 ): boolean {
   const asset = hit.asset;
   if (asset.tombstone) {
@@ -66,6 +137,18 @@ function eligibility(
     diagnostics.push({ code: "SCOPE_FILTERED", channel, assetId: asset.asset.id, message: `scope ${asset.asset.scope.level} is outside QueryContext boundary` });
     return false;
   }
+  const locatorReason = locatorFilter(asset.asset, request);
+  if (locatorReason !== undefined) {
+    diagnostics.push({ code: locatorReason, channel, assetId: asset.asset.id,
+      message: `locator rejected ${asset.asset.id}: ${locatorReason}` });
+    return false;
+  }
+  if (selectedScenarios.size > 0 && asset.asset.locator !== undefined
+    && !selectedScenarios.has(asset.asset.locator.scenarioId)) {
+    diagnostics.push({ code: "SCENARIO_FILTERED", channel, assetId: asset.asset.id,
+      message: `scenario ${asset.asset.locator.scenarioId} was not selected` });
+    return false;
+  }
   return true;
 }
 
@@ -75,6 +158,7 @@ function rankEligible(
   request: RetrievalRequest,
   diagnostics: RetrievalDiagnostic[],
   limit: number,
+  selectedScenarios: ReadonlySet<string>,
 ): RankedHit[] {
   const seen = new Set<string>();
   const eligible: RetrievalSourceHit[] = [];
@@ -83,7 +167,7 @@ function rankEligible(
       || hit.reason.length === 0 || hit.reason.length > 1_000 || /[\0\r\n]/u.test(hit.reason)) {
       throw new Error(`${channel} source returned an invalid ranked hit`);
     }
-    if (seen.has(hit.asset.asset.id) || !eligibility(hit, channel, request, diagnostics)) continue;
+    if (seen.has(hit.asset.asset.id) || !eligibility(hit, channel, request, diagnostics, selectedScenarios)) continue;
     seen.add(hit.asset.asset.id);
     eligible.push(hit);
     if (eligible.length >= limit) break;
@@ -234,12 +318,19 @@ export class MultiChannelRetrievalEngine {
     }
     const diagnostics: RetrievalDiagnostic[] = [];
     const allHits: RankedHit[] = [];
+    let directorySource: readonly ProjectedKnowledgeAsset[] = [];
+    try {
+      directorySource = await this.#source.listCurrent();
+    } catch (error) {
+      diagnostics.push({ code: "CHANNEL_FAILED", channel: "EXACT", message: errorMessage(error) });
+    }
+    const directory = scenarioDirectory(directorySource, request);
 
     if (this.#channels.exact && request.policy.topK.exact > 0) {
       try {
-        const current = await this.#source.listCurrent();
+        const current = directorySource;
         const hits = await currentHits(exactHits(current, request), "EXACT", this.#source, diagnostics);
-        allHits.push(...rankEligible(hits, "EXACT", request, diagnostics, request.policy.topK.exact));
+        allHits.push(...rankEligible(hits, "EXACT", request, diagnostics, request.policy.topK.exact, directory.selected));
       } catch (error) {
         diagnostics.push({ code: "CHANNEL_FAILED", channel: "EXACT", message: errorMessage(error) });
       }
@@ -259,7 +350,7 @@ export class MultiChannelRetrievalEngine {
           queryOffset += request.policy.topK.fts;
         }
         const hits = await currentHits([...merged.values()], "FTS", this.#source, diagnostics);
-        allHits.push(...rankEligible(hits, "FTS", request, diagnostics, request.policy.topK.fts));
+        allHits.push(...rankEligible(hits, "FTS", request, diagnostics, request.policy.topK.fts, directory.selected));
       } catch (error) {
         diagnostics.push({ code: "CHANNEL_FAILED", channel: "FTS", message: errorMessage(error) });
       }
@@ -286,7 +377,7 @@ export class MultiChannelRetrievalEngine {
             seen.add(asset.asset.id);
             vectorHits.push({ asset, rank: chunk.rank, rawScore: chunk.score, reason: `vector rank ${chunk.rank}` });
           }
-          allHits.push(...rankEligible(vectorHits, "VECTOR", request, diagnostics, request.policy.topK.vector));
+          allHits.push(...rankEligible(vectorHits, "VECTOR", request, diagnostics, request.policy.topK.vector, directory.selected));
         }
       } catch (error) {
         diagnostics.push({ code: "CHANNEL_FAILED", channel: "VECTOR", message: errorMessage(error) });
@@ -298,7 +389,7 @@ export class MultiChannelRetrievalEngine {
         const seeds = fuse(allHits, request.policy.fusion.rrfK, request.policy.rerank.candidates).map((item) => item.asset.id);
         const related = seeds.length === 0 ? [] : await this.#source.related(seeds, request.policy.topK.relation);
         const hits = await currentHits(related, "RELATION", this.#source, diagnostics);
-        allHits.push(...rankEligible(hits, "RELATION", request, diagnostics, request.policy.topK.relation));
+        allHits.push(...rankEligible(hits, "RELATION", request, diagnostics, request.policy.topK.relation, directory.selected));
       } catch (error) {
         diagnostics.push({ code: "CHANNEL_FAILED", channel: "RELATION", message: errorMessage(error) });
       }
@@ -307,6 +398,7 @@ export class MultiChannelRetrievalEngine {
     return freeze({
       items: applyFeedback(fuse(allHits, request.policy.fusion.rrfK, request.policy.rerank.candidates), request),
       diagnostics,
+      scenarioDirectory: directory.items,
     });
   }
 }

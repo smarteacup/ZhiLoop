@@ -13,6 +13,8 @@ export interface QueryContextHints {
   readonly symbols?: readonly string[];
   readonly errorCodes?: readonly string[];
   readonly configKeys?: readonly string[];
+  readonly taskIntents?: readonly string[];
+  readonly entryPoints?: readonly string[];
 }
 
 export interface QueryContextInput {
@@ -37,11 +39,14 @@ export interface QueryContext {
   readonly project?: ProjectContext;
   readonly cwd?: string;
   readonly branch?: string;
+  readonly commit?: string;
   readonly taskId?: string;
   readonly paths: readonly QueryTerm[];
   readonly symbols: readonly QueryTerm[];
   readonly errorCodes: readonly QueryTerm[];
   readonly configKeys: readonly QueryTerm[];
+  readonly taskIntents: readonly QueryTerm[];
+  readonly entryPoints: readonly QueryTerm[];
   readonly retrievalBoundary: QueryRetrievalBoundary;
   readonly reasonCodes: readonly string[];
 }

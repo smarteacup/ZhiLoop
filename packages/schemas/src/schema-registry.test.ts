@@ -91,6 +91,24 @@ const assetFixture = {
   updatedAt: "2026-08-01T00:00:00Z",
 } satisfies KnowledgeAsset;
 
+const locatorFixture = {
+  schemaVersion: 1,
+  projectId: "project-1",
+  repositoryRemote: "git@example/repo",
+  observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false, codegraphRevision: "graph-v1" },
+  branchApplicability: { mode: "BRANCH_LINEAGE", baseCommit: "abcdef1234567", observedBranch: "main" },
+  scenarioId: "scenario:project-1:runtime.publication",
+  scenarioKey: "runtime.publication",
+  scenarioTitle: "运行时发布",
+  scenarioSummary: "发布与恢复知识。",
+  modulePaths: ["packages/knowledge-worker-runtime"],
+  symbols: ["KnowledgeWorkerRuntime"],
+  entryPoints: ["KnowledgeWorkerRuntime.run"],
+  taskIntents: ["发布知识"],
+  applicability: ["当前项目"],
+  nonApplicability: ["其他项目"],
+} as const;
+
 const extractionFixture = {
   schemaVersion: 1,
   candidates: [{
@@ -201,6 +219,24 @@ describe("schema registry", () => {
     expect(parseKnowledgeCandidate({ ...candidateFixture, status: "ACCEPTED" }).ok).toBe(false);
     const withoutStatus = Object.fromEntries(Object.entries(candidateFixture).filter(([key]) => key !== "status"));
     expect(parseKnowledgeCandidate(withoutStatus).ok).toBe(false);
+  });
+
+  it("accepts strict v2 localization while preserving backward-compatible v1 reads", () => {
+    expect(parseKnowledgeCandidate(candidateFixture).ok).toBe(true);
+    expect(parseKnowledgeAsset(assetFixture).ok).toBe(true);
+    expect(parseKnowledgeCandidate({ ...candidateFixture, schemaVersion: 2,
+      claimMode: "CURRENT_STATE", locator: locatorFixture }).ok).toBe(true);
+    expect(parseKnowledgeAsset({ ...assetFixture, schemaVersion: 2,
+      claimMode: "CURRENT_STATE", locator: locatorFixture }).ok).toBe(true);
+  });
+
+  it("rejects incomplete or malformed v2 locator coordinates", () => {
+    expect(parseKnowledgeCandidate({ ...candidateFixture, schemaVersion: 2, claimMode: "CURRENT_STATE" }).ok).toBe(false);
+    expect(parseKnowledgeAsset({ ...assetFixture, schemaVersion: 2, locator: locatorFixture }).ok).toBe(false);
+    expect(parseKnowledgeCandidate({ ...candidateFixture, schemaVersion: 2, claimMode: "CURRENT_STATE",
+      locator: { ...locatorFixture, projectId: "project-other" } }).ok).toBe(false);
+    expect(parseKnowledgeCandidate({ ...candidateFixture, schemaVersion: 2, claimMode: "CURRENT_STATE",
+      locator: { ...locatorFixture, observedRevision: { ...locatorFixture.observedRevision, commit: "not-a-commit" } } }).ok).toBe(false);
   });
 
   it("separates Candidate top-level extensions", () => {

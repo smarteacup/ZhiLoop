@@ -101,6 +101,11 @@ function validResult(
     || !result.reasonCodes.every((reason) => REASON_CODE.test(reason))) return false;
   if (result.evidence !== undefined && result.evidence.assertionId !== assertion.assertionId) return false;
   if (result.status === "ERROR") return result.evidence === undefined;
+  if (result.codeGraphArtifact !== undefined && (
+    result.codeGraphArtifact.projectId !== context.project.projectId
+    || result.codeGraphArtifact.observedAt !== result.observedAt
+    || result.codeGraphArtifact.sourceRef !== result.evidence?.sourceRef
+  )) return false;
   if (result.evidence !== undefined && (
     result.evidence.type !== EVIDENCE_TYPE_BY_ASSERTION[assertion.kind]
     || result.evidence.projectId !== context.project.projectId

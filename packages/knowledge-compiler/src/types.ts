@@ -4,6 +4,8 @@ export interface ExtractionProjectContext {
   readonly projectId: string;
   readonly repositoryRemote?: string;
   readonly branch?: string;
+  readonly commit?: string;
+  readonly dirty?: boolean;
   readonly portable: boolean;
 }
 

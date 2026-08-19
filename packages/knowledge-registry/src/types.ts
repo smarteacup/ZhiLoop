@@ -1,4 +1,10 @@
-import type { EvidenceRef, KnowledgeAsset, KnowledgeRelation } from "@zhiloop/domain";
+import type {
+  CodeGraphArtifact,
+  EvidenceRef,
+  KnowledgeAsset,
+  KnowledgeRelation,
+  ScenarioDefinition,
+} from "@zhiloop/domain";
 
 export interface ProjectionWriteResult {
   readonly status: "PROJECTED" | "IDEMPOTENT";
@@ -71,4 +77,32 @@ export class KnowledgeProjectionConflictError extends Error {
 
 export class KnowledgeProjectionRebuildError extends Error {
   override readonly name = "KnowledgeProjectionRebuildError";
+}
+
+export interface ScenarioProjectionWriteResult {
+  readonly status: "PROJECTED" | "IDEMPOTENT";
+  readonly scenarioId: string;
+  readonly version: number;
+}
+
+export interface ScenarioProjectionRebuildResult {
+  readonly scenarios: number;
+  readonly versions: number;
+  readonly bindings: number;
+  readonly relations: number;
+}
+
+export interface ProjectedScenario {
+  readonly definition: ScenarioDefinition;
+  readonly knowledgeVersions: readonly string[];
+}
+
+export interface CodeGraphArtifactWriteResult {
+  readonly status: "PROJECTED" | "IDEMPOTENT";
+  readonly artifactId: string;
+}
+
+export interface ProjectedCodeGraphArtifact {
+  readonly artifact: CodeGraphArtifact;
+  readonly knowledgeVersions: readonly string[];
 }

@@ -42,6 +42,9 @@ export const retrievalQueryContextSchema = z.strictObject({
   projectId: safeIdSchema.optional(),
   taskId: safeIdSchema.optional(),
   repositoryRoot: z.string().min(1).max(4_096).optional(),
+  branch: boundedText(500).optional(),
+  commit: z.string().regex(/^[0-9a-f]{7,64}$/u).optional(),
+  dirty: z.boolean().optional(),
   paths: z.array(boundedText(4_096)).max(100),
   symbols: z.array(boundedText(500)).max(100),
   errorCodes: z.array(boundedText(500)).max(100),
@@ -50,6 +53,9 @@ export const retrievalQueryContextSchema = z.strictObject({
   allowGlobalKnowledge: z.boolean(),
   reasonCodes: z.array(z.string().min(1).max(100).regex(/^[A-Z][A-Z0-9_]*$/u)).max(100),
 }).superRefine((value, context) => {
+  if ((value.commit === undefined) !== (value.dirty === undefined)) {
+    context.addIssue({ code: "custom", path: ["commit"], message: "commit and dirty must be present together" });
+  }
   if (value.allowProjectKnowledge && value.projectId === undefined) {
     context.addIssue({ code: "custom", path: ["projectId"], message: "project knowledge requires project identity" });
   }
@@ -127,6 +133,23 @@ export const retrievalResultItemSchema = z.strictObject({
   }
 });
 
+export const retrievalScenarioDirectoryItemSchema = z.strictObject({
+  scenarioId: safeIdSchema,
+  title: boundedText(500),
+  summary: boundedText(4_096),
+  score: z.number().finite().nonnegative(),
+  selected: z.boolean(),
+  knowledgePointers: z.array(boundedText(1_000)).max(1_000),
+  taskIntents: z.array(boundedText(500)).max(100),
+  entryPoints: z.array(boundedText(1_000)).max(100),
+}).superRefine((value, context) => {
+  for (const field of ["knowledgePointers", "taskIntents", "entryPoints"] as const) {
+    if (new Set(value[field]).size !== value[field].length) {
+      context.addIssue({ code: "custom", path: [field], message: `${field} must be unique` });
+    }
+  }
+});
+
 export const contextEnvelopeSimulationSchema = z.strictObject({
   detailLevel: z.enum(["L0_NONE", "L1_POINTER", "L2_COMPACT", "L3_EVIDENCED"]),
   maxTokens: z.number().int().nonnegative().max(128_000),
@@ -168,6 +191,7 @@ export const retrievalTraceSchema = z.strictObject({
   runId: safeIdSchema,
   replayOfTraceId: safeIdSchema.optional(),
   queryContext: retrievalQueryContextSchema,
+  scenarios: z.array(retrievalScenarioDirectoryItemSchema).max(20).default([]),
   policy: retrievalPolicyReferenceSchema,
   outcome: z.enum(RETRIEVAL_RUN_OUTCOMES),
   filters: z.array(retrievalFilterDecisionSchema).max(5_000),

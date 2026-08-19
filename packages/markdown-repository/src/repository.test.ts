@@ -85,6 +85,27 @@ describe("MarkdownKnowledgeRepository", () => {
     }
   });
 
+  it("round-trips v2 claim and localization metadata while retaining v1 compatibility", () => {
+    const original = asset({
+      schemaVersion: 2,
+      claimMode: "CURRENT_STATE",
+      locator: {
+        schemaVersion: 1, projectId: "project-a", repositoryRemote: "example.com/team/project-a",
+        observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false, codegraphRevision: "graph-1" },
+        branchApplicability: { mode: "EXACT_BRANCH", branch: "main" },
+        scenarioId: "scenario:project-a:config.activation", scenarioKey: "config.activation",
+        scenarioTitle: "配置激活", scenarioSummary: "校验并激活项目配置。",
+        modulePaths: ["src/config"], symbols: ["ConfigService"], entryPoints: ["ConfigService"],
+        taskIntents: ["修改配置"], applicability: ["项目配置"], nonApplicability: ["运行时参数"],
+      },
+    });
+    const markdown = serializeKnowledgeDocument(original);
+    expect(markdown).toContain("claim_mode: CURRENT_STATE");
+    expect(markdown).toContain("scenarioKey: config.activation");
+    expect(parseKnowledgeDocument(markdown).asset).toEqual(original);
+    expect(parseKnowledgeDocument(serializeKnowledgeDocument(asset())).asset.schemaVersion).toBe(1);
+  });
+
   it("creates immutable sequential versions with optimistic concurrency and idempotency", async () => {
     const repository = new MarkdownKnowledgeRepository(repositoryRoot, { randomId: () => "versions" });
     const first = asset();

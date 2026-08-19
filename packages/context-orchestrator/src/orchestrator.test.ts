@@ -2,7 +2,7 @@ import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { loadInjectionPolicy } from "@zhiloop/config";
 import { estimateAdditionalContextTokens, renderAdditionalContext } from "@zhiloop/context-renderer";
 import { readFileSync } from "node:fs";
-import type { KnowledgeAsset } from "@zhiloop/domain";
+import { deriveScenarioId, type KnowledgeAsset } from "@zhiloop/domain";
 import type { RerankedKnowledge } from "@zhiloop/knowledge-reranker";
 import { resolveQueryContext } from "@zhiloop/query-context";
 import { parseContextEnvelope } from "@zhiloop/schemas";
@@ -53,6 +53,25 @@ function request(candidates: readonly RerankedKnowledge[], overrides: Record<str
 }
 
 describe("ContextOrchestrator", () => {
+  it("keeps unselected located scenarios at pointer level and expands only the selected scenario", () => {
+    const located = (id: string, key: string) => candidate(id, key === "order.create" ? 1 : 2, {
+      schemaVersion: 2, claimMode: "CURRENT_STATE",
+      locator: { schemaVersion: 1, projectId: project.projectId,
+        observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false },
+        branchApplicability: { mode: "BRANCH_LINEAGE", baseCommit: "abcdef1234567", observedBranch: "main" },
+        scenarioId: deriveScenarioId(project.projectId, key), scenarioKey: key, scenarioTitle: key,
+        scenarioSummary: `${key} summary`, modulePaths: [], symbols: ["ContextOrchestrator"], entryPoints: [],
+        taskIntents: [key], applicability: [], nonApplicability: [] },
+    });
+    const selectedId = deriveScenarioId(project.projectId, "order.create");
+    const envelope = new ContextOrchestrator().orchestrate(request([
+      located("knowledge.scene.create", "order.create"), located("knowledge.scene.cancel", "order.cancel"),
+    ], { requestedLevel: "L3_EVIDENCED", automatic: false, selectedScenarioIds: [selectedId] }));
+    expect(envelope.items.find((item) => item.scenarioId === selectedId)?.detailLevel).toBe("L3_EVIDENCED");
+    expect(envelope.items.find((item) => item.scenarioId !== selectedId)?.detailLevel).toBe("L1_POINTER");
+    expect(envelope.complexity.reasonCodes).toContain("SCENARIO_SELECTION_REQUIRED_FOR_EXPANSION");
+  });
+
   it("loads the checked-in injection policy as the executable default contract", () => {
     const source = readFileSync(new URL("../../../config/injection-policy.yaml", import.meta.url), "utf8");
     const result = loadInjectionPolicy(source);

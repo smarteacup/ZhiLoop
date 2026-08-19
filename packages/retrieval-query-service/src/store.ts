@@ -29,18 +29,29 @@ function validTimestamp(value: string): boolean {
 }
 
 function validateTrace(value: ConsoleRetrievalTrace): ConsoleRetrievalTrace {
+  value = value.scenarioDirectory === undefined
+    ? { ...value, scenarioDirectory: [] }
+    : value;
   if (value.schemaVersion !== 1 || !SAFE_ID.test(value.traceId) || !SAFE_ID.test(value.runId)
     || !SAFE_ID.test(value.requestId) || !HASH.test(value.requestHash) || !validTimestamp(value.createdAt)
     || value.queryContext.schemaVersion !== 1 || value.queryContext.prompt.length === 0
-    || value.results.length > 100 || value.filters.length > 5_000
+    || value.results.length > 100 || value.filters.length > 5_000 || value.scenarioDirectory.length > 20
     || value.injection.result === "SHADOWED" && !value.injection.reasonCodes.includes("P3_SHADOW_READ_ONLY")) {
     throw new Error("retrieval trace is corrupt or unsupported");
   }
   const resultKeys = value.results.map((item) => `${item.knowledgeId}@${item.version}`);
   const selectedKeys = value.envelope.selected.map((item) => `${item.knowledgeId}@${item.version}`);
   const omittedKeys = value.envelope.omitted.map((item) => `${item.knowledgeId}@${item.version}`);
+  const scenarioIds = value.scenarioDirectory.map((item) => item.scenarioId);
   if (new Set(resultKeys).size !== resultKeys.length || new Set(selectedKeys).size !== selectedKeys.length
     || new Set(omittedKeys).size !== omittedKeys.length || selectedKeys.some((key) => omittedKeys.includes(key))
+    || new Set(scenarioIds).size !== scenarioIds.length
+    || value.scenarioDirectory.some((item) => item.title.length === 0 || item.summary.length === 0
+      || !Number.isFinite(item.score) || item.score < 0 || item.knowledgePointers.length > 1_000
+      || item.taskIntents.length > 100 || item.entryPoints.length > 100
+      || new Set(item.knowledgePointers).size !== item.knowledgePointers.length
+      || new Set(item.taskIntents).size !== item.taskIntents.length
+      || new Set(item.entryPoints).size !== item.entryPoints.length)
     || value.results.some((item, index) => item.finalRank !== index + 1 || item.contributions.length === 0
       || item.rerankReasonCodes.length === 0 || item.sourceEpisodeIds.length === 0)
     || !["RISK_", "AMBIGUITY_", "CONFLICT_", "BUDGET_"].every((prefix) => (

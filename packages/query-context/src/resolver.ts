@@ -10,6 +10,7 @@ const RELATIVE_PATH = /^(?:\.\/)?(?:[A-Za-z0-9_@+.,=-]+\/)*[A-Za-z0-9_@+.,=-]+$/
 const SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*(?:\(\))?$/u;
 const ERROR_CODE = /^(?:ERR_[A-Z0-9_]+|TS\d{3,6}|E[A-Z0-9_]{2,}|[A-Z][A-Z0-9_]+-\d{2,})$/u;
 const CONFIG_KEY = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$/u;
+const GIT_COMMIT = /^[0-9a-f]{7,64}$/u;
 
 function freeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value !== "object" || value === null || seen.has(value)) return value;
@@ -120,7 +121,9 @@ function validProject(value: ProjectContext | undefined): value is ProjectContex
   return value !== undefined && validText(value.projectId, 500) && typeof value.portable === "boolean"
     && (value.repositoryRoot === undefined || isSafeRepositoryRoot(value.repositoryRoot))
     && (value.repositoryRemote === undefined || validText(value.repositoryRemote))
-    && (value.branch === undefined || validText(value.branch));
+    && (value.branch === undefined || validText(value.branch))
+    && (value.revision === undefined || (GIT_COMMIT.test(value.revision.commit)
+      && typeof value.revision.dirty === "boolean"));
 }
 
 function matches(input: string, expression: RegExp): string[] {
@@ -140,10 +143,14 @@ export function resolveQueryContext(input: QueryContextInput): QueryContext {
   const symbols = new Terms("SYMBOL", canonicalSymbol, reasons);
   const errorCodes = new Terms("ERROR_CODE", canonicalError, reasons);
   const configKeys = new Terms("CONFIG_KEY", canonicalConfig, reasons);
+  const taskIntents = new Terms("SYMBOL", (value) => validText(value) ? value.trim().normalize("NFKC") : undefined, reasons);
+  const entryPoints = new Terms("PATH", (value) => validText(value) ? value.trim().normalize("NFKC") : undefined, reasons);
   for (const value of input.hints?.paths ?? []) paths.add(value, "EXPLICIT");
   for (const value of input.hints?.symbols ?? []) symbols.add(value, "EXPLICIT");
   for (const value of input.hints?.errorCodes ?? []) errorCodes.add(value, "EXPLICIT");
   for (const value of input.hints?.configKeys ?? []) configKeys.add(value, "EXPLICIT");
+  for (const value of input.hints?.taskIntents ?? []) taskIntents.add(value, "EXPLICIT");
+  for (const value of input.hints?.entryPoints ?? []) entryPoints.add(value, "EXPLICIT");
 
   for (const value of matches(input.prompt, /`([^`\r\n]{1,1000})`/gu)) {
     paths.add(value, "PROMPT");
@@ -170,6 +177,8 @@ export function resolveQueryContext(input: QueryContextInput): QueryContext {
     reasons.add(branch === undefined ? "INVALID_BRANCH_IGNORED" : "BRANCH_INPUT_CONFLICT");
   }
   if (branch === undefined) reasons.add("BRANCH_UNAVAILABLE");
+  const commit = project?.revision?.commit;
+  if (commit === undefined) reasons.add("COMMIT_UNAVAILABLE");
   const taskId = validText(input.taskId, 500) ? input.taskId : undefined;
   if (input.taskId !== undefined && taskId === undefined) reasons.add("INVALID_TASK_ID_IGNORED");
 
@@ -179,11 +188,14 @@ export function resolveQueryContext(input: QueryContextInput): QueryContext {
     ...(project === undefined ? {} : { project }),
     ...(cwd === undefined ? {} : { cwd }),
     ...(branch === undefined ? {} : { branch }),
+    ...(commit === undefined ? {} : { commit }),
     ...(taskId === undefined ? {} : { taskId }),
     paths: paths.values,
     symbols: symbols.values,
     errorCodes: errorCodes.values,
     configKeys: configKeys.values,
+    taskIntents: taskIntents.values,
+    entryPoints: entryPoints.values,
     retrievalBoundary: {
       allowProjectKnowledge: project !== undefined,
       allowGlobalKnowledge: project !== undefined,

@@ -60,6 +60,41 @@ describe("KnowledgePage", () => {
     expect(screen.getByText(/等待重新验证 → 与当前代码冲突/u)).toBeTruthy();
   });
 
+  it("renders complete localization, scenario provenance and bounded CodeGraph artifacts", async () => {
+    const located: KnowledgeDetailView = { ...detail,
+      localization: { state: "COMPLETE", claimMode: "CURRENT_STATE", projectId: "zhiloop",
+        observedBranch: "main", observedCommit: "abcdef1234567", dirty: false,
+        branchMode: "BRANCH_LINEAGE", branchValue: "abcdef1234567",
+        scenarioId: "scenario:zhiloop:runtime.publication", scenarioKey: "runtime.publication",
+        scenarioTitle: "运行时发布", scenarioSummary: "发布并恢复知识。", taskIntents: ["发布知识"],
+        entryPoints: ["KnowledgeWorkerRuntime.run"], applicability: ["当前项目"], nonApplicability: ["其他项目"],
+        modulePaths: ["packages/knowledge-worker-runtime"], symbols: ["KnowledgeWorkerRuntime"], reasonCodes: ["LOCATOR_COMPLETE"] },
+      scenario: { projected: true, scenarioId: "scenario:zhiloop:runtime.publication", version: 2,
+        title: "运行时发布", summary: "发布并恢复知识。", knowledgeVersions: ["knowledge-1@3"], relationCount: 1,
+        markdown: "# 运行时发布" },
+      codeGraphArtifacts: [{ artifactId: "artifact-1", operation: "CALL_PATH", status: "ACTIVE",
+        codeRevision: "abcdef1234567", graphRevision: "graph-v2", query: "run -> publish", factCount: 4,
+        bounded: true, sourceRef: "codegraph:trace", observedAt: timestamp, reasonCodes: ["CODEGRAPH_CALL_PATH_FOUND"] }],
+    };
+    render(<KnowledgePage api={apiWith({ knowledgeDetail: async () => located })} knowledgeId="knowledge-1" />);
+    expect(await screen.findByRole("heading", { name: "定位、场景与 CodeGraph 证据" })).toBeTruthy();
+    expect(screen.getByText("当前代码事实")).toBeTruthy();
+    expect(screen.getByText(/main/u)).toBeTruthy();
+    expect(screen.getAllByText(/abcdef1234567/u).length).toBeGreaterThan(0);
+    expect(screen.getByText(/调用链查询 · run -> publish/u)).toBeTruthy();
+    expect(screen.getByText(/4 条事实（结果已截断）/u)).toBeTruthy();
+  });
+
+  it("makes legacy localization and unavailable reusable artifacts explicit", async () => {
+    const legacy: KnowledgeDetailView = { ...detail,
+      localization: { state: "LEGACY", taskIntents: [], entryPoints: [], applicability: [], nonApplicability: [],
+        modulePaths: [], symbols: [], reasonCodes: ["LEGACY_LOCATOR_UNAVAILABLE"] }, codeGraphArtifacts: [] };
+    render(<KnowledgePage api={apiWith({ knowledgeDetail: async () => legacy })} knowledgeId="knowledge-1" />);
+    expect(await screen.findByText("旧版未声明")).toBeTruthy();
+    expect(screen.getByText(/无法复用历史链路/u)).toBeTruthy();
+    expect(screen.getByText(/旧知识尚无定位信息/u)).toBeTruthy();
+  });
+
   it("previews edit impact and commits a new version with the same expected version", async () => {
     const preview = vi.fn(async (command) => ({ knowledgeId: command.knowledgeId, basedOnVersion: command.expectedVersion, proposedVersion: 4, changedFields: ["title"], scopeChanged: false, evidenceDowngraded: true, eligibleBefore: true, eligibleAfter: false, reasonCodes: ["EVIDENCE_UNSUPPORTED"], draft: command.draft }));
     const commit = vi.fn(async () => ({ ...detail, revision: 19, version: 4, title: "Updated contract", status: "PROPOSED" as const, eligible: false, eligibilityReasonCodes: ["EVIDENCE_UNSUPPORTED"], editAction: { ...detail.editAction, expectedRevision: 4 }, suppressAction: { ...detail.suppressAction, expectedRevision: 4 }, restoreAction: { ...detail.restoreAction, expectedRevision: 4 } }));

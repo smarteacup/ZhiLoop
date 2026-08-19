@@ -104,6 +104,25 @@ describe("CodeGraphCliAdapter", () => {
     expect(output).toMatchObject({ capability: { status: "UNAVAILABLE", reasonCode: "CODEGRAPH_TRACE_BOUNDED" }, bounded: true, facts: [] });
   });
 
+  it("classifies an exhausted trace deadline as bounded rather than provider unavailable", async () => {
+    class DeadlineProcess extends ScriptedProcess {
+      override async run(request: CodeGraphProcessRequest): Promise<CodeGraphProcessResult> {
+        if (request.args[0] === "callees") {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          return result("", { exitCode: null, timedOut: true });
+        }
+        return await super.run(request);
+      }
+    }
+    const process = new DeadlineProcess([result("0.9.4\n"), result(statusReady)]);
+    const output = await new CodeGraphCliAdapter(process, { timeoutMs: 10 }).trace(project, "Start", "Target", 4, 10);
+    expect(output).toMatchObject({
+      capability: { status: "UNAVAILABLE", reasonCode: "CODEGRAPH_TRACE_BOUNDED" },
+      bounded: true,
+      facts: [],
+    });
+  });
+
   it("reports not configured and incompatible without querying facts", async () => {
     const missing = new ScriptedProcess([result("0.9.4\n"), result(JSON.stringify({ initialized: false }))]);
     expect((await new CodeGraphCliAdapter(missing).findSymbols(project, { symbol: "Runtime" })).capability.status)

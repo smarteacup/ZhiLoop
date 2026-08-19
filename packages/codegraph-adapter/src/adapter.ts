@@ -329,7 +329,15 @@ export class CodeGraphCliAdapter implements CodeIntelligencePort {
       if (current.depth >= requestedDepth) { bounded = true; continue; }
       if (visited.size > MAX_TRACE_VISITS || Date.now() >= deadline) { bounded = true; break; }
       const next = await this.#relations("callees", project, current.symbol, max, deadline);
-      if (next.capability.status !== "READY") return frozen({ capability: next.capability, facts: [], bounded: true });
+      if (next.capability.status !== "READY") {
+        // A trace owns one end-to-end deadline across many bounded callee
+        // queries. Exhausting that search budget means "not proven within the
+        // bound", not that the CodeGraph index itself is unavailable.
+        if (next.capability.reasonCode === "CODEGRAPH_TRACE_TIMEOUT" || Date.now() >= deadline) {
+          return frozen({ capability: unavailable("CODEGRAPH_TRACE_BOUNDED"), facts: [], bounded: true });
+        }
+        return frozen({ capability: next.capability, facts: [], bounded: true });
+      }
       if (next.bounded === true) bounded = true;
       for (const fact of next.facts) {
         const symbols = [...current.symbols, fact.symbol];

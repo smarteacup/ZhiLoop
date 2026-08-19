@@ -29,6 +29,23 @@ export interface RetrievalTraceView {
   readonly outcome: "SUCCEEDED" | "PARTIAL" | "NO_CONTEXT" | "TIMEOUT" | "ERROR";
   readonly injectionResult: "SHADOWED" | "NO_CONTEXT" | "TIMEOUT" | "ERROR";
   readonly reasonCodes: readonly string[];
+  readonly context: {
+    readonly projectId?: string;
+    readonly repositoryRoot?: string;
+    readonly branch?: string;
+    readonly commit?: string;
+    readonly dirty?: boolean;
+  };
+  readonly scenarios: readonly {
+    readonly scenarioId: string;
+    readonly title: string;
+    readonly summary: string;
+    readonly score: number;
+    readonly selected: boolean;
+    readonly knowledgePointers: readonly string[];
+    readonly taskIntents: readonly string[];
+    readonly entryPoints: readonly string[];
+  }[];
   readonly results: readonly RetrievalResultView[];
   readonly filters: readonly { readonly decision: string; readonly reasonCode: string; readonly safeMessage: string }[];
   readonly envelope: {
@@ -84,6 +101,19 @@ export function toRetrievalTraceView(value: RetrievalTraceContract): RetrievalTr
     outcome: value.outcome,
     injectionResult: value.injectionResult,
     reasonCodes: Object.freeze([...new Set([...value.queryContext.reasonCodes, ...value.envelope.reasonCodes])]),
+    context: Object.freeze({
+      ...(value.queryContext.projectId === undefined ? {} : { projectId: value.queryContext.projectId }),
+      ...(value.queryContext.repositoryRoot === undefined ? {} : { repositoryRoot: value.queryContext.repositoryRoot }),
+      ...(value.queryContext.branch === undefined ? {} : { branch: value.queryContext.branch }),
+      ...(value.queryContext.commit === undefined ? {} : { commit: value.queryContext.commit }),
+      ...(value.queryContext.dirty === undefined ? {} : { dirty: value.queryContext.dirty }),
+    }),
+    scenarios: Object.freeze(value.scenarios.map((item) => Object.freeze({
+      ...item,
+      knowledgePointers: Object.freeze([...item.knowledgePointers]),
+      taskIntents: Object.freeze([...item.taskIntents]),
+      entryPoints: Object.freeze([...item.entryPoints]),
+    }))),
     results: Object.freeze(value.results.map((item) => Object.freeze({
       knowledgeId: item.knowledgeId,
       version: item.version,

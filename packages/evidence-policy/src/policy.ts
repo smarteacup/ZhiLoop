@@ -5,6 +5,8 @@ import {
   evaluateGlobalPromotion,
   getAllowedStatusTransitions,
   transitionKnowledgeStatus,
+  locatorHasAuthoritativeRevision,
+  validateKnowledgeLocator,
 } from "@zhiloop/domain";
 
 import type { EvidencePolicyDecision, EvidencePolicyInput } from "./types.js";
@@ -63,6 +65,10 @@ function validateInput(input: EvidencePolicyInput): boolean {
   if (input.projectScope.level !== "PROJECT" || input.projectScope.projectId.trim().length === 0) return false;
   if (input.candidate.scopeHint.projectId !== undefined
     && input.candidate.scopeHint.projectId !== input.projectScope.projectId) return false;
+  if (input.candidate.schemaVersion === 2 && (
+    input.candidate.locator.projectId !== input.projectScope.projectId
+    || !validateKnowledgeLocator(input.candidate.locator).valid
+  )) return false;
   if (input.verificationPolicy.globalPromotion.minVerifiedProjects < 2
     || input.verificationPolicy.globalPromotion.minVerifiedProjects > 20) return false;
   const implementationRule = input.verificationPolicy.autoPublish.IMPLEMENTATION;
@@ -139,6 +145,7 @@ function supported(input: EvidencePolicyInput, kind: AssertionKind): boolean {
 }
 
 function requiredKinds(input: EvidencePolicyInput): readonly AssertionKind[] {
+  if (input.candidate.claimMode !== undefined && input.candidate.claimMode !== "CURRENT_STATE") return [];
   if (input.candidate.kind === "IMPLEMENTATION") return input.verificationPolicy.autoPublish.IMPLEMENTATION.requiredAssertions;
   if (input.candidate.kind === "EXPERIENCE") return input.verificationPolicy.autoPublish.EXPERIENCE.requiredAssertions;
   return [];
@@ -229,6 +236,22 @@ export function evaluateEvidencePolicy(input: EvidencePolicyInput): EvidencePoli
   const accepted = supported(input, "USER_ACCEPTED");
   const rejected = supported(input, "USER_REJECTED");
 
+  if (input.candidate.schemaVersion === 2 && input.candidate.claimMode === "CURRENT_STATE"
+    && !locatorHasAuthoritativeRevision(input.candidate.locator)) {
+    reasons.add("LOCATOR_REVISION_UNRESOLVED");
+    reasons.add("CURRENT_STATE_PUBLICATION_BLOCKED");
+    return decision(input, {
+      action: "KEEP",
+      interaction: "NONE",
+      targetStatus: input.currentStatus,
+      transitionPath: [],
+      effectiveScope: input.resolvedScope,
+      shouldPublish: false,
+      evidenceIds: evidenceIds(input),
+      reasonCodes: [...reasons],
+    });
+  }
+
   if (input.currentStatus === "REJECTED" || input.currentStatus === "SUPERSEDED") {
     reasons.add("TERMINAL_STATUS_RETAINED");
     return decision(input, {
@@ -264,7 +287,19 @@ export function evaluateEvidencePolicy(input: EvidencePolicyInput): EvidencePoli
     return applyTarget(input, "REJECTED", reasons, global.scope, global.interaction);
   }
 
-  const refuted = input.verificationResults.some((result) => result.status === "REFUTED");
+  const futureMode = input.candidate.claimMode === "USER_DECISION" || input.candidate.claimMode === "FUTURE_REQUIREMENT";
+  const codeAssertionKinds = new Set<AssertionKind>([
+    "SYMBOL_EXISTS", "CALL_PATH_EXISTS", "IMPACT_CONTAINS", "FILE_CONTAINS", "DEPENDENCY_PRESENT", "CONFIG_EQUALS",
+  ]);
+  const assertionById = new Map(input.candidate.assertions.map((assertion) => [assertion.assertionId, assertion]));
+  const pendingImplementation = futureMode && input.verificationResults.some((result) =>
+    result.status === "REFUTED" && codeAssertionKinds.has(assertionById.get(result.assertionId)?.kind as AssertionKind));
+  if (pendingImplementation) reasons.add("PENDING_IMPLEMENTATION");
+  const refuted = input.verificationResults.some((result) => {
+    if (result.status !== "REFUTED") return false;
+    const kind = assertionById.get(result.assertionId)?.kind;
+    return !futureMode || kind === "USER_ACCEPTED" || kind === "USER_REJECTED";
+  });
   if (refuted) {
     const global = effectiveGlobalScope(input, reasons, false);
     reasons.add("ASSERTION_REFUTED");
@@ -298,6 +333,9 @@ export function evaluateEvidencePolicy(input: EvidencePolicyInput): EvidencePoli
     if (input.verificationResults.some((result) => result.status === "UNKNOWN")) reasons.add("VERIFICATION_UNKNOWN");
   }
   if (input.verificationResults.some((result) => result.status === "ERROR")) reasons.add("VERIFIER_ERROR_NOT_EVIDENCE");
+  if (input.verificationResults.some((result) => result.reasonCodes.includes("INVALID_ASSERTION"))) {
+    reasons.add("INVALID_ASSERTION");
+  }
   if (input.verificationResults.some((result) => result.status === "UNKNOWN")) reasons.add("VERIFICATION_UNKNOWN");
 
   const currentRank = STATUS_RANK[input.currentStatus];

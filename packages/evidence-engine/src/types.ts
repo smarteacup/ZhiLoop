@@ -1,5 +1,6 @@
 import type {
   AssertionKind,
+  CodeGraphArtifact,
   Evidence,
   KnowledgeAssertion,
   ProjectContext,
@@ -31,6 +32,7 @@ export interface VerificationObservation {
   readonly target: string;
   readonly reasonCode: string;
   readonly details?: Readonly<Record<string, string | number | boolean>>;
+  readonly codeGraphArtifact?: CodeGraphArtifact;
 }
 
 export interface VerificationProbe<TAssertion extends KnowledgeAssertion> {
@@ -63,6 +65,7 @@ export interface VerificationResult {
   readonly observedAt: string;
   readonly reasonCodes: readonly string[];
   readonly evidence?: Evidence;
+  readonly codeGraphArtifact?: CodeGraphArtifact;
 }
 
 export interface AssertionVerifier {

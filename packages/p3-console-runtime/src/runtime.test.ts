@@ -1,5 +1,5 @@
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
-import type { KnowledgeAsset, KnowledgeRelation } from "@zhiloop/domain";
+import type { KnowledgeAsset, KnowledgeRelation, ProjectContext } from "@zhiloop/domain";
 import type { ProjectedKnowledgeAsset } from "@zhiloop/knowledge-registry";
 import type {
   CodexKnowledgeQueryAnswer,
@@ -156,6 +156,11 @@ function runtime(
   projection: Projection,
   model?: CodexKnowledgeQueryModel,
   revisions: readonly ExplicitP3PolicyRevision[] = [policy("CURRENT"), policy("DRAFT"), policy("REPLAY")],
+  resolveProject?: (input: {
+    readonly projectId?: string | undefined;
+    readonly repositoryRoot?: string | undefined;
+    readonly cwd?: string | undefined;
+  }) => Promise<ProjectContext | undefined>,
 ) {
   return new P3ConsoleRuntime({
     projection,
@@ -163,6 +168,7 @@ function runtime(
     traces: new InMemoryRetrievalTraceStore(),
     ...(model === undefined ? {} : { model }),
     operations: new InMemoryP3ConsoleOperationStore(),
+    ...(resolveProject === undefined ? {} : { resolveProject }),
     now: () => new Date(at),
   });
 }
@@ -297,6 +303,35 @@ describe("P3ConsoleRuntime", () => {
     expect(response.trace.queryContext.promptFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     await expect(service.search({ ...request("request-invalid-001"), unexpected: true })).rejects.toThrow();
     await expect(service.search({ ...request("request-invalid-policy"), policy: reference("DRAFT") })).rejects.toThrow();
+  });
+
+  it("uses authoritative resolved Git context for branch-aware retrieval and trace diagnostics", async () => {
+    const resolver = vi.fn(async (): Promise<ProjectContext> => ({
+      projectId: "project-a", repositoryRoot: "/workspace/project-a", branch: "feature/config",
+      revision: { commit: "abcdef1234567", dirty: true }, portable: true,
+    }));
+    const located = projected("knowledge-located", {
+      schemaVersion: 2,
+      claimMode: "CURRENT_STATE",
+      locator: {
+        schemaVersion: 1, projectId: "project-a",
+        observedRevision: { branch: "feature/config", commit: "abcdef1234567", dirty: false },
+        branchApplicability: { mode: "EXACT_BRANCH", branch: "feature/config" },
+        scenarioId: "scenario:project-a:config.change", scenarioKey: "config.change",
+        scenarioTitle: "配置变更", scenarioSummary: "处理 ConfigService 配置变更。",
+        modulePaths: ["src/config"], symbols: ["ConfigService"], entryPoints: ["ConfigService"],
+        taskIntents: ["修改配置"], applicability: ["项目配置"], nonApplicability: ["运行时参数"],
+      },
+    });
+    const service = runtime(new Projection([located]), undefined, [policy("CURRENT")], resolver);
+    const response = await service.search(request("request-resolved-context"));
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/workspace/project-a" }));
+    expect(response.trace.queryContext).toMatchObject({
+      projectId: "project-a", branch: "feature/config", commit: "abcdef1234567", dirty: true,
+    });
+    expect(response.trace.scenarios).toContainEqual(expect.objectContaining({
+      scenarioId: "scenario:project-a:config.change", title: "配置变更", selected: true,
+    }));
   });
 
   it("simulates current/draft policy and returns comparable strict traces", async () => {

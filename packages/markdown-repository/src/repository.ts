@@ -29,6 +29,7 @@ const FRONT_MATTER_KEYS = new Set([
   "schema_version", "id", "subject_key", "kind", "scope", "version", "status", "title", "summary",
   "aliases", "keywords", "applicability", "non_applicability", "symbols", "relations", "evidence",
   "confidence", "source_episodes", "code_fingerprint", "correlation_id", "created_at", "updated_at",
+  "claim_mode", "locator",
   "tombstone", "tombstone_reason",
 ]);
 
@@ -115,6 +116,10 @@ function frontMatterFor(asset: KnowledgeAsset, options: SerializedDocumentOption
     updated_at: asset.updatedAt,
   };
   if (asset.codeFingerprint !== undefined) frontMatter["code_fingerprint"] = asset.codeFingerprint;
+  if (asset.schemaVersion === 2) {
+    frontMatter["claim_mode"] = asset.claimMode;
+    frontMatter["locator"] = asset.locator;
+  }
   if (options.tombstone === true) {
     frontMatter["tombstone"] = true;
     frontMatter["tombstone_reason"] = options.tombstoneReason;
@@ -222,6 +227,8 @@ function assetFromFrontMatter(frontMatter: Record<string, unknown>, body: string
     sourceEpisodes: frontMatter["source_episodes"],
     contentHash: "derived-before-validation",
     ...(frontMatter["code_fingerprint"] === undefined ? {} : { codeFingerprint: frontMatter["code_fingerprint"] }),
+    ...(frontMatter["claim_mode"] === undefined ? {} : { claimMode: frontMatter["claim_mode"] }),
+    ...(frontMatter["locator"] === undefined ? {} : { locator: frontMatter["locator"] }),
     correlationId: frontMatter["correlation_id"],
     createdAt: frontMatter["created_at"],
     updatedAt: frontMatter["updated_at"],

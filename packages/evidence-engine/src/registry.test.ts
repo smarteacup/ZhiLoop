@@ -280,7 +280,7 @@ describe("MVP verifiers", () => {
     for (const invalidAssertion of invalidAssertions) {
       const result = await registry.verify(invalidAssertion, context());
       expect(result.status).toBe("ERROR");
-      expect(result.reasonCodes).toEqual(["VERIFIER_EXECUTION_ERROR"]);
+      expect(result.reasonCodes).toEqual(["INVALID_ASSERTION"]);
     }
   });
 

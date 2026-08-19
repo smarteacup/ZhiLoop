@@ -75,6 +75,7 @@ function KnowledgeDetailPage({ api, knowledgeId }: { readonly api: ConsoleApi; r
   return <div className="page-stack"><a className="back-link" href="#/knowledge">← 返回知识库</a><header className="page-header"><div><p className="eyebrow">{value.knowledgeId}@{value.version}</p><h1>{value.title}</h1><p>{value.subjectKey} · revision {value.revision}</p></div><div><StatusBadge status={value.status} /><StatusBadge status={value.eligible ? "ELIGIBLE" : "INELIGIBLE"} /></div></header>
     {!value.eligible ? <div className="inline-alert warning"><strong>当前版本不进入默认召回</strong><p>{value.eligibilityReasonCodes.join(", ")}</p></div> : undefined}
     <section className="panel detail-split"><div><h2>Markdown</h2><pre className="markdown-preview">{value.markdown}</pre></div><div><h2>Scope 与断言</h2><dl className="detail-grid"><div><dt>Scope</dt><dd>{value.scope}{value.projectId === undefined ? "" : ` / ${value.projectId}`}</dd></div><div><dt>类型</dt><dd>{value.kind}</dd></div><div><dt>置信度</dt><dd>{value.confidence.toFixed(2)}</dd></div><div><dt>Scope 决策</dt><dd>{value.scopeReasonCodes.join(", ")}</dd></div></dl><ul>{value.assertions.map((item) => <li key={item.assertionId}><StatusBadge status={item.status} /> {item.text}</li>)}</ul></div></section>
+    <KnowledgeLocalization value={value} />
     <FreshnessPanel value={value.freshness} />
     <KnowledgeEvolutionPanel api={api} knowledgeId={value.knowledgeId} title={value.title} summary={value.summary} body={value.markdown} />
     <VersionHistory versions={value.versions} currentVersion={value.version} />
@@ -82,6 +83,26 @@ function KnowledgeDetailPage({ api, knowledgeId }: { readonly api: ConsoleApi; r
     <section className="panel p2-grid"><div><h2>来源链</h2><Provenance value={value.provenance} /></div><div><h2>Lifecycle</h2>{value.lifecycle.map((item) => <article className="fact-row" key={`${item.status}:${item.occurredAt}`}><div><strong>{item.reasonCode}</strong><StatusBadge status={item.status} /></div><small>{new Date(item.occurredAt).toLocaleString()}</small></article>)}</div><div><h2>使用记录</h2>{value.usage.map((item) => <a className="fact-row" key={`${item.sessionId}:${item.turnId}`} href={`#/sessions/${encodeURIComponent(item.sessionId)}`}><strong>{item.mode} · {item.turnId}</strong><small>{new Date(item.occurredAt).toLocaleString()}</small></a>)}</div></section>
     <KnowledgeGovernance api={api} value={value} onServerValue={setServerValue} onRefresh={retry} />
   </div>;
+}
+
+function KnowledgeLocalization({ value }: { readonly value: KnowledgeDetailView }): React.JSX.Element {
+  const location = value.localization;
+  if (location === undefined) return <section className="panel"><h2>定位与场景</h2><p className="muted">旧版接口未返回定位投影；该知识不会被当作已定位的当前代码事实。</p></section>;
+  return <section className="panel" aria-labelledby="knowledge-localization-heading">
+    <div className="section-heading"><div><h2 id="knowledge-localization-heading">定位、场景与 CodeGraph 证据</h2><span>先按项目/分支/提交过滤，再进行场景召回</span></div><StatusBadge status={location.state} /></div>
+    <dl className="detail-grid">
+      <div><dt>结论语义</dt><dd>{location.claimMode === undefined ? "旧版未声明" : p2EnumLabel(location.claimMode)}</dd></div>
+      <div><dt>项目</dt><dd>{location.projectId ?? "未定位"}</dd></div>
+      <div><dt>观察分支</dt><dd>{location.observedBranch ?? "未记录"}</dd></div>
+      <div><dt>观察提交</dt><dd>{location.observedCommit ?? "未记录"}{location.dirty === true ? "（工作区有未提交变更）" : ""}</dd></div>
+      <div><dt>分支适用策略</dt><dd>{location.branchMode === undefined ? "未声明" : `${p2EnumLabel(location.branchMode)} · ${location.branchValue ?? ""}`}</dd></div>
+      <div><dt>场景</dt><dd>{location.scenarioTitle ?? "未定位"}{location.scenarioKey === undefined ? "" : ` · ${location.scenarioKey}`}</dd></div>
+    </dl>
+    <div className="p2-grid"><div><h3>场景边界</h3><p>{location.scenarioSummary ?? "未记录场景摘要"}</p><p><strong>任务意图：</strong>{location.taskIntents.join("、") || "未声明"}</p><p><strong>入口：</strong>{location.entryPoints.join("、") || "未声明"}</p><p><strong>适用：</strong>{location.applicability.join("；") || "未声明"}</p><p><strong>不适用：</strong>{location.nonApplicability.join("；") || "未声明"}</p><small>{location.reasonCodes.map(p2EnumLabel).join("；")}</small></div>
+      <div><h3>场景投影</h3>{value.scenario === undefined ? <p className="muted">没有场景投影。</p> : <><p><StatusBadge status={value.scenario.projected ? "PROJECTED" : "NOT_PROJECTED"} /> {value.scenario.title}</p><p>{value.scenario.summary}</p><small>{value.scenario.scenarioId}{value.scenario.version === undefined ? "" : ` · v${value.scenario.version}`} · {value.scenario.knowledgeVersions.length} 条知识 · {value.scenario.relationCount} 条关系</small>{value.scenario.markdown === undefined ? undefined : <details><summary>查看场景 Markdown</summary><pre className="markdown-preview">{value.scenario.markdown}</pre></details>}</>}</div></div>
+    <h3>CodeGraph 可复用产物（{value.codeGraphArtifacts?.length ?? 0}）</h3>
+    {(value.codeGraphArtifacts?.length ?? 0) === 0 ? <p className="muted">当前知识版本没有绑定 CodeGraph 产物；实时查询仍可执行，但无法复用历史链路。</p> : <div>{value.codeGraphArtifacts?.map((artifact) => <article className="fact-row" key={artifact.artifactId}><div><strong>{p2EnumLabel(artifact.operation)} · {artifact.query}</strong><StatusBadge status={artifact.status} /></div><p>代码 {artifact.codeRevision}{artifact.graphRevision === undefined ? "" : ` · 图 ${artifact.graphRevision}`} · {artifact.factCount} 条事实{artifact.bounded ? "（结果已截断）" : ""}</p><small>{artifact.artifactId} · {artifact.sourceRef} · {new Date(artifact.observedAt).toLocaleString()}</small></article>)}</div>}
+  </section>;
 }
 
 function FreshnessPanel({ value }: { readonly value: KnowledgeDetailView["freshness"] }): React.JSX.Element {

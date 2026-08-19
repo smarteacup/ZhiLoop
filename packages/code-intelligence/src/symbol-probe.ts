@@ -2,6 +2,7 @@ import type { ProjectContext } from "@zhiloop/domain";
 import type { ProbeContext, VerificationObservation, VerificationProbe, SymbolAssertion } from "@zhiloop/evidence-engine";
 
 import type { CodeIntelligencePort, CodeProjectSnapshot } from "./types.js";
+import { buildCodeGraphArtifact } from "./artifact.js";
 
 const REASONS = {
   READY: "CODEGRAPH_SYMBOL_NOT_FOUND",
@@ -46,30 +47,48 @@ export function createCodeIntelligenceSymbolProbe(
         limit: 10,
       });
       if (result.capability.status !== "READY") {
+        const sourceRef = `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:capability`;
         return {
           status: "UNKNOWN",
-          sourceRef: `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:capability`,
+          sourceRef,
           observedAt: context.requestedAt,
           target: target(assertion),
           reasonCode: REASONS[result.capability.status],
+          codeGraphArtifact: buildCodeGraphArtifact({
+            project: context.project, projectFingerprint: fingerprint, capability: result.capability,
+            operation: "SYMBOL", query: assertion.parameters.symbol, facts: [], bounded: result.bounded,
+            sourceRef, observedAt: context.requestedAt, reasonCodes: [REASONS[result.capability.status]],
+          }),
         };
       }
       const match = result.facts.find((fact) =>
         fact.symbol === assertion.parameters.symbol
         && (assertion.parameters.path === undefined || fact.path === assertion.parameters.path));
+      const sourceRef = match === undefined
+        ? `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:query`
+        : `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:${match.path}:${match.startLine}`;
+      const artifact = buildCodeGraphArtifact({
+        project: context.project, projectFingerprint: fingerprint, capability: result.capability,
+        operation: "SYMBOL", query: assertion.parameters.symbol,
+        facts: result.facts.map((fact) => ({ kind: "SYMBOL", symbol: fact.symbol, qualifiedName: fact.qualifiedName,
+          path: fact.path, startLine: fact.startLine, endLine: fact.endLine, language: fact.language, exported: fact.exported })),
+        bounded: result.bounded, sourceRef, observedAt: context.requestedAt,
+        reasonCodes: [match === undefined ? REASONS.READY : "CODEGRAPH_SYMBOL_FOUND"],
+      });
       if (match === undefined) {
         return {
           status: "REFUTED",
-          sourceRef: `codegraph:${fingerprint}:query`,
+          sourceRef,
           observedAt: context.requestedAt,
           target: target(assertion),
           reasonCode: REASONS.READY,
           details: { symbol: assertion.parameters.symbol },
+          codeGraphArtifact: artifact,
         };
       }
       return {
         status: "SUPPORTED",
-        sourceRef: `codegraph:${fingerprint}:${result.capability.indexRevision ?? "revision-unavailable"}:${match.path}:${match.startLine}`,
+        sourceRef,
         observedAt: context.requestedAt,
         target: target(assertion),
         reasonCode: "CODEGRAPH_SYMBOL_FOUND",
@@ -82,6 +101,7 @@ export function createCodeIntelligenceSymbolProbe(
           language: match.language,
           exported: match.exported,
         },
+        codeGraphArtifact: artifact,
       };
     },
   });

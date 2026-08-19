@@ -47,7 +47,7 @@ describe("P3 retrieval and answer contracts", () => {
   it("accepts a complete SHADOW trace with channel and evidence explanations", () => {
     const trace = {
       schemaVersion: 1, traceId: "trace-search-1", runId: "run-search-1", queryContext: context,
-      policy: policy(), outcome: "SUCCEEDED", filters: [],
+      policy: policy(), outcome: "SUCCEEDED", filters: [], scenarios: [],
       results: [{
         knowledgeId: "knowledge.config", version: 2, title: "Config activation", summary: "Uses prepare/apply.",
         scope: "PROJECT", status: "VERIFIED", authority: "NORMATIVE",

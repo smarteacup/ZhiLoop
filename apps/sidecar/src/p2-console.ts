@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { p2KnowledgeFilterSchema, type CapturePreview, type JobSnapshot, type ProvenanceNode } from "@zhiloop/control-api";
 import type { SqliteEventLedger } from "@zhiloop/conversation-ledger";
-import type { EvidenceRef, KnowledgeKind, KnowledgeScope, KnowledgeStatus } from "@zhiloop/domain";
+import { locatorHasAuthoritativeRevision, validateKnowledgeLocator,
+  type EvidenceRef, type KnowledgeKind, type KnowledgeScope, type KnowledgeStatus } from "@zhiloop/domain";
 import {
   GovernanceError,
   type KnowledgeDetail,
@@ -279,6 +280,8 @@ export class P2ConsoleRuntime {
       const evolution = checkpoint?.payload.evolution?.find((item) => item.candidate.candidateId === candidate.candidateId)?.decision;
       const commitments = checkpoint?.payload.userCommitments?.signals
         .filter((item) => item.candidateIds.includes(candidate.candidateId)) ?? [];
+      const located = policyRecord?.candidate.schemaVersion === 2 ? policyRecord.candidate : undefined;
+      const locator = located?.locator;
       return Object.freeze({
         candidateId: candidate.candidateId,
         subjectKey: candidate.subjectKey,
@@ -290,6 +293,28 @@ export class P2ConsoleRuntime {
         confidence: candidate.confidence,
         status: policyStatus(candidate.policyDecision),
         evidenceVerdict: candidate.evidenceVerdict,
+        ...(located?.claimMode === undefined || locator === undefined ? {} : { localization: {
+          claimMode: located.claimMode,
+          projectId: locator.projectId,
+          ...(locator.repositoryRemote === undefined ? {} : { repositoryRemote: locator.repositoryRemote }),
+          ...(locator.observedRevision.branch === undefined ? {} : { observedBranch: locator.observedRevision.branch }),
+          ...(locator.observedRevision.commit === undefined ? {} : { observedCommit: locator.observedRevision.commit }),
+          dirty: locator.observedRevision.dirty,
+          branchMode: locator.branchApplicability.mode,
+          branchValue: locator.branchApplicability.mode === "EXACT_BRANCH" ? locator.branchApplicability.branch
+            : locator.branchApplicability.mode === "BRANCH_LINEAGE" ? locator.branchApplicability.baseCommit
+              : locator.branchApplicability.reason,
+          scenarioId: locator.scenarioId,
+          scenarioKey: locator.scenarioKey,
+          scenarioTitle: locator.scenarioTitle,
+          scenarioSummary: locator.scenarioSummary,
+          taskIntents: locator.taskIntents,
+          entryPoints: locator.entryPoints,
+          applicability: locator.applicability,
+          nonApplicability: locator.nonApplicability,
+          modulePaths: locator.modulePaths,
+          symbols: locator.symbols,
+        } }),
         policy: {
           action: candidate.policyDecision,
           targetStatus: policyStatus(candidate.policyDecision),
@@ -300,6 +325,24 @@ export class P2ConsoleRuntime {
           assertionId: assertion.assertionId,
           kind: assertion.kind,
           target: assertionTarget(assertion.parameters),
+        })),
+        evidenceChecks: (policyRecord?.verificationResults ?? []).map((result) => ({
+          assertionId: result.assertionId,
+          kind: result.assertionKind,
+          status: result.status,
+          reasonCodes: result.reasonCodes,
+          ...(result.evidence === undefined ? {} : { evidenceId: result.evidence.evidenceId }),
+          ...(result.codeGraphArtifact === undefined ? {} : { codeGraphArtifact: {
+            artifactId: result.codeGraphArtifact.artifactId,
+            operation: result.codeGraphArtifact.operation,
+            status: result.codeGraphArtifact.status,
+            codeRevision: result.codeGraphArtifact.codeRevision,
+            ...(result.codeGraphArtifact.graphRevision === undefined ? {} : { graphRevision: result.codeGraphArtifact.graphRevision }),
+            query: result.codeGraphArtifact.query,
+            factCount: result.codeGraphArtifact.facts.length,
+            bounded: result.codeGraphArtifact.bounded,
+            reasonCodes: result.codeGraphArtifact.reasonCodes,
+          } }),
         })),
         commitments: commitments.map((item) => ({
           signalId: item.signalId,
@@ -483,6 +526,16 @@ export class P2ConsoleRuntime {
     const freshnessEvents = freshnessProjected
       ? this.#options.production.freshnessStore.listStateEvents(asset.id, asset.version, 100)
       : [];
+    const locator = asset.locator;
+    const locatorValid = locator === undefined ? undefined : validateKnowledgeLocator(locator).valid;
+    const localizationState = locator === undefined || asset.schemaVersion === 1 ? "LEGACY" as const
+      : !locatorValid ? "INVALID" as const
+        : asset.claimMode === "CURRENT_STATE" && !locatorHasAuthoritativeRevision(locator)
+          ? "REVISION_UNRESOLVED" as const : "COMPLETE" as const;
+    const scenario = locator === undefined ? undefined : this.#options.production.scenarios.get(locator.scenarioId);
+    const scenarioMarkdown = locator === undefined ? undefined
+      : this.#options.production.scenarios.renderMarkdown(locator.scenarioId);
+    const codeGraphArtifacts = this.#options.production.codeGraphArtifacts.forKnowledge(`${asset.id}@${asset.version}`);
     return Object.freeze({
       revision: detail.current.indexVersion,
       knowledgeId: asset.id,
@@ -542,6 +595,64 @@ export class P2ConsoleRuntime {
       editAction: action(!suppressed, asset.version, `edit:${asset.id}:${asset.version}`, suppressed ? "KNOWLEDGE_SUPPRESSED" : "ACTION_READY"),
       suppressAction: action(!suppressed, asset.version, `suppress:${asset.id}:${asset.version}`, suppressed ? "ALREADY_SUPPRESSED" : "ACTION_READY"),
       restoreAction: action(suppressed, asset.version, `restore:${asset.id}:${asset.version}`, suppressed ? "ACTION_READY" : "NOT_SUPPRESSED"),
+      localization: {
+        state: localizationState,
+        ...(asset.claimMode === undefined ? {} : { claimMode: asset.claimMode }),
+        ...(locator === undefined ? {} : {
+          projectId: locator.projectId,
+          ...(locator.repositoryRemote === undefined ? {} : { repositoryRemote: locator.repositoryRemote }),
+          ...(locator.observedRevision.branch === undefined ? {} : { observedBranch: locator.observedRevision.branch }),
+          ...(locator.observedRevision.commit === undefined ? {} : { observedCommit: locator.observedRevision.commit }),
+          dirty: locator.observedRevision.dirty,
+          branchMode: locator.branchApplicability.mode,
+          branchValue: locator.branchApplicability.mode === "EXACT_BRANCH" ? locator.branchApplicability.branch
+            : locator.branchApplicability.mode === "BRANCH_LINEAGE" ? locator.branchApplicability.baseCommit
+              : locator.branchApplicability.reason,
+          scenarioId: locator.scenarioId,
+          scenarioKey: locator.scenarioKey,
+          scenarioTitle: locator.scenarioTitle,
+          scenarioSummary: locator.scenarioSummary,
+          taskIntents: locator.taskIntents,
+          entryPoints: locator.entryPoints,
+          applicability: locator.applicability,
+          nonApplicability: locator.nonApplicability,
+          modulePaths: locator.modulePaths,
+          symbols: locator.symbols,
+        }),
+        taskIntents: locator?.taskIntents ?? [],
+        entryPoints: locator?.entryPoints ?? [],
+        applicability: locator?.applicability ?? [],
+        nonApplicability: locator?.nonApplicability ?? [],
+        modulePaths: locator?.modulePaths ?? [],
+        symbols: locator?.symbols ?? [],
+        reasonCodes: localizationState === "COMPLETE" ? ["LOCATOR_COMPLETE"]
+          : localizationState === "LEGACY" ? ["LEGACY_LOCATOR_UNAVAILABLE"]
+            : localizationState === "REVISION_UNRESOLVED" ? ["LOCATOR_REVISION_UNRESOLVED"]
+              : ["LOCATOR_INVALID"],
+      },
+      ...(locator === undefined ? {} : { scenario: {
+        projected: scenario !== undefined,
+        scenarioId: locator.scenarioId,
+        ...(scenario === undefined ? {} : { version: scenario.definition.version }),
+        title: scenario?.definition.title ?? locator.scenarioTitle,
+        summary: scenario?.definition.summary ?? locator.scenarioSummary,
+        knowledgeVersions: scenario?.knowledgeVersions ?? [`${asset.id}@${asset.version}`],
+        relationCount: scenario?.definition.relations.length ?? 0,
+        ...(scenarioMarkdown === undefined ? {} : { markdown: scenarioMarkdown }),
+      } }),
+      codeGraphArtifacts: codeGraphArtifacts.map(({ artifact }) => ({
+        artifactId: artifact.artifactId,
+        operation: artifact.operation,
+        status: artifact.status,
+        codeRevision: artifact.codeRevision,
+        ...(artifact.graphRevision === undefined ? {} : { graphRevision: artifact.graphRevision }),
+        query: artifact.query,
+        factCount: artifact.facts.length,
+        bounded: artifact.bounded,
+        sourceRef: artifact.sourceRef,
+        observedAt: artifact.observedAt,
+        reasonCodes: artifact.reasonCodes,
+      })),
     });
   }
 

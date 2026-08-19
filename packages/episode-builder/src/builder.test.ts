@@ -244,6 +244,9 @@ describe("buildEpisodes", () => {
     expect(() => buildEpisodes(source.records, source.sessions, {
       projectResolver: () => ({ projectId: "project-1", branch: " ", portable: false }),
     })).toThrow("invalid branch");
+    expect(() => buildEpisodes(source.records, source.sessions, {
+      projectResolver: () => ({ projectId: "project-1", revision: { commit: "not-a-commit", dirty: false }, portable: false }),
+    })).toThrow("invalid revision");
   });
 
   it("rejects missing, mismatched, duplicate, and unreferenced Ledger records", () => {

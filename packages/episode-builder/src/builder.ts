@@ -116,11 +116,19 @@ function normalizeProjectContext(value: ProjectContext): ProjectContext {
       throw new Error(`projectResolver returned an invalid ${field}`);
     }
   }
+  if (value.revision !== undefined && (
+    typeof value.revision !== "object"
+    || !/^[0-9a-f]{7,64}$/u.test(value.revision.commit)
+    || typeof value.revision.dirty !== "boolean"
+  )) {
+    throw new Error("projectResolver returned an invalid revision");
+  }
   return Object.freeze({
     projectId: value.projectId,
     ...(value.repositoryRoot === undefined ? {} : { repositoryRoot: value.repositoryRoot }),
     ...(value.repositoryRemote === undefined ? {} : { repositoryRemote: value.repositoryRemote }),
     ...(value.branch === undefined ? {} : { branch: value.branch }),
+    ...(value.revision === undefined ? {} : { revision: Object.freeze({ ...value.revision }) }),
     portable: value.portable,
   });
 }

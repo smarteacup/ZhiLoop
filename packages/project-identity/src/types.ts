@@ -5,6 +5,8 @@ export interface GitProjectFacts {
   readonly gitCommonDir: string;
   readonly remoteUrl?: string;
   readonly branch?: string;
+  readonly commit?: string;
+  readonly dirty?: boolean;
 }
 
 export interface GitProjectProbe {

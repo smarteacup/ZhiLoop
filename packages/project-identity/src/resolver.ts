@@ -115,6 +115,15 @@ function assertFacts(facts: GitProjectFacts): void {
   )) {
     throw new Error("Git probe returned an invalid branch");
   }
+  if (facts.commit !== undefined && !/^[0-9a-f]{7,64}$/u.test(facts.commit)) {
+    throw new Error("Git probe returned an invalid commit");
+  }
+  if (facts.dirty !== undefined && typeof facts.dirty !== "boolean") {
+    throw new Error("Git probe returned an invalid dirty state");
+  }
+  if ((facts.commit === undefined) !== (facts.dirty === undefined)) {
+    throw new Error("Git probe returned an incomplete revision");
+  }
 }
 
 async function existingMarker(directory: string, markers: readonly string[]): Promise<string | undefined> {
@@ -168,6 +177,7 @@ export async function resolveProjectIdentity(
           repositoryRoot,
           repositoryRemote: remote,
           ...(facts.branch === undefined ? {} : { branch: facts.branch }),
+          ...(facts.commit === undefined ? {} : { revision: { commit: facts.commit, dirty: facts.dirty as boolean } }),
           portable: true,
         }),
         source: "GIT_REMOTE" as const,
@@ -180,6 +190,7 @@ export async function resolveProjectIdentity(
         projectId: hash(["project-identity-v1", "local-git", commonDir]),
         repositoryRoot,
         ...(facts.branch === undefined ? {} : { branch: facts.branch }),
+        ...(facts.commit === undefined ? {} : { revision: { commit: facts.commit, dirty: facts.dirty as boolean } }),
         portable: false,
       }),
       source: "GIT_LOCAL" as const,
@@ -223,6 +234,20 @@ async function gitOutput(executable: string, timeoutMs: number, cwd: string, arg
   }
 }
 
+async function gitDirty(executable: string, timeoutMs: number, cwd: string): Promise<boolean | undefined> {
+  try {
+    const result = await execFileAsync(executable, ["-C", cwd, "status", "--porcelain=v1", "-uno"], {
+      timeout: timeoutMs,
+      maxBuffer: MAX_OUTPUT_BYTES,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    return result.stdout.trim().length > 0;
+  } catch {
+    return undefined;
+  }
+}
+
 export class CliGitProjectProbe implements GitProjectProbe {
   readonly #executable: string;
   readonly #timeoutMs: number;
@@ -239,10 +264,12 @@ export class CliGitProjectProbe implements GitProjectProbe {
   async inspect(cwd: string): Promise<GitProjectFacts | undefined> {
     const repositoryRoot = await gitOutput(this.#executable, this.#timeoutMs, cwd, ["rev-parse", "--show-toplevel"]);
     if (repositoryRoot === undefined) return undefined;
-    const [commonOutput, branch, remoteOutput] = await Promise.all([
+    const [commonOutput, branch, remoteOutput, commit, dirty] = await Promise.all([
       gitOutput(this.#executable, this.#timeoutMs, repositoryRoot, ["rev-parse", "--git-common-dir"]),
       gitOutput(this.#executable, this.#timeoutMs, repositoryRoot, ["symbolic-ref", "--short", "-q", "HEAD"]),
       gitOutput(this.#executable, this.#timeoutMs, repositoryRoot, ["remote"]),
+      gitOutput(this.#executable, this.#timeoutMs, repositoryRoot, ["rev-parse", "--verify", "HEAD"]),
+      gitDirty(this.#executable, this.#timeoutMs, repositoryRoot),
     ]);
     if (commonOutput === undefined) return undefined;
     const gitCommonDir = path.isAbsolute(commonOutput) ? commonOutput : path.resolve(repositoryRoot, commonOutput);
@@ -268,6 +295,7 @@ export class CliGitProjectProbe implements GitProjectProbe {
       gitCommonDir,
       ...(remoteUrl === undefined ? {} : { remoteUrl }),
       ...(branch === undefined ? {} : { branch }),
+      ...(commit === undefined || dirty === undefined ? {} : { commit, dirty }),
     };
   }
 }

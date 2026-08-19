@@ -14,6 +14,7 @@ function projectContext(context: ProjectContext): ExtractionProjectContext {
     projectId: context.projectId,
     ...(context.repositoryRemote === undefined ? {} : { repositoryRemote: context.repositoryRemote }),
     ...(context.branch === undefined ? {} : { branch: context.branch }),
+    ...(context.revision === undefined ? {} : { commit: context.revision.commit, dirty: context.revision.dirty }),
     portable: context.portable,
   };
 }

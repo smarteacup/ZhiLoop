@@ -29,6 +29,7 @@ export interface ContextOrchestrationRequest {
   readonly signals?: ContextOrchestrationSignals;
   readonly taskContract?: TaskContractBlock;
   readonly feedback?: ContextFeedbackHint;
+  readonly selectedScenarioIds?: readonly string[];
 }
 
 export interface ContextOrchestratorPort {

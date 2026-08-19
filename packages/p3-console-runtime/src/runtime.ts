@@ -60,6 +60,11 @@ export interface P3ConsoleRuntimeDependencies {
   readonly traces: RetrievalTraceStore;
   readonly model?: CodexKnowledgeQueryModel;
   readonly operations?: P3ConsoleOperationStore;
+  readonly resolveProject?: (input: {
+    readonly projectId?: string | undefined;
+    readonly repositoryRoot?: string | undefined;
+    readonly cwd?: string | undefined;
+  }) => ProjectContext | undefined | Promise<ProjectContext | undefined>;
   readonly now?: () => Date;
 }
 
@@ -146,6 +151,11 @@ function queryContext(trace: ConsoleRetrievalTrace): RetrievalTraceContract["que
     ...(context.project === undefined ? {} : { projectId: context.project.projectId }),
     ...(context.taskId === undefined ? {} : { taskId: context.taskId }),
     ...(context.project?.repositoryRoot === undefined ? {} : { repositoryRoot: context.project.repositoryRoot }),
+    ...(context.project?.branch === undefined ? {} : { branch: context.project.branch }),
+    ...(context.project?.revision === undefined ? {} : {
+      commit: context.project.revision.commit,
+      dirty: context.project.revision.dirty,
+    }),
     paths: context.paths.map((item) => item.canonical),
     symbols: context.symbols.map((item) => item.canonical),
     errorCodes: context.errorCodes.map((item) => item.canonical),
@@ -166,6 +176,12 @@ function mapTrace(
     runId: trace.runId,
     ...(trace.replayOfTraceId === undefined ? {} : { replayOfTraceId: trace.replayOfTraceId }),
     queryContext: queryContext(trace),
+    scenarios: trace.scenarioDirectory.map((item) => ({
+      ...item,
+      knowledgePointers: [...item.knowledgePointers],
+      taskIntents: [...item.taskIntents],
+      entryPoints: [...item.entryPoints],
+    })),
     policy: { ...trace.policy },
     outcome: trace.outcome,
     filters: trace.filters.map((item) => ({ ...item })),
@@ -323,6 +339,16 @@ export class P3ConsoleRuntime {
     return new SqliteRegistryKnowledgeRetrievalSource(this.dependencies.projection, boundary(input));
   }
 
+  async #project(input: {
+    readonly projectId?: string | undefined;
+    readonly repositoryRoot?: string | undefined;
+    readonly cwd?: string | undefined;
+  }): Promise<ProjectContext | undefined> {
+    return this.dependencies.resolveProject === undefined
+      ? project(input)
+      : await this.dependencies.resolveProject(input);
+  }
+
   #retrieval(source: SqliteRegistryKnowledgeRetrievalSource): RetrievalQueryService {
     return new RetrievalQueryService({
       source,
@@ -372,8 +398,8 @@ export class P3ConsoleRuntime {
     const request = p3SearchRequestSchema.parse(input);
     const requestHash = semanticHash("SEARCH", request);
     return await this.#idempotent(request.requestId, requestHash, async () => {
-      const source = this.#source(request);
-      const resolvedProject = project(request);
+      const resolvedProject = await this.#project(request);
+      const source = this.#source({ projectId: resolvedProject?.projectId, taskId: request.taskId });
       const resolvedHints = queryHints(request);
       const result = await raceAbort(this.#retrieval(source).search({
         schemaVersion: 1,
@@ -396,8 +422,8 @@ export class P3ConsoleRuntime {
     const request = p3SimulationRequestSchema.parse(input);
     const requestHash = semanticHash("SIMULATION", request);
     return await this.#idempotent(request.requestId, requestHash, async () => {
-      const source = this.#source(request);
-      const resolvedProject = project(request);
+      const resolvedProject = await this.#project(request);
+      const source = this.#source({ projectId: resolvedProject?.projectId, taskId: request.taskId });
       const resolvedHints = queryHints(request);
       const result = await raceAbort(this.#retrieval(source).simulate({
         schemaVersion: 1,
@@ -443,9 +469,9 @@ export class P3ConsoleRuntime {
     const request = p3AskRequestSchema.parse(input);
     const requestHash = semanticHash("ASK", request);
     return await this.#idempotent(request.requestId, requestHash, async () => {
-      const source = this.#source(request);
+      const resolvedProject = await this.#project(request);
+      const source = this.#source({ projectId: resolvedProject?.projectId, taskId: request.taskId });
       const started = performance.now();
-      const resolvedProject = project(request);
       const resolvedHints = queryHints(request);
       const retrieval = await raceAbort(this.#retrieval(source).search({
         schemaVersion: 1,

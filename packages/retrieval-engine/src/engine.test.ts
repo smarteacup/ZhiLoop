@@ -1,6 +1,6 @@
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { performance } from "node:perf_hooks";
-import type { KnowledgeAsset, KnowledgeStatus } from "@zhiloop/domain";
+import { deriveScenarioId, type KnowledgeAsset, type KnowledgeLocator, type KnowledgeStatus } from "@zhiloop/domain";
 import type { ProjectedKnowledgeAsset } from "@zhiloop/knowledge-registry";
 import { resolveQueryContext } from "@zhiloop/query-context";
 import { describe, expect, it, vi } from "vitest";
@@ -58,6 +58,52 @@ function request(prompt: string, overrides: Partial<typeof DEFAULT_CONFIGURATION
 }
 
 describe("MultiChannelRetrievalEngine", () => {
+  it("filters located knowledge by authoritative project, branch, commit, dirty state, and selected scenario", async () => {
+    const locatedProject = { ...project, revision: { commit: "abcdef1234567", dirty: false } } as const;
+    const located = (id: string, scenarioKey: string, taskIntent: string, overrides: Partial<KnowledgeLocator> = {}) => {
+      const locator: KnowledgeLocator = {
+        schemaVersion: 1, projectId: project.projectId,
+        observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false },
+        branchApplicability: { mode: "BRANCH_LINEAGE", baseCommit: "abcdef1234567", observedBranch: "main" },
+        scenarioId: deriveScenarioId(project.projectId, scenarioKey), scenarioKey,
+        scenarioTitle: taskIntent, scenarioSummary: `${taskIntent} 场景`, modulePaths: ["src/order"], symbols: [],
+        entryPoints: [], taskIntents: [taskIntent], applicability: ["当前项目"], nonApplicability: [], ...overrides,
+      };
+      return asset(id, { schemaVersion: 2, claimMode: "CURRENT_STATE", locator });
+    };
+    const selected = located("knowledge.located.create", "order.create", "新增订单");
+    const otherScene = located("knowledge.located.cancel", "order.cancel", "取消订单");
+    const otherBranch = located("knowledge.located.branch", "order.branch", "新增订单", {
+      branchApplicability: { mode: "EXACT_BRANCH", branch: "feature/v2" },
+    });
+    const dirty = located("knowledge.located.dirty", "order.dirty", "新增订单", {
+      observedRevision: { branch: "main", commit: "abcdef1234567", dirty: true },
+    });
+    const values = [selected, otherScene, otherBranch, dirty];
+    const input = source(values, { fts: values.map((item, index) => hit(item, index + 1)) });
+    const context = resolveQueryContext({ prompt: "如何新增订单", project: locatedProject,
+      hints: { taskIntents: ["新增订单"] } });
+    const result = await new MultiChannelRetrievalEngine(input, undefined,
+      { channels: { exact: false, vector: false, relation: false } }).retrieve({ ...request("如何新增订单"), context });
+    expect(result.items.map((item) => item.asset.id)).toEqual([selected.asset.id]);
+    expect(result.scenarioDirectory).toContainEqual(expect.objectContaining({
+      scenarioId: selected.asset.locator?.scenarioId, selected: true,
+    }));
+    expect(result.diagnostics.map((item) => item.code)).toEqual(expect.arrayContaining([
+      "SCENARIO_FILTERED", "BRANCH_FILTERED", "DIRTY_REVISION_FILTERED",
+    ]));
+  });
+
+  it("fails closed for legacy current-code facts once the query has an authoritative commit", async () => {
+    const legacy = asset("knowledge.legacy.implementation", { symbols: ["LegacySymbol"] });
+    const context = resolveQueryContext({ prompt: "symbol LegacySymbol",
+      project: { ...project, revision: { commit: "abcdef1234567", dirty: false } } });
+    const result = await new MultiChannelRetrievalEngine(source([legacy]), undefined,
+      { channels: { fts: false, vector: false, relation: false } }).retrieve({ ...request("symbol LegacySymbol"), context });
+    expect(result.items).toEqual([]);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "LOCATOR_LEGACY_FILTERED" }));
+  });
+
   it("fuses Exact, FTS, and Relation by rank while retaining contributions", async () => {
     const exact = asset("knowledge.retrieval.exact", { symbols: ["ExactSymbol"] });
     const fts = asset("knowledge.retrieval.fts");

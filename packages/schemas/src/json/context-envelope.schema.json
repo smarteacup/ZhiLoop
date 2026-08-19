@@ -72,6 +72,8 @@
         "title": { "type": "string", "minLength": 1, "maxLength": 500 },
         "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "retrievalRank": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "claimMode": { "enum": ["CURRENT_STATE", "USER_DECISION", "FUTURE_REQUIREMENT"] },
+        "scenarioId": { "type": "string", "minLength": 1, "maxLength": 1020, "pattern": "^scenario:" },
         "applicability": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 1000 } },
         "failurePaths": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 1000 } },
         "symbols": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 1000 } },

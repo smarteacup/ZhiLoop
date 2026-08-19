@@ -23,7 +23,7 @@
     "evidenceHints"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "enum": [1, 2] },
     "candidateId": { "type": "string", "minLength": 1 },
     "compilerVersion": { "type": "string", "minLength": 1 },
     "status": { "const": "PROPOSED" },
@@ -44,6 +44,8 @@
         "OPEN_QUESTION"
       ]
     },
+    "claimMode": { "enum": ["CURRENT_STATE", "USER_DECISION", "FUTURE_REQUIREMENT"] },
+    "locator": { "$ref": "#/definitions/knowledgeLocator" },
     "scopeHint": {
       "type": "object",
       "additionalProperties": false,
@@ -276,8 +278,52 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": 2 } } },
+      "then": { "properties": { "claimMode": {}, "locator": {} }, "required": ["claimMode", "locator"] }
+    }
+  ],
   "anyOf": [
     { "properties": { "assertions": { "type": "array", "minItems": 1 } } },
     { "properties": { "evidenceHints": { "type": "array", "minItems": 1 } } }
-  ]
+  ],
+  "definitions": {
+    "knowledgeLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "projectId", "observedRevision", "branchApplicability", "scenarioId", "scenarioKey", "scenarioTitle", "scenarioSummary", "modulePaths", "symbols", "entryPoints", "taskIntents", "applicability", "nonApplicability"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "repositoryRemote": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "observedRevision": {
+          "type": "object", "additionalProperties": false, "required": ["dirty"],
+          "properties": {
+            "branch": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+            "dirty": { "type": "boolean" },
+            "codegraphRevision": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        },
+        "branchApplicability": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["mode", "branch"], "properties": { "mode": { "const": "EXACT_BRANCH" }, "branch": { "type": "string", "minLength": 1, "maxLength": 500 } } },
+            { "type": "object", "additionalProperties": false, "required": ["mode", "baseCommit"], "properties": { "mode": { "const": "BRANCH_LINEAGE" }, "baseCommit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, "observedBranch": { "type": "string", "minLength": 1, "maxLength": 500 } } },
+            { "type": "object", "additionalProperties": false, "required": ["mode", "reason"], "properties": { "mode": { "const": "ALL_BRANCHES" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } } }
+          ]
+        },
+        "scenarioId": { "type": "string", "minLength": 12, "maxLength": 1020, "pattern": "^scenario:" },
+        "scenarioKey": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){1,}$" },
+        "scenarioTitle": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "scenarioSummary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "modulePaths": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "symbols": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+        "entryPoints": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "taskIntents": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+        "applicability": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+        "nonApplicability": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 2000 } }
+      }
+    }
+  }
 }

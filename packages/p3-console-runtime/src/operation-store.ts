@@ -20,10 +20,17 @@ function validTimestamp(value: string): boolean {
 
 function parseResponse(value: unknown): P3RuntimeResponse {
   if (typeof value !== "object" || value === null || !("kind" in value)) throw new Error("P3 operation response is invalid");
-  switch (value.kind) {
-    case "SEARCH": return p3SearchResponseSchema.parse(value);
-    case "SIMULATION": return p3SimulationResponseSchema.parse(value);
-    case "ASK": return p3AskResponseSchema.parse(value);
+  const record = value as Record<string, unknown>;
+  const trace = (candidate: unknown): unknown => typeof candidate === "object" && candidate !== null
+    && !("scenarios" in candidate) ? { ...candidate, scenarios: [] } : candidate;
+  switch (record["kind"]) {
+    case "SEARCH": return p3SearchResponseSchema.parse({ ...record, trace: trace(record["trace"]) });
+    case "SIMULATION": return p3SimulationResponseSchema.parse({
+      ...record,
+      current: trace(record["current"]),
+      ...(record["draft"] === undefined ? {} : { draft: trace(record["draft"]) }),
+    });
+    case "ASK": return p3AskResponseSchema.parse({ ...record, trace: trace(record["trace"]) });
     default: throw new Error("P3 operation response kind is unsupported");
   }
 }

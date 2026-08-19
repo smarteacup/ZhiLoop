@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { CodeGraphCliAdapter } from "@zhiloop/codegraph-adapter";
 import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
-import type { KnowledgeAsset, ProjectContext } from "@zhiloop/domain";
+import type { KnowledgeAsset, KnowledgeLocator, ProjectContext, ScenarioDefinition } from "@zhiloop/domain";
 import {
   KnowledgeGovernanceMutationService,
   KnowledgeGovernanceQueryService,
@@ -24,7 +24,8 @@ import {
   type KnowledgeVerificationRequest,
   type VerificationExecutionControls,
 } from "@zhiloop/knowledge-verification";
-import { SqliteKnowledgeRegistryProjection } from "@zhiloop/knowledge-registry";
+import { SqliteCodeGraphArtifactProjection, SqliteKnowledgeRegistryProjection,
+  SqliteScenarioRegistryProjection } from "@zhiloop/knowledge-registry";
 import {
   DEFAULT_MVP_COMPILER_VERSION,
   DEFAULT_MVP_PROMPT_VERSION,
@@ -45,7 +46,8 @@ import {
   CodexSemanticEvolutionJudge,
   type SemanticEvolutionCapability,
 } from "@zhiloop/semantic-evolution-codex";
-import type { KnowledgeEvolutionSemanticPort } from "@zhiloop/knowledge-evolution";
+import { reconcileScenario, type KnowledgeEvolutionSemanticPort,
+  type ScenarioReconciliationTarget } from "@zhiloop/knowledge-evolution";
 import type { ExtractionSnapshot, ProvenanceNode } from "@zhiloop/control-api";
 import type { SessionExtractionService } from "@zhiloop/session-extraction";
 
@@ -327,6 +329,8 @@ export class P2ProductionComposition {
   readonly mutations: KnowledgeGovernanceMutationService;
   readonly markdown: MarkdownKnowledgeRepository;
   readonly registry: SqliteKnowledgeRegistryProjection;
+  readonly scenarios: SqliteScenarioRegistryProjection;
+  readonly codeGraphArtifacts: SqliteCodeGraphArtifactProjection;
   readonly index: IncrementalKnowledgeIndexer;
   readonly governanceStore: SqliteGovernanceOperationStore;
   readonly freshnessStore: SqliteKnowledgeFreshnessStore;
@@ -345,7 +349,10 @@ export class P2ProductionComposition {
   ) {
     const knowledgeRoot = join(options.stateDirectory, "knowledge");
     this.markdown = new MarkdownKnowledgeRepository(knowledgeRoot);
-    this.registry = new SqliteKnowledgeRegistryProjection(join(options.stateDirectory, "knowledge-registry.sqlite"));
+    const registryPath = join(options.stateDirectory, "knowledge-registry.sqlite");
+    this.registry = new SqliteKnowledgeRegistryProjection(registryPath);
+    this.scenarios = new SqliteScenarioRegistryProjection(registryPath);
+    this.codeGraphArtifacts = new SqliteCodeGraphArtifactProjection(registryPath);
     this.index = new IncrementalKnowledgeIndexer(this.markdown, this.registry);
     this.governanceStore = new SqliteGovernanceOperationStore(join(options.stateDirectory, "knowledge-governance.sqlite"));
     this.freshnessStore = new SqliteKnowledgeFreshnessStore(join(options.stateDirectory, "knowledge-freshness.sqlite"));
@@ -413,6 +420,37 @@ export class P2ProductionComposition {
       ...(semanticJudge === undefined ? {} : { evolutionSemantic: semanticJudge }),
       markdown: this.markdown,
       registry: this.registry,
+      contextProjection: {
+        project: ({ asset, candidate, verificationResults, observedAt }) => {
+          const knowledgeVersion = `${asset.id}@${asset.version}`;
+          for (const result of verificationResults) {
+            if (result.codeGraphArtifact !== undefined) {
+              this.codeGraphArtifacts.project(result.codeGraphArtifact, [knowledgeVersion]);
+            }
+          }
+          if (candidate.schemaVersion !== 2 || candidate.locator === undefined) return;
+          const target = (definition: ScenarioDefinition): ScenarioReconciliationTarget => ({
+            definition,
+            locators: definition.sourceKnowledgeVersions.flatMap((reference): readonly KnowledgeLocator[] => {
+              const separator = reference.lastIndexOf("@");
+              if (separator < 1) return [];
+              const id = reference.slice(0, separator);
+              const version = Number(reference.slice(separator + 1));
+              if (!Number.isSafeInteger(version) || version < 1) return [];
+              const stored = this.registry.listVersions(id).find((item) => item.asset.version === version);
+              return stored?.asset.locator === undefined ? [] : [stored.asset.locator];
+            }),
+          });
+          const currentProjected = this.scenarios.get(candidate.locator.scenarioId);
+          const related = this.scenarios.list(candidate.locator.projectId, 20)
+            .filter((item) => item.definition.scenarioId !== candidate.locator!.scenarioId)
+            .map((item) => target(item.definition));
+          const reconciled = reconcileScenario({ candidate, knowledgeVersion,
+            ...(currentProjected === undefined ? {} : { current: target(currentProjected.definition) }),
+            related, now: observedAt });
+          if (reconciled.next !== undefined) this.scenarios.project(reconciled.next);
+        },
+      },
       freshness: {
         project: (input) => {
           this.verificationStore.saveRecipe({ assetId: input.asset.id, assetVersion: input.asset.version,
@@ -536,6 +574,8 @@ export class P2ProductionComposition {
     this.verificationStore.close();
     this.freshnessStore.close();
     this.#checkpointStore.close();
+    this.codeGraphArtifacts.close();
+    this.scenarios.close();
     this.registry.close();
   }
 }

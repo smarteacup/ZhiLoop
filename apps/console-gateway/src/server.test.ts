@@ -141,7 +141,7 @@ const retrievalTrace: RetrievalTraceContract = {
   },
   policy: { policyId: "policy-current", revision: 1, fingerprint: "b".repeat(64), source: "CURRENT" },
   outcome: "NO_CONTEXT",
-  filters: [], results: [],
+  filters: [], results: [], scenarios: [],
   envelope: {
     detailLevel: "L0_NONE", maxTokens: 800, estimatedTokens: 0, truncated: false,
     selected: [], omitted: [],

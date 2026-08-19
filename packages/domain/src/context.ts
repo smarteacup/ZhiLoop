@@ -1,6 +1,7 @@
 import type { EvidenceVerdict } from "./evidence.js";
 import type { KnowledgeKind, KnowledgeStatus } from "./knowledge.js";
 import type { KnowledgeScope } from "./scope.js";
+import type { KnowledgeClaimMode, KnowledgeLocator } from "./localization.js";
 
 export const CONTEXT_COMPLEXITY_LEVELS = [
   "L0_NONE", "L1_POINTER", "L2_COMPACT", "L3_EVIDENCED", "L4_EPISODE",
@@ -36,6 +37,9 @@ export interface ContextEnvelopeItem {
   readonly evidencePointers?: readonly string[];
   readonly evidenceSummary?: readonly ContextEvidenceSummary[];
   readonly sourceEpisodes?: readonly string[];
+  readonly claimMode?: KnowledgeClaimMode;
+  readonly locator?: KnowledgeLocator;
+  readonly scenarioId?: string;
 }
 
 export interface TaskContractBlock {

@@ -426,6 +426,38 @@ function publicationOptions(
 }
 
 describe("KnowledgeWorkerRuntime", () => {
+  it("publishes v2 localization and projects scenario/CodeGraph context idempotently", async () => {
+    const projected: Array<{ asset: KnowledgeAsset }> = [];
+    const setup = fixture({
+      compiler: {
+        extract: async (input) => ({ schemaVersion: 1, candidates: [{
+          ...candidateDraft(input),
+          claimMode: "CURRENT_STATE" as const,
+          scenarioHint: { scenarioKey: "runtime.publication", title: "运行时发布", summary: "发布可恢复知识。",
+            taskIntents: ["发布知识"], entryPoints: ["KnowledgeWorkerRuntime.run"], applicability: ["当前项目"],
+            nonApplicability: ["其他项目"] },
+        }] }),
+      },
+      contextProjection: { project: (input) => { projected.push({ asset: input.asset }); } },
+    });
+    const runtime = new KnowledgeWorkerRuntime(setup.ports, new MemoryCheckpointStore());
+    const result = await runtime.run(request({ project: { projectId: "project-1", repositoryRoot: "/workspace/repo",
+      branch: "main", revision: { commit: "abcdef1234567", dirty: false }, portable: false } }), publicationOptions());
+    expect(result.status).toBe("COMPLETED");
+    expect(result.payload.candidates?.[0]?.locator).toMatchObject({ observedRevision: {
+      branch: "main", commit: "abcdef1234567", dirty: false,
+    } });
+    expect(result.payload.policies?.[0]?.decision.shouldPublish).toBe(true);
+    expect(result.payload.outbox?.[0]?.asset).toMatchObject({ schemaVersion: 2, claimMode: "CURRENT_STATE",
+      locator: { projectId: "project-1", observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false },
+        scenarioKey: "runtime.publication" } });
+    expect(projected).toHaveLength(1);
+    const replay = await runtime.run(request({ project: { projectId: "project-1", repositoryRoot: "/workspace/repo",
+      branch: "main", revision: { commit: "abcdef1234567", dirty: false }, portable: false } }), publicationOptions());
+    expect(replay.revision).toBe(result.revision);
+    expect(projected).toHaveLength(1);
+  });
+
   it("uses Episode project resolution for scope and evidence instead of the session fallback", async () => {
     const fallbackEvidence = evidence();
     const verifiedProjects: string[] = [];

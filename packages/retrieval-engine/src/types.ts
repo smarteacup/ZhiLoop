@@ -75,7 +75,13 @@ export type RetrievalDiagnosticCode =
   | "STALE_SOURCE_HIT"
   | "FRESHNESS_FILTERED"
   | "STALE_VECTOR_CHUNK"
-  | "VECTOR_VERSION_MISMATCH";
+  | "VECTOR_VERSION_MISMATCH"
+  | "LOCATOR_LEGACY_FILTERED"
+  | "LOCATOR_PROJECT_FILTERED"
+  | "BRANCH_FILTERED"
+  | "COMMIT_FILTERED"
+  | "DIRTY_REVISION_FILTERED"
+  | "SCENARIO_FILTERED";
 
 export interface RetrievalDiagnostic {
   readonly code: RetrievalDiagnosticCode;
@@ -87,6 +93,18 @@ export interface RetrievalDiagnostic {
 export interface RetrievalResult {
   readonly items: readonly RetrievedKnowledge[];
   readonly diagnostics: readonly RetrievalDiagnostic[];
+  readonly scenarioDirectory?: readonly ScenarioDirectoryItem[];
+}
+
+export interface ScenarioDirectoryItem {
+  readonly scenarioId: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly score: number;
+  readonly selected: boolean;
+  readonly knowledgePointers: readonly string[];
+  readonly taskIntents: readonly string[];
+  readonly entryPoints: readonly string[];
 }
 
 export interface VectorRetrievalDependencies {

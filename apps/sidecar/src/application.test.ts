@@ -13,13 +13,13 @@ function configuration(queryTimeoutMs: number): ConsoleConfiguration {
 }
 
 describe("verification timeout composition", () => {
-  it("preserves a five-second end-to-end floor for short CodeGraph queries", () => {
-    expect(verificationTimeoutMs(configuration(250))).toBe(5_000);
-    expect(verificationTimeoutMs(configuration(1_000))).toBe(5_000);
+  it("preserves scheduling margin around the before/probe/after CodeGraph sequence", () => {
+    expect(verificationTimeoutMs(configuration(250))).toBe(15_000);
+    expect(verificationTimeoutMs(configuration(1_000))).toBe(15_000);
   });
 
   it("scales with longer CodeGraph queries and remains bounded", () => {
-    expect(verificationTimeoutMs(configuration(2_000))).toBe(10_000);
-    expect(verificationTimeoutMs(configuration(10_000))).toBe(50_000);
+    expect(verificationTimeoutMs(configuration(2_000))).toBe(16_000);
+    expect(verificationTimeoutMs(configuration(10_000))).toBe(60_000);
   });
 });

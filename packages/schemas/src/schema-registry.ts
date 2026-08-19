@@ -14,6 +14,7 @@ import {
   CONFIRMATION_EFFECTS_BY_KIND,
   CONFIRMATION_RELATION_BY_EFFECT,
   SAFE_CONFIRMATION_EFFECT_BY_KIND,
+  validateKnowledgeLocator,
 } from "@zhiloop/domain";
 
 import eventSchema from "./json/event.schema.json" with { type: "json" };
@@ -26,6 +27,10 @@ import confirmationRequestSchema from "./json/confirmation-request.schema.json" 
 import confirmationResolutionSchema from "./json/confirmation-resolution.schema.json" with { type: "json" };
 
 export const CURRENT_SCHEMA_VERSION = 1 as const;
+const SUPPORTED_SCHEMA_VERSIONS: Readonly<Partial<Record<SchemaName, readonly number[]>>> = Object.freeze({
+  "knowledge-candidate": [1, 2],
+  "knowledge-asset": [1, 2],
+});
 
 export const SCHEMA_NAMES = [
   "event",
@@ -102,7 +107,8 @@ function parse<T>(
 ): ParseResult<T> {
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
     const receivedVersion = (input as Record<string, unknown>)["schemaVersion"];
-    if (receivedVersion !== undefined && receivedVersion !== CURRENT_SCHEMA_VERSION) {
+    const supportedVersions = SUPPORTED_SCHEMA_VERSIONS[schema] ?? [CURRENT_SCHEMA_VERSION];
+    if (receivedVersion !== undefined && !supportedVersions.includes(receivedVersion as number)) {
       return {
         ok: false,
         error: {
@@ -157,6 +163,22 @@ export function parseKnowledgeCandidate(input: unknown): ParseResult<KnowledgeCa
   );
   if (!result.ok) return result;
 
+  if (result.value.schemaVersion === 2 && (
+    result.value.claimMode === undefined
+    || result.value.locator === undefined
+    || !validateKnowledgeLocator(result.value.locator).valid
+  )) {
+    return {
+      ok: false,
+      error: {
+        code: "SCHEMA_VALIDATION_FAILED",
+        schema: "knowledge-candidate",
+        message: "knowledge-candidate has an invalid v2 locator",
+        issues: [{ instancePath: "/locator", keyword: "locatorIntegrity", message: "must match authoritative locator invariants" }],
+      },
+    };
+  }
+
   const mismatchIndex = result.value.assertions.findIndex(
     (assertion) => assertion.candidateId !== result.value.candidateId,
   );
@@ -191,12 +213,29 @@ export function parseKnowledgeExtractionOutput(input: unknown): ParseResult<Know
 }
 
 export function parseKnowledgeAsset(input: unknown): ParseResult<KnowledgeAsset> {
-  return parse(
+  const result = parse<KnowledgeAsset>(
     "knowledge-asset",
     validators["knowledge-asset"],
     input,
     Object.keys(knowledgeAssetSchema.properties),
   );
+  if (!result.ok) return result;
+  if (result.value.schemaVersion === 2 && (
+    result.value.claimMode === undefined
+    || result.value.locator === undefined
+    || !validateKnowledgeLocator(result.value.locator).valid
+  )) {
+    return {
+      ok: false,
+      error: {
+        code: "SCHEMA_VALIDATION_FAILED",
+        schema: "knowledge-asset",
+        message: "knowledge-asset has an invalid v2 locator",
+        issues: [{ instancePath: "/locator", keyword: "locatorIntegrity", message: "must match authoritative locator invariants" }],
+      },
+    };
+  }
+  return result;
 }
 
 export function parseContextEnvelope(input: unknown): ParseResult<ContextEnvelope> {

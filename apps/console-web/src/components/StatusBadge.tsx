@@ -30,6 +30,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   INELIGIBLE: "不符合条件",
   INJECTED: "已注入",
   INCONCLUSIVE: "证据不足",
+  INVALID: "定位无效",
   INVALID_INPUT: "输入无效",
   IRREVERSIBLE: "不可逆",
   NO_CONTEXT: "无可用上下文",
@@ -46,6 +47,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   PASS: "通过",
   PENDING: "等待中",
   PROPOSED: "待确认",
+  PROJECTED: "已建立投影",
   PROVIDER_ERROR: "提供方错误",
   POLLING: "轮询中",
   QUEUED: "排队中",
@@ -55,6 +57,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   RESYNC_REQUIRED: "需要重新同步",
   RETRY_WAIT: "等待重试",
   REVALIDATE: "等待重新验证",
+  REVISION_UNRESOLVED: "代码版本未解析",
   REFUTED: "验证不支持",
   REVERSIBLE: "可回滚",
   CONFLICT: "与当前代码冲突",
@@ -77,6 +80,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   SUPPORTED: "验证支持",
   SUPERSEDED: "已替代",
   SUPPRESSED: "已抑制",
+  SUSPECT: "疑似过期",
   TIMEOUT: "超时",
   UNKNOWN: "未知",
   UNSATISFIED: "未满足",
@@ -86,6 +90,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   CORRECTION: "用户已纠正",
   VERIFIED: "已验证",
   WARNING: "警告",
+  LEGACY: "历史知识（未定位）",
 });
 
 export function statusLabel(status: string): string {

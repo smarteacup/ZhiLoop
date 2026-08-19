@@ -161,6 +161,9 @@ export class ActiveKnowledgeInjectionRuntime {
           ...(eligibility.scopeMatched ? { assetId: candidate.asset.id } : {}),
         })),
       ],
+      ...(retrieved.retrieval.scenarioDirectory === undefined ? {} : {
+        scenarioDirectory: retrieved.retrieval.scenarioDirectory,
+      }),
     };
     const rerank = {
       items: candidates,
@@ -182,6 +185,8 @@ export class ActiveKnowledgeInjectionRuntime {
         sampleCount: feedback.sampleCount,
         reasonCodes: feedback.reasonCodes,
       },
+      selectedScenarioIds: retrieved.retrieval.scenarioDirectory
+        ?.filter((item) => item.selected).map((item) => item.scenarioId) ?? [],
     });
     const trace = buildRetrievalTrace({
       traceId: retrieved.traceId,

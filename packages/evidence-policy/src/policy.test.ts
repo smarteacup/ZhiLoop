@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
-import type { AssertionKind, EvidenceType, KnowledgeAssertion, KnowledgeCandidate } from "@zhiloop/domain";
+import { deriveScenarioId, type AssertionKind, type EvidenceType, type KnowledgeAssertion,
+  type KnowledgeCandidate } from "@zhiloop/domain";
 import type { VerificationResult, VerificationStatus } from "@zhiloop/evidence-engine";
 
 import { evaluateEvidencePolicy } from "./policy.js";
@@ -123,6 +124,39 @@ function verifiedProject(projectId: string, subjectKey = "design.evidence.policy
 }
 
 describe("evaluateEvidencePolicy", () => {
+  it("blocks CURRENT_STATE publication without authoritative branch+commit locator", () => {
+    const acceptedAssertion = assertion("USER_ACCEPTED");
+    const base = candidate("DECISION", [acceptedAssertion]);
+    const located = { ...base, schemaVersion: 2 as const, claimMode: "CURRENT_STATE" as const,
+      locator: { schemaVersion: 1 as const, projectId: "project-1", observedRevision: { dirty: false },
+        branchApplicability: { mode: "ALL_BRANCHES" as const, reason: "revision unavailable" },
+        scenarioId: deriveScenarioId("project-1", "evidence.policy"), scenarioKey: "evidence.policy",
+        scenarioTitle: "Evidence policy", scenarioSummary: "Evidence policy behavior", modulePaths: [], symbols: [],
+        entryPoints: [], taskIntents: ["verify knowledge"], applicability: [], nonApplicability: [] } } as KnowledgeCandidate;
+    const result = evaluateEvidencePolicy(input(located, [verification(acceptedAssertion, "SUPPORTED")]));
+    expect(result).toMatchObject({ action: "KEEP", shouldPublish: false });
+    expect(result.reasonCodes).toEqual(expect.arrayContaining(["LOCATOR_REVISION_UNRESOLVED", "CURRENT_STATE_PUBLICATION_BLOCKED"]));
+  });
+
+  it("treats missing future implementation as pending instead of refuting an accepted decision", () => {
+    const acceptedAssertion = assertion("USER_ACCEPTED");
+    const symbolAssertion = assertion("SYMBOL_EXISTS");
+    const base = candidate("DECISION", [acceptedAssertion, symbolAssertion]);
+    const located = { ...base, schemaVersion: 2 as const, claimMode: "FUTURE_REQUIREMENT" as const,
+      locator: { schemaVersion: 1 as const, projectId: "project-1",
+        observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false },
+        branchApplicability: { mode: "BRANCH_LINEAGE" as const, baseCommit: "abcdef1234567", observedBranch: "main" },
+        scenarioId: deriveScenarioId("project-1", "evidence.future"), scenarioKey: "evidence.future",
+        scenarioTitle: "Future behavior", scenarioSummary: "Accepted behavior pending implementation", modulePaths: [],
+        symbols: ["KnowledgeCompiler"], entryPoints: [], taskIntents: ["implement future behavior"],
+        applicability: [], nonApplicability: [] } } as KnowledgeCandidate;
+    const result = evaluateEvidencePolicy(input(located, [verification(acceptedAssertion, "SUPPORTED"),
+      verification(symbolAssertion, "REFUTED")]));
+    expect(result).toMatchObject({ action: "APPLY", targetStatus: "ACCEPTED", shouldPublish: true });
+    expect(result.reasonCodes).toContain("PENDING_IMPLEMENTATION");
+    expect(result.reasonCodes).not.toContain("ASSERTION_REFUTED");
+  });
+
   it("keeps model-only output PROPOSED and unpublished", () => {
     const result = evaluateEvidencePolicy(input(candidate("DESIGN")));
     expect(result).toMatchObject({
@@ -208,6 +242,14 @@ describe("evaluateEvidencePolicy", () => {
     expect(result).toMatchObject({ action: "KEEP", targetStatus: "PROPOSED", shouldPublish: false });
     expect(result.reasonCodes).toContain("AUTO_PUBLISH_ASSERTIONS_INCOMPLETE");
     if (status === "ERROR") expect(result.reasonCodes).toContain("VERIFIER_ERROR_NOT_EVIDENCE");
+  });
+
+  it("keeps an invalid assertion visible and blocks evidence promotion", () => {
+    const symbol = assertion("SYMBOL_EXISTS");
+    const invalid = { ...verification(symbol, "ERROR"), reasonCodes: ["INVALID_ASSERTION"] };
+    const result = evaluateEvidencePolicy(input(candidate("IMPLEMENTATION", [symbol]), [invalid]));
+    expect(result.shouldPublish).toBe(false);
+    expect(result.reasonCodes).toEqual(expect.arrayContaining(["INVALID_ASSERTION", "VERIFIER_ERROR_NOT_EVIDENCE"]));
   });
 
   it("keeps a refuted proposal and asks before contradicting published state", () => {

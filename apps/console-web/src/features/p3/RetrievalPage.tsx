@@ -23,6 +23,7 @@ export function RetrievalPage({ api }: { readonly api: RetrievalConsoleApi }): R
   const [mode, setMode] = useState<"SEARCH" | "ASK">("SEARCH");
   const [query, setQuery] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [repositoryRoot, setRepositoryRoot] = useState("");
   const [trace, setTrace] = useState<RetrievalTraceView>();
   const [answer, setAnswer] = useState<KnowledgeAskView>();
   const [simulation, setSimulation] = useState<RetrievalSimulationView>();
@@ -34,6 +35,7 @@ export function RetrievalPage({ api }: { readonly api: RetrievalConsoleApi }): R
     setPending(true); setError(undefined); setAnswer(undefined); setSimulation(undefined);
     const command: KnowledgeSearchCommand = {
       requestId: requestId(), query: query.trim(), ...(projectId.trim() === "" ? {} : { projectId: projectId.trim() }),
+      ...(repositoryRoot.trim() === "" ? {} : { cwd: repositoryRoot.trim() }),
       maxResults: 20, maxContextTokens: 2_000,
     };
     const controller = new AbortController();
@@ -66,7 +68,7 @@ export function RetrievalPage({ api }: { readonly api: RetrievalConsoleApi }): R
       const capabilities = await api.capabilities();
       const capability = capabilities.items.find((item) => item.capabilityId === "knowledge.retrieval");
       if (capability?.status !== "READY") throw new Error(capability?.reasonCode ?? "RETRIEVAL_CAPABILITY_NOT_REPORTED");
-      setSimulation(await api.simulateRetrieval({ requestId: requestId(), query: query.trim(), ...(projectId ? { projectId } : {}), maxResults: 20, maxContextTokens: 2_000 }, controller.signal));
+      setSimulation(await api.simulateRetrieval({ requestId: requestId(), query: query.trim(), ...(projectId.trim() === "" ? {} : { projectId: projectId.trim() }), ...(repositoryRoot.trim() === "" ? {} : { cwd: repositoryRoot.trim() }), maxResults: 20, maxContextTokens: 2_000 }, controller.signal));
     } catch (value) { setError(controller.signal.aborted ? "QUERY_CANCELLED" : value instanceof Error ? value.message : "SIMULATION_FAILED"); }
     finally {
       if (activeRequest.current === controller) activeRequest.current = undefined;
@@ -75,7 +77,7 @@ export function RetrievalPage({ api }: { readonly api: RetrievalConsoleApi }): R
   };
   return <div className="page-stack"><header className="page-header"><div><p className="eyebrow">RETRIEVAL</p><h1>召回知识</h1><p>确定性搜索与本地 Codex 只读综合；P3 结果始终是 SHADOW。</p></div>{trace === undefined ? undefined : <StatusBadge status={trace.injectionResult} />}</header>
     <section className="panel"><div className="tab-list" role="tablist" aria-label="知识查询模式"><button type="button" role="tab" aria-selected={mode === "SEARCH"} onClick={() => setMode("SEARCH")}>搜索知识</button><button type="button" role="tab" aria-selected={mode === "ASK"} onClick={() => setMode("ASK")}>问 ZhiLoop</button></div>
-      <label>自然语言问题<textarea rows={4} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label><label>项目 ID（可选）<input value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)} /></label>
+      <label>自然语言问题<textarea rows={4} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label><label>项目目录（推荐，用于识别分支和提交）<input value={repositoryRoot} onChange={(event) => setRepositoryRoot(event.currentTarget.value)} placeholder="/path/to/project" /></label><label>项目 ID（可选；填写目录时会校验一致性）<input value={projectId} onChange={(event) => setProjectId(event.currentTarget.value)} /></label>
       <div className="button-row"><button type="button" className="primary-button" disabled={pending || query.trim() === ""} onClick={() => void run()}>{pending ? "处理中…" : mode === "SEARCH" ? "搜索知识" : "问 ZhiLoop"}</button><button type="button" className="secondary-button" disabled={pending || query.trim() === ""} onClick={() => void compare()}>比较当前/草稿策略</button>{pending ? <button type="button" className="danger-button" onClick={() => activeRequest.current?.abort()}>取消查询</button> : undefined}</div>
       {error === undefined ? undefined : <p className="inline-alert warning" role="alert">{error}</p>}</section>
     {answer === undefined ? undefined : <Answer value={answer} />}
@@ -89,7 +91,7 @@ function Answer({ value }: { readonly value: KnowledgeAskView }): React.JSX.Elem
 }
 
 function Trace({ value }: { readonly value: RetrievalTraceView }): React.JSX.Element {
-  return <section className="panel"><div className="section-heading"><div><h2>Retrieval Trace</h2><span>{value.traceId}</span></div><StatusBadge status={value.outcome} /></div><p>{value.envelope.detailLevel} · {value.envelope.estimatedTokens}/{value.envelope.maxTokens} tokens · {value.injectionResult}</p><div className="table-scroll"><table><thead><tr><th>知识</th><th>召回/最终</th><th>通道贡献</th><th>Evidence</th><th>投递</th></tr></thead><tbody>{value.results.map((item) => <tr key={`${item.knowledgeId}:${item.version}`}><td><a href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}>{item.title}</a><small>{item.knowledgeId}@{item.version}</small></td><td>{item.retrievalRank} / {item.finalRank}</td><td>{item.contributions.map((entry) => `${entry.channel}#${entry.rank}: ${entry.reason}`).join("；")}</td><td>{item.evidenceIds.join(", ") || "无"}</td><td>SHADOWED</td></tr>)}</tbody></table></div>{value.envelope.omitted.length === 0 ? undefined : <details><summary>未注入项与原因</summary><ul>{value.envelope.omitted.map((item) => <li key={`${item.knowledgeId}:${item.version}`}>{item.knowledgeId}@{item.version} · {item.reason}</li>)}</ul></details>}<details><summary>过滤与降级</summary><ul>{value.filters.map((item, index) => <li key={index}>{item.decision} · {item.reasonCode} · {item.safeMessage}</li>)}</ul></details></section>;
+  return <section className="panel"><div className="section-heading"><div><h2>Retrieval Trace</h2><span>{value.traceId}</span></div><StatusBadge status={value.outcome} /></div><p>{value.envelope.detailLevel} · {value.envelope.estimatedTokens}/{value.envelope.maxTokens} tokens · {value.injectionResult}</p><dl className="detail-grid"><div><dt>项目</dt><dd>{value.context.projectId ?? "未定位"}</dd></div><div><dt>分支</dt><dd>{value.context.branch ?? "未识别"}</dd></div><div><dt>提交</dt><dd>{value.context.commit === undefined ? "未识别" : `${value.context.commit.slice(0, 12)}${value.context.dirty === true ? "（工作区有修改）" : ""}`}</dd></div><div><dt>目录</dt><dd>{value.context.repositoryRoot ?? "未提供"}</dd></div></dl>{value.scenarios.length === 0 ? <p className="muted">未命中场景目录；将按普通知识通道召回。</p> : <div><h3>场景目录</h3><ul>{value.scenarios.map((scenario) => <li key={scenario.scenarioId}><strong>{scenario.selected ? "已选择" : "候选"} · {scenario.title}</strong><p>{scenario.summary}</p><small>{scenario.scenarioId} · score {scenario.score.toFixed(3)} · {scenario.entryPoints.join("、") || "无入口"}</small></li>)}</ul></div>}<div className="table-scroll"><table><thead><tr><th>知识</th><th>召回/最终</th><th>通道贡献</th><th>Evidence</th><th>投递</th></tr></thead><tbody>{value.results.map((item) => <tr key={`${item.knowledgeId}:${item.version}`}><td><a href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}>{item.title}</a><small>{item.knowledgeId}@{item.version}</small></td><td>{item.retrievalRank} / {item.finalRank}</td><td>{item.contributions.map((entry) => `${entry.channel}#${entry.rank}: ${entry.reason}`).join("；")}</td><td>{item.evidenceIds.join(", ") || "无"}</td><td>SHADOWED</td></tr>)}</tbody></table></div>{value.envelope.omitted.length === 0 ? undefined : <details><summary>未注入项与原因</summary><ul>{value.envelope.omitted.map((item) => <li key={`${item.knowledgeId}:${item.version}`}>{item.knowledgeId}@{item.version} · {item.reason}</li>)}</ul></details>}<details><summary>过滤与降级</summary><ul>{value.filters.map((item, index) => <li key={index}>{item.decision} · {item.reasonCode} · {item.safeMessage}</li>)}</ul></details></section>;
 }
 
 function PolicyComparison({ value }: { readonly value: RetrievalSimulationView }): React.JSX.Element {

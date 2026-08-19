@@ -99,6 +99,8 @@ function itemFor(value: RerankedKnowledge, level: Exclude<ContextComplexityLevel
     title: text(value.asset.title, 500),
     summary: sentence(value.asset.summary),
     retrievalRank: value.rank,
+    ...(value.asset.claimMode === undefined ? {} : { claimMode: value.asset.claimMode }),
+    ...(value.asset.locator === undefined ? {} : { scenarioId: value.asset.locator.scenarioId }),
   } as const;
   if (level === "L1_POINTER") return common;
   const boundaries = {
@@ -257,6 +259,12 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
         && (request.feedback.sampleCount < 3 || !request.feedback.reasonCodes.includes("RELEVANT_AND_USED_FEEDBACK_INCREASED_DEPTH"))))) {
       throw new Error("feedback hint is invalid");
     }
+    if ((request.selectedScenarioIds?.length ?? 0) > 20
+      || new Set(request.selectedScenarioIds ?? []).size !== (request.selectedScenarioIds?.length ?? 0)
+      || (request.selectedScenarioIds ?? []).some((id) => !validText(id, 1_000) || !id.startsWith("scenario:"))) {
+      throw new Error("selectedScenarioIds is invalid");
+    }
+    const selectedScenarios = new Set(request.selectedScenarioIds ?? []);
     const maxTokens = Math.min(request.maxTokens ?? request.policy.defaultMaxTokens, request.policy.defaultMaxTokens);
     if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 4_000) throw new Error("maxTokens is invalid");
     const reasons = new Set<string>();
@@ -273,9 +281,14 @@ export class ContextOrchestrator implements ContextOrchestratorPort {
       const output: ContextEnvelopeItem[] = [];
       for (const candidate of candidates.slice(0, maxItems(selectedLevel, request.policy))) {
         const progressiveInitial = selectedLevel === "L1_POINTER" && (request.automatic ?? true);
-        const itemLevel = progressiveInitial && authority(candidate) === "BINDING_RULE"
+        let itemLevel = progressiveInitial && authority(candidate) === "BINDING_RULE"
           ? "L2_COMPACT"
           : selectedLevel;
+        if (candidate.asset.locator !== undefined && itemLevel !== "L1_POINTER"
+          && !selectedScenarios.has(candidate.asset.locator.scenarioId)) {
+          itemLevel = "L1_POINTER";
+          reasons.add("SCENARIO_SELECTION_REQUIRED_FOR_EXPANSION");
+        }
         const next = [...output, itemFor(candidate, itemLevel)];
         const trialLevel = highestDetailLevel(next, selectedLevel);
         const trial = draftEnvelope(request, trialLevel, reasons, maxTokens, candidates.length, next, undefined, false);

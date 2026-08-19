@@ -488,7 +488,7 @@ function buildAsset(
 ): KnowledgeAsset {
   const candidate = policy.candidate;
   const draft: KnowledgeAsset = {
-    schemaVersion: 1,
+    schemaVersion: candidate.schemaVersion,
     id: assetId,
     subjectKey: candidate.subjectKey,
     kind: candidate.kind,
@@ -500,9 +500,10 @@ function buildAsset(
     body: candidate.body,
     aliases: [...(previous?.aliases ?? [])],
     keywords: [...new Set([...(previous?.keywords ?? []), ...candidate.subjectKey.split(".")])].sort(),
-    applicability: [...(previous?.applicability ?? [])],
-    nonApplicability: [...(previous?.nonApplicability ?? [])],
-    symbols: [...new Set([...(previous?.symbols ?? []), ...candidateSymbols(candidate)])].sort(),
+    applicability: [...new Set([...(previous?.applicability ?? []), ...(candidate.locator?.applicability ?? [])])].sort(),
+    nonApplicability: [...new Set([...(previous?.nonApplicability ?? []), ...(candidate.locator?.nonApplicability ?? [])])].sort(),
+    symbols: [...new Set([...(previous?.symbols ?? []), ...candidateSymbols(candidate),
+      ...(candidate.locator?.symbols ?? [])])].sort(),
     relations: evolutionRelations(evolution.decision, previous),
     evidence: mergeEvidence(previous?.evidence ?? [], evidenceRefs(policy)),
     confidence: candidate.confidence,
@@ -512,6 +513,8 @@ function buildAsset(
     correlationId: candidate.correlationId,
     createdAt,
     updatedAt,
+    ...(candidate.claimMode === undefined ? {} : { claimMode: candidate.claimMode }),
+    ...(candidate.locator === undefined ? {} : { locator: structuredClone(candidate.locator) }),
   };
   return { ...draft, contentHash: calculateKnowledgeContentHash(draft) };
 }
@@ -1027,6 +1030,12 @@ export class KnowledgeWorkerRuntime {
         const policy = policies.get(item.candidateId);
         if (policy === undefined) throw new KnowledgeWorkerError("MISSING_POLICY_OUTBOX", "Policy outbox is incomplete", false);
         const project = projectForCandidate(policy.candidate, episodes, request.project);
+        await external("CONTEXT_PROJECTION_FAILED", async () => await this.#ports.contextProjection?.project({
+          asset: item.asset,
+          candidate: policy.candidate,
+          verificationResults: policy.verificationResults,
+          observedAt: (checkpoint as KnowledgeWorkerCheckpoint).createdAt,
+        }));
         const freshness = await external("FRESHNESS_PROJECTION_FAILED", () => this.#ports.freshness.project({
           asset: item.asset,
           candidate: policy.candidate,

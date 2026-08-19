@@ -119,8 +119,11 @@ export function verificationTimeoutMs(configuration: ConsoleConfiguration): numb
   // Verification includes repository revision capture plus CodeGraph capability
   // snapshots before and after the assertion probes. Keep the per-query timeout
   // configurable, but never shrink the end-to-end budget below the verification
-  // service's safe default.
-  return Math.min(60_000, Math.max(5_000, configuration.codeIntelligence.queryTimeoutMs * 5));
+  // service's safe default. A graph-backed verification performs capability
+  // snapshots before and after the assertion probes, so five query windows left
+  // too little scheduling margin on large repositories and caused avoidable
+  // retries even when every individual CodeGraph call stayed within its bound.
+  return Math.min(60_000, Math.max(15_000, configuration.codeIntelligence.queryTimeoutMs * 8));
 }
 
 function consoleConfigurationHash(configuration: ConsoleConfiguration): string {

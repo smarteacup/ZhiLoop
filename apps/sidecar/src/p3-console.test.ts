@@ -18,6 +18,13 @@ import { P3SidecarConsole } from "./p3-console.js";
 
 const NOW = "2026-08-04T00:00:00.000Z";
 const roots: string[] = [];
+const resolveProject = async (root: string) => ({
+  projectId: root.endsWith("project-b") ? "project-b" : "project-a",
+  repositoryRoot: root,
+  branch: "main",
+  revision: { commit: "abcdef1234567", dirty: false },
+  portable: true,
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
@@ -34,7 +41,7 @@ function configuration(): ConfigurationView {
 
 function asset(): KnowledgeAsset {
   const value: KnowledgeAsset = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "knowledge-p3-sidecar",
     subjectKey: "symbol.sidecar.config-service",
     kind: "IMPLEMENTATION",
@@ -57,6 +64,16 @@ function asset(): KnowledgeAsset {
     correlationId: "correlation-p3-sidecar",
     createdAt: NOW,
     updatedAt: NOW,
+    claimMode: "CURRENT_STATE",
+    locator: {
+      schemaVersion: 1, projectId: "project-a",
+      observedRevision: { branch: "main", commit: "abcdef1234567", dirty: false },
+      branchApplicability: { mode: "EXACT_BRANCH", branch: "main" },
+      scenarioId: "scenario:project-a:config.activation", scenarioKey: "config.activation",
+      scenarioTitle: "配置激活", scenarioSummary: "校验并激活项目配置。",
+      modulePaths: ["src/config"], symbols: ["ConfigService"], entryPoints: ["ConfigService"],
+      taskIntents: ["修改配置"], applicability: ["项目配置"], nonApplicability: ["运行时参数"],
+    },
   };
   return { ...value, contentHash: calculateKnowledgeContentHash(value) };
 }
@@ -117,7 +134,7 @@ describe("P3SidecarConsole", () => {
     const root = await mkdtemp(path.join(tmpdir(), "zhiloop-p3-sidecar-"));
     roots.push(root);
     const projection = await registry(root);
-    const console = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [] });
+    const console = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [], resolveProject });
 
     expect(console.capability).toMatchObject({
       retrieval: { state: "READY", reasonCode: "COMPONENT_READY" },
@@ -128,6 +145,9 @@ describe("P3SidecarConsole", () => {
     expect(visible.trace.injectionResult).toBe("SHADOWED");
     const isolated = p3ConsoleSearchResponseSchema.parse(await console.handle(request("request-isolated", "p3.knowledge.search", "project-b")));
     expect(isolated.trace.results).toEqual([]);
+    await expect(console.handle({
+      ...request("request-mismatch", "p3.knowledge.search"), projectId: "project-b",
+    })).rejects.toThrow("P3_PROJECT_IDENTITY_MISMATCH");
 
     console.close();
     projection.close();
@@ -139,13 +159,13 @@ describe("P3SidecarConsole", () => {
     const projection = await registry(root);
     const firstAnswer = vi.fn(async (input: CodexKnowledgeQueryRequest) => cited(input));
     const firstModel: CodexKnowledgeQueryModel = { answer: firstAnswer };
-    const first = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [], model: firstModel });
+    const first = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [], model: firstModel, resolveProject });
     const command = request("request-restart-idempotent", "p3.knowledge.ask");
     const initial = p3ConsoleAskResponseSchema.parse(await first.handle(command));
     first.close();
 
     const secondAnswer = vi.fn(async (input: CodexKnowledgeQueryRequest) => cited(input));
-    const reopened = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [], model: { answer: secondAnswer } });
+    const reopened = new P3SidecarConsole({ stateDirectory: root, registry: projection, configuration, drafts: () => [], model: { answer: secondAnswer }, resolveProject });
     const replayed = p3ConsoleAskResponseSchema.parse(await reopened.handle(command));
     expect(replayed).toEqual(initial);
     expect(firstAnswer).toHaveBeenCalledTimes(1);
@@ -162,13 +182,13 @@ describe("P3SidecarConsole", () => {
     const noModelDirectory = path.join(root, "no-model");
     const timedDirectory = path.join(root, "timed");
     await Promise.all([mkdir(noModelDirectory), mkdir(timedDirectory)]);
-    const noModel = new P3SidecarConsole({ stateDirectory: noModelDirectory, registry: projection, configuration, drafts: () => [] });
+    const noModel = new P3SidecarConsole({ stateDirectory: noModelDirectory, registry: projection, configuration, drafts: () => [], resolveProject });
     const fallback = p3ConsoleAskResponseSchema.parse(await noModel.handle(request("request-no-model", "p3.knowledge.ask")));
     expect(fallback.answer.outcome).toBe("FALLBACK_SEARCH");
     noModel.close();
 
     const hanging: CodexKnowledgeQueryModel = { answer: async () => await new Promise<CodexKnowledgeQueryAnswer>(() => undefined) };
-    const timed = new P3SidecarConsole({ stateDirectory: timedDirectory, registry: projection, configuration, drafts: () => [], model: hanging });
+    const timed = new P3SidecarConsole({ stateDirectory: timedDirectory, registry: projection, configuration, drafts: () => [], model: hanging, resolveProject });
     const timeoutCommand = { ...request("request-timeout", "p3.knowledge.ask"), timeoutMs: 10 };
     const timeout = p3ConsoleAskResponseSchema.parse(await timed.handle(timeoutCommand));
     expect(timeout.answer.outcome).toBe("FALLBACK_SEARCH");

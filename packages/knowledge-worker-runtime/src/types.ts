@@ -107,6 +107,15 @@ export interface FreshnessProjectionPort {
   project(input: FreshnessProjectionInput): FreshnessProjectionWriteResult | Promise<FreshnessProjectionWriteResult>;
 }
 
+export interface KnowledgeContextProjectionPort {
+  project(input: {
+    readonly asset: KnowledgeAsset;
+    readonly candidate: KnowledgeCandidate;
+    readonly verificationResults: readonly VerificationResult[];
+    readonly observedAt: string;
+  }): void | Promise<void>;
+}
+
 export interface KnowledgeEvolutionLookupPort {
   search(queries: readonly string[], limit: number): readonly KnowledgeAsset[] | Promise<readonly KnowledgeAsset[]>;
 }
@@ -129,6 +138,7 @@ export interface KnowledgeWorkerPorts {
   readonly markdown: MarkdownKnowledgePort;
   readonly registry: RegistryProjectionPort;
   readonly freshness: FreshnessProjectionPort;
+  readonly contextProjection?: KnowledgeContextProjectionPort;
   readonly index: IncrementalIndexPort;
 }
 

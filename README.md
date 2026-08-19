@@ -6,7 +6,7 @@ ZhiLoop 是一个面向 AI 编程代理的动态知识层。其核心架构 Code
 
 ZhiLoop 不绑定单一模型或客户端，也不是单纯的 RAG 或 Task Contract。知识注入、任务契约和闭环验证都是可组合能力：默认向 AI 编程代理提供少量边界、门禁、已有能力和知识指针，运行中再按需展开。
 
-当前 P0-P7 与持续知识演进 M1-M10 已完成：覆盖 Codex/App Server 对话沉淀、自动 Candidate Preview、用户承诺、知识演进、CodeGraph 事实层、代码变化保鲜、Markdown/SQLite、混合召回、渐进注入、MCP 展开、有限闭环、控制台观测、Codex/CCM Hook 共存和可回滚部署。当前发行版 `0.4.3` 仍默认运行在 `SHADOW + PREVIEW_ONLY`；只有经过显式 ACTIVE 资格与灰度门禁后才会把内容实际注入模型，自动发布 consumer 仍保持关闭。
+当前 P0-P7 与持续知识演进 M1-M10 已完成：覆盖 Codex/App Server 对话沉淀、自动 Candidate Preview、用户承诺、知识演进、CodeGraph 事实层、代码变化保鲜、Markdown/SQLite、混合召回、渐进注入、MCP 展开、有限闭环、控制台观测、Codex/CCM Hook 共存和可回滚部署。当前发行版 `0.4.7` 仍默认运行在 `SHADOW + PREVIEW_ONLY`；只有经过显式 ACTIVE 资格与灰度门禁后才会把内容实际注入模型，自动发布 consumer 仍保持关闭。
 
 CodeGraph 实时代码事实层、CodeAnchor、变化驱动复验、召回前 Freshness Gate 与显式初始化控制面均已接通。CodeGraph 读取不会隐式写仓库；只有本地操作者完成 preview → commit 后才会创建初始化任务。
 
@@ -35,7 +35,7 @@ CodeGraph 实时代码事实层、CodeAnchor、变化驱动复验、召回前 Fr
 - 系统设计：MVP Implementation Baseline
 - P0-P4 Console、运行时与本地部署：全部完成并通过模块、集成和浏览器 Gate
 - 自动化验证：超过 1,680 项单元/集成测试，另有 60 项架构/发布 Gate、依赖、lint、build、typecheck、coverage 与隔离部署门禁
-- 运行模式：当前发行版 `0.4.3` READY/SHADOW，LaunchAgent `dev.zhiloop.sidecar`
+- 运行模式：当前发行版 `0.4.7` READY/SHADOW，LaunchAgent `dev.zhiloop.sidecar`
 - 真实验收：会话 `019f837a-34d4-7e60-800c-6361f6fb6d49` 沉淀 98 条事件、49 个 Turn，生成 8 条候选并发布 6 条可召回知识；搜索与本地 Codex 问答均成功且可追溯，CCM 配置 hash 保持不变
 
 ## 本地验证

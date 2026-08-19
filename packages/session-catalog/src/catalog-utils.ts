@@ -104,11 +104,13 @@ export function toCatalogEntry(record: SourceSessionRecord, capture: CapturedSes
   const cwdProject = record.cwd === undefined ? undefined : oneLine(basename(record.cwd), 500);
   const projectHint = capture?.projectHint ?? cwdProject;
   const cwdAlias = capture?.cwdAlias ?? cwdProject;
+  const cursorMatchesSource = capture?.cursorByteOffset === undefined || record.sourceByteLength === undefined
+    || capture.cursorByteOffset === record.sourceByteLength;
   const captureStatus = record.sourceStatus !== "AVAILABLE"
     ? "SOURCE_UNAVAILABLE"
     : capture === undefined
       ? "DISCOVERED_NOT_CAPTURED"
-      : capture.current
+      : capture.current && cursorMatchesSource
         ? "CAPTURED_CURRENT"
         : "CAPTURED_PARTIAL";
   return Object.freeze({

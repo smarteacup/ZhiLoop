@@ -148,6 +148,25 @@ describe("TranscriptSessionCatalogSource", () => {
     expect(result.scanStats).toEqual({ filesVisited: 4, filesRead: 4, filesReused: 0 });
   });
 
+  it("keeps a session discoverable when a bounded ignored tool output exceeds one MiB", async () => {
+    const directory = await root();
+    await writeFile(join(directory, "large-tool-output.jsonl"), jsonl(
+      sessionMeta("session-large-tool-output", "2026-08-03T08:00:00.000Z"),
+      {
+        type: "response_item",
+        timestamp: "2026-08-03T08:01:00.000Z",
+        payload: { type: "custom_tool_call_output", output: "x".repeat(2_500_000) },
+      },
+      event("2026-08-03T08:02:00.000Z", { type: "user_message", message: "Follow-up" }),
+    ));
+
+    const result = await new TranscriptSessionCatalogSource(directory, { clock: () => now }).scan();
+
+    expect(result.capability.status).toBe("AVAILABLE");
+    expect(result.sessions).toMatchObject([{ sessionId: "session-large-tool-output", sourceRecordCount: 3 }]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it("reuses unchanged files, discovers appends, and never mutates the source", async () => {
     const directory = await root();
     const path = join(directory, "active.jsonl");
@@ -361,6 +380,16 @@ describe("ReadOnlySessionCatalog", () => {
     expect(discovered.captureStatus).toBe("DISCOVERED_NOT_CAPTURED");
     expect(discovered.title).toBe("Session session-a");
     expect(await new EmptyCaptureProjection().getMany(["x"])).toEqual(new Map());
+    expect(toCatalogEntry(
+      sourceRecord({ sourceByteLength: 101 }),
+      { current: true, cursorByteOffset: 100, eventCount: 1, turnCount: 1, ignoredRecords: 0, redactionCount: 0 },
+      now,
+    ).captureStatus).toBe("CAPTURED_PARTIAL");
+    expect(toCatalogEntry(
+      sourceRecord({ sourceByteLength: 101 }),
+      { current: true, cursorByteOffset: 101, eventCount: 1, turnCount: 1, ignoredRecords: 0, redactionCount: 0 },
+      now,
+    ).captureStatus).toBe("CAPTURED_CURRENT");
 
     const retainedProjection: SessionCaptureProjectionPort = {
       async getMany() {

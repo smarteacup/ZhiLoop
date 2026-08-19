@@ -170,6 +170,7 @@ describe("P2CandidatePreviewCoordinator", () => {
     directories.push(stateDirectory);
     const ledger = new SqliteEventLedger(":memory:");
     ledger.append(event(1, "user.prompted", "turn-1"));
+    expect(ledger.append(event(1, "user.prompted", "turn-1")).status).toBe("duplicate");
     ledger.append(event(2, "turn.stopped", "turn-1"));
     ledger.append(event(3, "session.ended", "turn-2"));
     ledger.commitIngestionCursor("codex-transcript:session-1", { byteOffset: 400, lineNumber: 4 });
@@ -220,13 +221,14 @@ describe("P2CandidatePreviewCoordinator", () => {
       inspectTranscriptSource,
       configurationHash: () => configurationHash,
     });
-    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 3, requestId: "first" }))
-      .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 3 });
-    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 3, requestId: "current" }))
-      .resolves.toEqual({ status: "CURRENT", compiledThroughSequence: 3 });
+    expect(ledger.readAfter(0).map((record) => record.sequence)).toEqual([1, 3, 4]);
+    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "first" }))
+      .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 4 });
+    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "current" }))
+      .resolves.toEqual({ status: "CURRENT", compiledThroughSequence: 4 });
     configurationHash = "d".repeat(64);
-    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 3, requestId: "recompile" }))
-      .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 3 });
+    await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 4, requestId: "recompile" }))
+      .resolves.toMatchObject({ status: "ENQUEUED", compiledThroughSequence: 4 });
     await expect(coordinator.coordinate({ sessionId: "session-1", expectedLedgerSequence: 2, requestId: "stale" }))
       .resolves.toEqual({ status: "STALE", reasonCode: "LEDGER_CHANGED" });
     await runtime.close();

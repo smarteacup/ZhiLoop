@@ -83,6 +83,7 @@ export interface SessionCatalogSourcePort {
 
 export interface CapturedSessionState {
   readonly current: boolean;
+  readonly cursorByteOffset?: number;
   readonly eventCount: number;
   readonly turnCount: number;
   readonly ignoredRecords: number;

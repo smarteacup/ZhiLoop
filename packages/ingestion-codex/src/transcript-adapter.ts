@@ -17,7 +17,10 @@ import {
 } from "./transcript-types.js";
 
 const DEFAULT_MAX_READ_BYTES = 8 * 1024 * 1024;
-const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
+// Codex tool outputs can legitimately exceed 1 MiB even though the normalized
+// projection ignores them. Keep this below the bounded read window so a record
+// can be classified without accepting unbounded input.
+const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
 const ANCHOR_BYTES = 4096;
 const SUPPORTED_V1_CLI_VERSION = /^0\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 

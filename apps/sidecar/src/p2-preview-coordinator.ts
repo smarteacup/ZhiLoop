@@ -41,7 +41,7 @@ function ledgerRange(ledger: SqliteEventLedger, sessionId: string, from: number,
   let cursor = from - 1;
   while (cursor < to && records.length <= MAX_EXTRACTION_RECORDS) {
     const page = ledger.readAfter(cursor, Math.min(LEDGER_PAGE_SIZE, to - cursor));
-    if (page.length === 0 || page[0]!.sequence !== cursor + 1) {
+    if (page.length === 0) {
       throw Object.assign(new Error("extraction ledger range is incomplete"), { code: "CONFLICT" });
     }
     for (const item of page) {

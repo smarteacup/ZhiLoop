@@ -225,7 +225,7 @@ export class TranscriptSessionCatalogSource implements SessionCatalogSourcePort 
     this.#maxDepth = positive(options.maxDepth, 8, "maxDepth");
     this.#maxFiles = positive(options.maxFiles, 50_000, "maxFiles");
     this.#maxFileBytes = positive(options.maxFileBytes, 128 * 1024 * 1024, "maxFileBytes");
-    this.#maxLineBytes = positive(options.maxLineBytes, 1024 * 1024, "maxLineBytes");
+    this.#maxLineBytes = positive(options.maxLineBytes, 4 * 1024 * 1024, "maxLineBytes");
     this.#clock = options.clock ?? (() => new Date());
   }
 

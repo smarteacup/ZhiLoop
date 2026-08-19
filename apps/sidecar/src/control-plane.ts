@@ -320,8 +320,10 @@ export class SidecarControlPlane {
       getMany: async (sessionIds) => new Map(sessionIds.flatMap((sessionId) => {
         const state = captureStates.get(sessionId);
         if (!state) return [];
+        const cursor = options.ledger.loadIngestionCursor<TranscriptCursor>(`codex-transcript:${sessionId}`);
         const value: CapturedSessionState = {
-          current: state.current,
+          current: state.current || cursor !== undefined,
+          ...(cursor === undefined ? {} : { cursorByteOffset: cursor.cursor.byteOffset }),
           eventCount: state.eventCount,
           turnCount: state.turnIds.size,
           ignoredRecords: state.ignoredRecords,

@@ -22,6 +22,46 @@ afterEach(async () => {
 });
 
 describe("versioned transcript adapter", () => {
+  it("ignores a bounded multi-megabyte tool output without blocking later events", async () => {
+    const transcript = await temporaryTranscript();
+    const records = [
+      {
+        timestamp: "2026-08-01T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "session-large-tool-output",
+          cli_version: "0.146.0-fixture",
+          source: "vscode",
+        },
+      },
+      {
+        timestamp: "2026-08-01T10:00:01.000Z",
+        type: "response_item",
+        payload: { type: "custom_tool_call_output", output: "x".repeat(2_500_000) },
+      },
+      {
+        timestamp: "2026-08-01T10:00:02.000Z",
+        type: "event_msg",
+        payload: { type: "user_message", message: "question after tool output" },
+      },
+    ];
+    await writeFile(transcript, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+
+    const result = await readTranscriptIncrement(transcript);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        ignoredRecords: 1,
+        hasMore: false,
+        events: [
+          { eventType: "session.started" },
+          { eventType: "user.prompted", payload: { prompt: "question after tool output" } },
+        ],
+      },
+    });
+  });
+
   it("projects only public session, user, and final assistant records", async () => {
     const transcript = await temporaryTranscript();
     const result = await readTranscriptIncrement(transcript);

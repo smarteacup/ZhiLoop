@@ -31,6 +31,7 @@ class MemoryStore implements KnowledgeVerificationStore {
   getRecipe(): StoredVerificationRecipe | undefined { return undefined; }
   appendRun(summary: KnowledgeVerificationRunSummary): KnowledgeVerificationRunSummary { this.runs.push(summary); return summary; }
   getRun(): KnowledgeVerificationRunSummary | undefined { return undefined; }
+  listRuns(): readonly KnowledgeVerificationRunSummary[] { return this.runs; }
   listSupportingProofs(): readonly SupportingProofRef[] { return this.proofs; }
 }
 

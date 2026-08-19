@@ -505,6 +505,41 @@ describe("typed Console API client", () => {
     expect(bodies).toContainEqual({ baseRevision: 1, scope: "GLOBAL", draft: {} });
   });
 
+  it("binds every evolution operation to a bounded path and exact command body", async () => {
+    const paths: string[] = []; const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(input)); if (init?.body !== undefined) bodies.push(JSON.parse(String(init.body)) as unknown); return envelope({});
+    }));
+    const calls: Promise<unknown>[] = [
+      browserConsoleApi.evolutionOperations!(), browserConsoleApi.knowledgeEvolution!("knowledge-1"),
+      browserConsoleApi.revalidateKnowledge!({ knowledgeId: "knowledge-1", expectedKnowledgeVersion: 2,
+        expectedFreshnessRevision: 3, idempotencyKey: "revalidate-knowledge-0001" }),
+      browserConsoleApi.submitRepairCandidate!({ draftId: "draft-1", expectedRevision: 0,
+        idempotencyKey: "submit-repair-0001", title: "标题", summary: "摘要", body: "正文" }),
+      browserConsoleApi.codeGraphProjects!(), browserConsoleApi.previewCodeGraphInitialization!("project-1"),
+      browserConsoleApi.commitCodeGraphInitialization!({ projectId: "project-1", previewId: "preview-1",
+        repositoryIdentity: "a".repeat(64), expectedRevision: 0, idempotencyKey: "codegraph-commit-0001" }),
+      browserConsoleApi.operationalAlerts!("project-1", "cursor-1"), browserConsoleApi.operationalAlerts!(),
+      browserConsoleApi.acknowledgeOperationalAlert!({ alertId: "alert-1", expectedRevision: 1, idempotencyKey: "alert-ack-0001" }),
+      browserConsoleApi.suppressOperationalAlert!({ alertId: "alert-1", expectedRevision: 1,
+        idempotencyKey: "alert-suppress-0001", suppressedUntil: "2026-08-19T03:00:00.000Z" }),
+      browserConsoleApi.legacyMigrations!("project-1"), browserConsoleApi.legacyMigration!("migration-1"),
+      browserConsoleApi.legacyMigrationItems!("migration-1", 2), browserConsoleApi.legacyMigrationItems!("migration-1"),
+      browserConsoleApi.previewLegacyMigration!("project-1"),
+      browserConsoleApi.commitLegacyMigration!({ migrationId: "migration-1", expectedRevision: 0, idempotencyKey: "migration-commit-0001" }),
+      browserConsoleApi.rollbackLegacyMigration!({ migrationId: "migration-1", expectedRevision: 1, idempotencyKey: "migration-rollback-0001" }),
+    ];
+    for (const call of calls) await expect(call).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
+    expect(paths).toEqual(expect.arrayContaining(["/api/v1/evolution/operations", "/api/v1/knowledge/knowledge-1/evolution",
+      "/api/v1/codegraph/projects?limit=100", "/api/v1/alerts?limit=50&projectId=project-1&cursor=cursor-1",
+      "/api/v1/migrations/migration-1/items?limit=50&afterOrdinal=2"]));
+    expect(bodies).toEqual(expect.arrayContaining([
+      { expectedKnowledgeVersion: 2, expectedFreshnessRevision: 3, idempotencyKey: "revalidate-knowledge-0001" },
+      { expectedRevision: 0, idempotencyKey: "submit-repair-0001", title: "标题", summary: "摘要", body: "正文" },
+      { projectId: "project-1" }, { expectedRevision: 0, idempotencyKey: "migration-commit-0001" },
+    ]));
+  });
+
   it("handles unavailable, invalid, closed, and already-aborted SSE streams", async () => {
     vi.stubGlobal("EventSource", undefined);
     const unavailable = vi.fn();

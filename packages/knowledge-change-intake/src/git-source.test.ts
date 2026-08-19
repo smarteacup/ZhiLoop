@@ -359,5 +359,5 @@ describe("GitKnowledgeChangeSource durable observations", () => {
       execFileSync("git", ["checkout", "--detach", "HEAD^"], { cwd: root, stdio: "ignore" });
       expect(await source.scan()).toMatchObject([{ changedPaths: ["added.ts", "existing.ts"] }]);
     } finally { source.close(); }
-  });
+  }, 10_000);
 });

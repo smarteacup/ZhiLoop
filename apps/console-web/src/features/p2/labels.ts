@@ -10,6 +10,11 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   KNOWLEDGE_REPAIR_DRAFT: "知识修复草稿",
   CODEGRAPH_INITIALIZE: "CodeGraph 初始化",
   LEGACY_KNOWLEDGE_MIGRATION: "历史知识迁移",
+  CANDIDATE: "候选验证",
+  PRE_INJECTION: "注入前验证",
+  SUPPORTED: "验证支持",
+  REFUTED: "验证不支持",
+  ERROR: "验证异常",
 
   SNAPSHOT_IMMUTABLE: "快照已固化，不会被后续会话变化覆盖",
   SNAPSHOT_NOT_CREATED: "尚未创建提取快照",
@@ -88,6 +93,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   CORRECTION: "用户纠正",
   DECIDED: "已完成演进决策",
   STORE: "新增知识",
+  CREATE: "新增知识",
   SUPPLEMENT: "补充现有知识",
   SUPERSEDE: "替代旧知识",
   CONTRADICT: "与现有知识冲突",
@@ -128,6 +134,11 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   CODEGRAPH_NOT_INITIALIZED: "当前项目尚未初始化 CodeGraph",
   CODEGRAPH_INDEX_STALE: "CodeGraph 索引不是当前代码版本",
   CODEGRAPH_UNAVAILABLE: "CodeGraph 当前不可用",
+  PROJECT_SCOPE_REQUIRED: "需要项目级知识",
+  VERIFICATION_RECIPE_MISSING: "缺少验证 Recipe",
+  KNOWLEDGE_EVOLUTION_DISABLED: "知识演进能力已关闭",
+  CODE_REVISION_ALREADY_CURRENT: "代码版本没有变化",
+  KNOWLEDGE_REVALIDATION_QUEUED: "知识复验任务已排队",
   FILE_LITERAL_FOUND: "文件中已找到目标内容",
   FILE_LITERAL_NOT_FOUND: "文件中未找到目标内容",
   DEPENDENCY_FOUND: "已找到目标依赖",
@@ -153,6 +164,36 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   COMPONENT_DEGRADED: "组件处于降级状态",
   CAPABILITY_DISABLED: "能力已禁用",
   CAPABILITY_NOT_CONFIGURED: "能力尚未配置",
+  READY: "就绪",
+  RUNNING: "运行中",
+  EMPTY: "暂无记录",
+  FAILED: "失败",
+  MIGRATABLE: "可迁移",
+  ALREADY_CURRENT: "已是当前结构",
+  MIGRATED: "已迁移",
+  ROLLBACK_CONFLICT: "回滚存在冲突",
+  ROLLING_BACK: "正在回滚",
+  COMMITTING: "正在提交",
+  COMPLETED: "已完成",
+  ROLLED_BACK: "已回滚",
+  LEGACY_MIGRATION_TARGET_DRIFT: "迁移目标已被后续修改",
+  LOCAL_ONLY: "仅本地记录",
+  PENDING: "等待中",
+  DELIVERED: "已发送",
+  DELIVERY_FAILED: "外部通知失败",
+  PERMANENT_JOB_FAILURE: "后台任务永久失败",
+  STALE_KNOWLEDGE: "发现过期知识",
+  MIGRATION_FAILED: "历史知识迁移失败",
+  INFO: "提示",
+  WARNING: "警告",
+  CRITICAL: "严重",
+  FRESHNESS: "知识保鲜",
+  MIGRATION: "历史迁移",
+  ALERT: "运行告警",
+  INJECTION: "上下文注入",
+  COMPILE: "知识编译",
+  REPAIR: "知识修复",
+  CODEGRAPH: "CodeGraph",
 });
 
 const details: Readonly<Record<string, string>> = Object.freeze({
@@ -173,9 +214,13 @@ const details: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export function p2EnumLabel(value: string): string {
-  return labels[value] ?? value;
+  return labels[value] ?? `未知状态（${value}）`;
 }
 
 export function p2ReasonDetail(value: string): string | undefined {
   return details[value];
+}
+
+export function operationLabel(value: string): string {
+  return labels[value] ?? `未知状态（${value}）`;
 }

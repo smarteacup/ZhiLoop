@@ -15,6 +15,19 @@ import {
   controlRequestSchema,
   diagnosticsSchema,
   eventMetadataPageSchema,
+  evolutionOperationsSnapshotSchema,
+  codeGraphProjectPageSchema,
+  codeGraphInitializationPreviewSchema,
+  codeGraphInitializationCommitSchema,
+  operationalAlertConsolePageSchema,
+  alertOperatorCommandResultSchema,
+  legacyMigrationPreviewSchema,
+  legacyMigrationsListSchema,
+  legacyMigrationPageSchema,
+  legacyMigrationCommitResultSchema,
+  knowledgeEvolutionViewSchema,
+  knowledgeRevalidationCommandResultSchema,
+  knowledgeRepairSubmissionResultSchema,
   jobCommandResultSchema,
   jobIdSchema,
   jobPageSchema,
@@ -869,6 +882,154 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid extraction command"); }
         return;
       }
+      if (url.pathname === "/api/v1/evolution/operations") {
+        if (request.method !== "GET" || url.searchParams.size !== 0 || options.queryPort.getEvolutionOperations === undefined) {
+          safeError(response, request.method === "GET" ? 503 : 405, "CAPABILITY_UNAVAILABLE", "Evolution operations view is unavailable"); return;
+        }
+        await executeView(response, evolutionOperationsSnapshotSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.getEvolutionOperations!(queryOptions));
+        return;
+      }
+      if (url.pathname === "/api/v1/codegraph/projects") {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some((key) => key !== "limit")
+          || url.searchParams.getAll("limit").length > 1 || options.queryPort.listCodeGraphProjects === undefined) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid CodeGraph project query"); return;
+        }
+        const limit = Number(url.searchParams.get("limit") ?? 100);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) { safeError(response, 400, "INVALID_REQUEST", "Invalid CodeGraph project limit"); return; }
+        await executeView(response, codeGraphProjectPageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.listCodeGraphProjects!(limit, queryOptions));
+        return;
+      }
+      const codeGraphCommand = /^\/api\/v1\/codegraph\/projects\/([^/]+)\/(preview|commit)$/u.exec(url.pathname);
+      if (codeGraphCommand !== null) {
+        const projectId = decodePathSegment(codeGraphCommand[1]); const operation = codeGraphCommand[2];
+        if (request.method !== "POST" || projectId === undefined || !SAFE_KNOWLEDGE_ID.test(projectId) || url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid CodeGraph initialization command"); return;
+        }
+        const port = options.commandPort;
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (operation === "preview") {
+            if (!hasExactBodyFields(body, []) || port?.previewCodeGraphInitialization === undefined) throw new Error("invalid");
+            await executeCommand(response, codeGraphInitializationPreviewSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => port.previewCodeGraphInitialization!(projectId, queryOptions));
+          } else {
+            if (!hasExactBodyFields(body, ["previewId", "repositoryIdentity", "expectedRevision", "idempotencyKey"])
+              || port?.commitCodeGraphInitialization === undefined) throw new Error("invalid");
+            await executeCommand(response, codeGraphInitializationCommitSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => port.commitCodeGraphInitialization!({ projectId, ...(body as {
+                previewId: string; repositoryIdentity: string; expectedRevision: number; idempotencyKey: string;
+              }) }, queryOptions), () => 202);
+          }
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid CodeGraph initialization command"); }
+        return;
+      }
+      if (url.pathname === "/api/v1/alerts") {
+        if (request.method !== "GET" || options.queryPort.listOperationalAlerts === undefined
+          || [...url.searchParams.keys()].some((key) => !["projectId", "limit", "cursor"].includes(key))
+          || ["projectId", "limit", "cursor"].some((key) => url.searchParams.getAll(key).length > 1)) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid alert query"); return;
+        }
+        const projectId = url.searchParams.get("projectId") ?? undefined; const cursor = url.searchParams.get("cursor") ?? undefined;
+        const limit = Number(url.searchParams.get("limit") ?? 50);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (projectId !== undefined && !SAFE_KNOWLEDGE_ID.test(projectId))) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid alert query"); return;
+        }
+        await executeView(response, operationalAlertConsolePageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.listOperationalAlerts!(projectId, limit, cursor, queryOptions));
+        return;
+      }
+      const alertCommand = /^\/api\/v1\/alerts\/([^/]+)\/(acknowledge|suppress)$/u.exec(url.pathname);
+      if (alertCommand !== null) {
+        const alertId = decodePathSegment(alertCommand[1]); const operation = alertCommand[2]; const port = options.commandPort;
+        if (request.method !== "POST" || alertId === undefined || !SAFE_KNOWLEDGE_ID.test(alertId) || url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid alert command"); return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          const fields = operation === "acknowledge" ? ["expectedRevision", "idempotencyKey"] : ["expectedRevision", "idempotencyKey", "suppressedUntil"];
+          if (!hasExactBodyFields(body, fields)) throw new Error("invalid");
+          if (operation === "acknowledge") {
+            if (port?.acknowledgeOperationalAlert === undefined) throw new Error("unavailable");
+            await executeCommand(response, alertOperatorCommandResultSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => port.acknowledgeOperationalAlert!({ alertId, ...(body as { expectedRevision: number; idempotencyKey: string }) }, queryOptions));
+          } else {
+            if (port?.suppressOperationalAlert === undefined) throw new Error("unavailable");
+            await executeCommand(response, alertOperatorCommandResultSchema, queryTimeoutMs, maximumJsonResponseBytes,
+              (queryOptions) => port.suppressOperationalAlert!({ alertId, ...(body as { expectedRevision: number; idempotencyKey: string; suppressedUntil: string }) }, queryOptions));
+          }
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid alert command"); }
+        return;
+      }
+      if (url.pathname === "/api/v1/migrations") {
+        if (request.method !== "GET" || options.queryPort.listLegacyMigrations === undefined
+          || [...url.searchParams.keys()].some((key) => !["projectId", "limit"].includes(key))
+          || ["projectId", "limit"].some((key) => url.searchParams.getAll(key).length > 1)) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid migration query"); return;
+        }
+        const projectId = url.searchParams.get("projectId"); const limit = Number(url.searchParams.get("limit") ?? 50);
+        if (projectId === null || !SAFE_KNOWLEDGE_ID.test(projectId) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid migration query"); return;
+        }
+        await executeView(response, legacyMigrationsListSchema, queryTimeoutMs, maximumJsonResponseBytes,
+          (queryOptions) => options.queryPort.listLegacyMigrations!(projectId, limit, queryOptions));
+        return;
+      }
+      if (url.pathname === "/api/v1/migrations/preview") {
+        if (request.method !== "POST" || url.searchParams.size !== 0 || options.commandPort?.previewLegacyMigration === undefined
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json") {
+          safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Migration preview is unavailable"); return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (!hasExactBodyFields(body, ["projectId"]) || !SAFE_KNOWLEDGE_ID.test((body as { projectId: string }).projectId)) throw new Error("invalid");
+          await executeCommand(response, legacyMigrationPreviewSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.commandPort!.previewLegacyMigration!((body as { projectId: string }).projectId, queryOptions));
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid migration preview"); }
+        return;
+      }
+      const migrationRoute = /^\/api\/v1\/migrations\/([^/]+)(?:\/(items|commit|rollback))?$/u.exec(url.pathname);
+      if (migrationRoute !== null) {
+        const migrationId = decodePathSegment(migrationRoute[1]); const operation = migrationRoute[2];
+        if (migrationId === undefined || !SAFE_KNOWLEDGE_ID.test(migrationId)) { safeError(response, 400, "INVALID_REQUEST", "Invalid migration id"); return; }
+        if (operation === undefined && request.method === "GET" && url.searchParams.size === 0 && options.queryPort.getLegacyMigration !== undefined) {
+          await executeView(response, legacyMigrationPreviewSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.getLegacyMigration!(migrationId, queryOptions)); return;
+        }
+        if (operation === "items" && request.method === "GET" && options.queryPort.listLegacyMigrationItems !== undefined) {
+          if ([...url.searchParams.keys()].some((key) => !["limit", "afterOrdinal"].includes(key))
+            || url.searchParams.getAll("limit").length > 1 || url.searchParams.getAll("afterOrdinal").length > 1) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid migration item query"); return;
+          }
+          const limit = Number(url.searchParams.get("limit") ?? 50); const afterRaw = url.searchParams.get("afterOrdinal");
+          const afterOrdinal = afterRaw === null ? undefined : Number(afterRaw);
+          if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (afterOrdinal !== undefined && (!Number.isSafeInteger(afterOrdinal) || afterOrdinal < 0))) {
+            safeError(response, 400, "INVALID_REQUEST", "Invalid migration item query"); return;
+          }
+          await executeView(response, legacyMigrationPageSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.listLegacyMigrationItems!(migrationId, limit, afterOrdinal, queryOptions)); return;
+        }
+        if ((operation === "commit" || operation === "rollback") && request.method === "POST"
+          && url.searchParams.size === 0 && request.headers["content-type"]?.split(";", 1)[0]?.trim() === "application/json") {
+          try {
+            const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+            if (!hasExactBodyFields(body, ["expectedRevision", "idempotencyKey"])) throw new Error("invalid");
+            const command = { migrationId, ...(body as { expectedRevision: number; idempotencyKey: string }) };
+            if (operation === "commit" && options.commandPort?.commitLegacyMigration !== undefined) {
+              await executeCommand(response, legacyMigrationCommitResultSchema, queryTimeoutMs, maximumJsonResponseBytes,
+                (queryOptions) => options.commandPort!.commitLegacyMigration!(command, queryOptions), () => 202); return;
+            }
+            if (operation === "rollback" && options.commandPort?.rollbackLegacyMigration !== undefined) {
+              await executeCommand(response, legacyMigrationPreviewSchema, queryTimeoutMs, maximumJsonResponseBytes,
+                (queryOptions) => options.commandPort!.rollbackLegacyMigration!(command, queryOptions)); return;
+            }
+          } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid migration command"); return; }
+        }
+        safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Migration operation is unavailable"); return;
+      }
       if (url.pathname === "/api/v1/knowledge" && request.method === "GET") {
         if (options.queryPort.listKnowledge === undefined) { safeError(response, 503, "CAPABILITY_UNAVAILABLE", "Knowledge query is unavailable"); return; }
         const filter: Record<string, unknown> = {};
@@ -881,6 +1042,55 @@ export async function createConsoleGateway(options: ConsoleGatewayOptions): Prom
         const parsedFilter = p2KnowledgeFilterSchema.safeParse(filter);
         if (!parsedFilter.success) { safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge filter"); return; }
         await executeView(response, p2KnowledgeListViewSchema, queryTimeoutMs, maximumJsonResponseBytes, (queryOptions) => options.queryPort.listKnowledge!(parsedFilter.data, queryOptions));
+        return;
+      }
+      const knowledgeEvolutionMatch = /^\/api\/v1\/knowledge\/([^/]+)\/(evolution|revalidate)$/u.exec(url.pathname);
+      if (knowledgeEvolutionMatch !== null) {
+        const knowledgeId = decodePathSegment(knowledgeEvolutionMatch[1]); const operation = knowledgeEvolutionMatch[2];
+        if (knowledgeId === undefined || !SAFE_KNOWLEDGE_ID.test(knowledgeId) || url.searchParams.size !== 0) {
+          safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge evolution target"); return;
+        }
+        if (operation === "evolution") {
+          if (request.method !== "GET" || options.queryPort.getKnowledgeEvolution === undefined) {
+            safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Knowledge evolution view is unavailable"); return;
+          }
+          await executeView(response, knowledgeEvolutionViewSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.queryPort.getKnowledgeEvolution!(knowledgeId, queryOptions)); return;
+        }
+        if (request.method !== "POST" || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json"
+          || options.commandPort?.revalidateKnowledge === undefined) {
+          safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Knowledge revalidation is unavailable"); return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_COMMAND_BODY_BYTES)).toString("utf8")) as unknown;
+          if (!hasExactBodyFields(body, ["expectedKnowledgeVersion", "expectedFreshnessRevision", "idempotencyKey"])) throw new Error("invalid");
+          await executeCommand(response, knowledgeRevalidationCommandResultSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.commandPort!.revalidateKnowledge!({ knowledgeId, ...(body as {
+              expectedKnowledgeVersion: number; expectedFreshnessRevision: number; idempotencyKey: string;
+            }) }, queryOptions), () => 202);
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid knowledge revalidation command"); }
+        return;
+      }
+      const repairSubmitMatch = /^\/api\/v1\/repair-drafts\/([^/]+)\/submit$/u.exec(url.pathname);
+      if (repairSubmitMatch !== null) {
+        const draftId = decodePathSegment(repairSubmitMatch[1]);
+        if (request.method !== "POST" || draftId === undefined || !SAFE_KNOWLEDGE_ID.test(draftId) || url.searchParams.size !== 0
+          || request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/json"
+          || options.commandPort?.submitRepairCandidate === undefined) {
+          safeError(response, 405, "CAPABILITY_UNAVAILABLE", "Repair submission is unavailable"); return;
+        }
+        try {
+          const body = JSON.parse((await readBoundedBody(request, MAX_RETRIEVAL_BODY_BYTES)).toString("utf8")) as unknown;
+          if (!hasExactBodyFields(body, ["expectedRevision", "idempotencyKey", "title", "summary", "body"])) throw new Error("invalid");
+          const value = body as { expectedRevision: number; idempotencyKey: string; title: string; summary: string; body: string };
+          if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 0 || typeof value.idempotencyKey !== "string"
+            || value.idempotencyKey.length < 1 || value.idempotencyKey.length > 500 || typeof value.title !== "string"
+            || value.title.trim().length < 1 || value.title.length > 2_000 || typeof value.summary !== "string"
+            || value.summary.trim().length < 1 || value.summary.length > 20_000 || typeof value.body !== "string"
+            || value.body.trim().length < 1 || value.body.length > 64_000 || value.body.includes("\0")) throw new Error("invalid");
+          await executeCommand(response, knowledgeRepairSubmissionResultSchema, queryTimeoutMs, maximumJsonResponseBytes,
+            (queryOptions) => options.commandPort!.submitRepairCandidate!({ draftId, ...value }, queryOptions));
+        } catch { if (!response.headersSent) safeError(response, 400, "INVALID_REQUEST", "Invalid repair submission command"); }
         return;
       }
       const knowledgeMatch = /^\/api\/v1\/knowledge\/([^/]+)(?:\/(edit-preview|edit-commit|suppress|restore|index-recover))?$/u.exec(url.pathname);

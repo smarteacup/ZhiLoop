@@ -75,6 +75,7 @@ describe("SqliteKnowledgeVerificationStore", () => {
     store = new SqliteKnowledgeVerificationStore(filename);
     expect(store.getRecipe("asset-1", 1, "recipe-v1")).toEqual(first);
     expect(store.getRun("run-1")).toEqual(run());
+    expect(store.listRuns("asset-1", 1, 10)).toEqual([run()]);
     expect(store.listSupportingProofs("design.runtime.verification", 10)).toEqual([{
       runId: "run-1", canonicalProjectId: "project-1", knowledgeVersion: { assetId: "asset-1", assetVersion: 1 }, completedAt: time,
     }]);

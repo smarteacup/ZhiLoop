@@ -4,6 +4,7 @@ import type { ConsoleApi } from "../../api/client.js";
 import { useAsync } from "../../app/useAsync.js";
 import { EmptyState, ErrorState, LoadingState } from "../../components/AsyncState.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
+import { EvolutionOperationsPanel } from "../evolution/EvolutionOperationsPanel.js";
 
 export function OverviewPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
   const load = useCallback(async (signal: AbortSignal) => await api.overview(signal), [api]);
@@ -19,6 +20,7 @@ export function OverviewPage({ api }: { readonly api: ConsoleApi }): React.JSX.E
       <article className="metric-card"><span>运行任务</span><strong>{overview.jobs.running}</strong></article>
       <article className="metric-card"><span>告警</span><strong>{overview.alertCount}</strong></article>
     </section>
+    {api.evolutionOperations === undefined ? null : <EvolutionOperationsPanel api={api} />}
     <section className="panel"><div className="section-heading"><h2>能力矩阵</h2><a href="#/deployment">查看部署详情</a></div>
       <div className="capability-grid">{overview.capabilities.map((item) => <article className="capability-card" key={item.capabilityId}><div><strong>{item.capabilityId}</strong><StatusBadge status={item.status} /></div><p>{item.reasonCode}</p><small>{item.nextAction ?? "无需操作"}</small></article>)}</div>
     </section>

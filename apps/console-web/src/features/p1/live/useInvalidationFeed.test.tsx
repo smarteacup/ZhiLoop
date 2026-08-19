@@ -80,11 +80,11 @@ describe("useInvalidationFeed", () => {
       handlers?.onEvent({ schemaVersion: 1, eventId: "event-1", type: "configuration.updated", revision: 1, occurredAt: timestamp });
     });
     expect(screen.getByLabelText("revision").textContent).toBe("2");
-    expect(screen.getByLabelText("resources").textContent).toBe("JOBS");
+    expect(screen.getByLabelText("resources").textContent).toBe("JOBS,OPERATIONS,CODEGRAPH,MIGRATIONS,KNOWLEDGE");
     expect(onInvalidate).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     expect(onInvalidate).toHaveBeenCalledOnce();
-    expect(onInvalidate).toHaveBeenCalledWith(["JOBS"]);
+    expect(onInvalidate).toHaveBeenCalledWith(["JOBS", "OPERATIONS", "CODEGRAPH", "MIGRATIONS", "KNOWLEDGE"]);
 
     view.unmount();
     expect(close).toHaveBeenCalledOnce();
@@ -125,9 +125,9 @@ describe("useInvalidationFeed", () => {
     expect(pollInvalidations).toHaveBeenCalledWith(0, expect.any(AbortSignal));
     expect(screen.getByLabelText("connection").textContent).toBe("RESYNC_REQUIRED");
     expect(screen.getByLabelText("revision").textContent).toBe("9");
-    expect(screen.getByLabelText("resources").textContent).toBe("JOBS,SESSIONS,CONFIGURATION,ALERTS");
+    expect(screen.getByLabelText("resources").textContent).toBe("JOBS,SESSIONS,CONFIGURATION,ALERTS,OPERATIONS,CODEGRAPH,MIGRATIONS,KNOWLEDGE");
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    expect(onInvalidate).toHaveBeenCalledWith(["JOBS", "SESSIONS", "CONFIGURATION", "ALERTS"]);
+    expect(onInvalidate).toHaveBeenCalledWith(["JOBS", "SESSIONS", "CONFIGURATION", "ALERTS", "OPERATIONS", "CODEGRAPH", "MIGRATIONS", "KNOWLEDGE"]);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(59_899); });
     expect(pollInvalidations).toHaveBeenCalledOnce();
@@ -169,5 +169,16 @@ describe("useInvalidationFeed", () => {
     expect(pollInvalidations).toHaveBeenCalledOnce();
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(pollInvalidations).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops fallback polling after the bounded failure budget", async () => {
+    vi.useFakeTimers();
+    const pollInvalidations = vi.fn(async () => { throw new Error("gateway unavailable"); });
+    render(<Harness api={unusedApi({ pollInvalidations })} onInvalidate={() => undefined} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100_000); });
+    expect(pollInvalidations).toHaveBeenCalledTimes(5);
+    expect(screen.getByLabelText("connection").textContent).toBe("OFFLINE");
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+    expect(pollInvalidations).toHaveBeenCalledTimes(5);
   });
 });

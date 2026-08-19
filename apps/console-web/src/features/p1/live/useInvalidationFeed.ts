@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConsoleApi, InvalidationHandlers, InvalidationSubscription } from "../../../api/client.js";
 import type { SseInvalidationEvent } from "@zhiloop/control-api";
 
-export type InvalidatedResource = "JOBS" | "SESSIONS" | "CONFIGURATION" | "ALERTS";
+export type InvalidatedResource = "JOBS" | "SESSIONS" | "CONFIGURATION" | "ALERTS" | "OPERATIONS" | "CODEGRAPH" | "MIGRATIONS" | "KNOWLEDGE";
 
 export interface InvalidationFeedState {
   readonly connection: "LIVE" | "RECONNECTING" | "POLLING" | "RESYNC_REQUIRED" | "OFFLINE";
@@ -18,18 +18,22 @@ export interface InvalidationFeed extends InvalidationFeedState {
   acknowledge(): void;
 }
 
-const ALL_RESOURCES: readonly InvalidatedResource[] = Object.freeze(["JOBS", "SESSIONS", "CONFIGURATION", "ALERTS"]);
+const ALL_RESOURCES: readonly InvalidatedResource[] = Object.freeze([
+  "JOBS", "SESSIONS", "CONFIGURATION", "ALERTS", "OPERATIONS", "CODEGRAPH", "MIGRATIONS", "KNOWLEDGE",
+]);
 const MIN_POLL_DELAY_MS = 250;
 const MAX_POLL_DELAY_MS = 60_000;
 const OFFLINE_RETRY_MS = 5_000;
 const INVALIDATION_DEBOUNCE_MS = 100;
 const INVALIDATION_REFRESH_MIN_INTERVAL_MS = 5_000;
+const MAX_POLL_FAILURES = 5;
 
 function resourcesFor(event: SseInvalidationEvent): readonly InvalidatedResource[] {
-  if (event.type === "job.updated") return ["JOBS"];
-  if (event.type === "session.updated" || event.type === "stage.updated") return ["SESSIONS"];
-  if (event.type === "configuration.updated") return ["CONFIGURATION"];
-  if (event.type === "alert.updated" || event.type === "capability.updated") return ["ALERTS"];
+  if (event.type === "job.updated") return ["JOBS", "OPERATIONS", "CODEGRAPH", "MIGRATIONS", "KNOWLEDGE"];
+  if (event.type === "session.updated" || event.type === "stage.updated") return ["SESSIONS", "OPERATIONS", "KNOWLEDGE"];
+  if (event.type === "configuration.updated") return ["CONFIGURATION", "OPERATIONS"];
+  if (event.type === "alert.updated") return ["ALERTS", "OPERATIONS"];
+  if (event.type === "capability.updated") return ["ALERTS", "OPERATIONS", "CODEGRAPH"];
   return ALL_RESOURCES;
 }
 
@@ -49,6 +53,7 @@ export function useInvalidationFeed(api: ConsoleApi, onInvalidate: (resources: r
     let pollingTimer: ReturnType<typeof setTimeout> | undefined;
     let invalidateTimer: ReturnType<typeof setTimeout> | undefined;
     let lastInvalidatedAt: number | undefined;
+    let pollFailures = 0;
 
     const publishResources = (next: readonly InvalidatedResource[]): void => {
       for (const resource of next) resources.current.add(resource);
@@ -92,12 +97,12 @@ export function useInvalidationFeed(api: ConsoleApi, onInvalidate: (resources: r
       const pollInvalidations = api.pollInvalidations;
       if (pollInvalidations === undefined) {
         setState((current) => ({ ...current, connection: "OFFLINE", pollingIntervalMs: OFFLINE_RETRY_MS }));
-        schedulePoll(OFFLINE_RETRY_MS, poll);
         return;
       }
       try {
         const result = await pollInvalidations(revision.current, controller.signal);
         if (controller.signal.aborted) return;
+        pollFailures = 0;
         if (result.resyncRequired) {
           revision.current = result.nextRevision;
           setState((current) => ({ ...current, connection: "RESYNC_REQUIRED", revision: result.nextRevision, pollingIntervalMs: result.retryAfterMs }));
@@ -110,8 +115,11 @@ export function useInvalidationFeed(api: ConsoleApi, onInvalidate: (resources: r
         schedulePoll(result.hasMore ? MIN_POLL_DELAY_MS : result.retryAfterMs, poll);
       } catch {
         if (controller.signal.aborted) return;
-        setState((current) => ({ ...current, connection: "OFFLINE", pollingIntervalMs: OFFLINE_RETRY_MS }));
-        schedulePoll(OFFLINE_RETRY_MS, poll);
+        pollFailures += 1;
+        const retryDelay = Math.min(MAX_POLL_DELAY_MS, OFFLINE_RETRY_MS * (2 ** (pollFailures - 1)));
+        setState((current) => ({ ...current, connection: "OFFLINE",
+          pollingIntervalMs: pollFailures < MAX_POLL_FAILURES ? retryDelay : undefined }));
+        if (pollFailures < MAX_POLL_FAILURES) schedulePoll(retryDelay, poll);
       }
     };
 

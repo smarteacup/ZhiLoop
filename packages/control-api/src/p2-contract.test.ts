@@ -188,6 +188,29 @@ describe("P2 snapshot and candidate contracts", () => {
   });
 });
 
+describe("evolution operations control contract", () => {
+  it("accepts bounded CodeGraph and alert commands and rejects extra or invalid fields", () => {
+    const base = { schemaVersion: 1, requestId: "request-evolution-1" } as const;
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "codegraph.projects.list", limit: 100 }).success).toBe(true);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "codegraph.initialization.preview", projectId: "project-1",
+      requestedAt: "2026-08-19T01:00:00.000Z" }).success).toBe(true);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "alerts.suppress", alertId: "alert-1", expectedRevision: 1,
+      idempotencyKey: "alert:suppress:1", requestedAt: "2026-08-19T01:00:00.000Z",
+      suppressedUntil: "2026-08-19T02:00:00.000Z" }).success).toBe(true);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "alerts.suppress", alertId: "alert-1", expectedRevision: 1,
+      idempotencyKey: "alert:suppress:1", requestedAt: "2026-08-19T01:00:00.000Z",
+      suppressedUntil: "2026-08-19T00:00:00.000Z" }).success).toBe(false);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "codegraph.projects.list", limit: 101, repositoryRoot: "/tmp" }).success).toBe(false);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "knowledge.evolution.get", knowledgeId: "knowledge-1" }).success).toBe(true);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "knowledge.revalidation.commit", knowledgeId: "knowledge-1",
+      expectedKnowledgeVersion: 2, expectedFreshnessRevision: 3, idempotencyKey: "revalidate:request:one",
+      requestedAt: "2026-08-19T01:00:00.000Z" }).success).toBe(true);
+    expect(p2ControlRequestSchema.safeParse({ ...base, type: "knowledge.repair.submit", draftId: "repair-1",
+      expectedRevision: 0, idempotencyKey: "repair:one", title: "Updated", summary: "Updated summary", body: "# Updated",
+      requestedAt: "2026-08-19T01:00:00.000Z", inheritedAuthorization: true }).success).toBe(false);
+  });
+});
+
 describe("P2 bidirectional provenance contract", () => {
   it("accepts bounded incoming/outgoing edges around the requested root", () => {
     const result = bidirectionalProvenanceSchema.parse(REDACTED_P2_CONTRACT_FIXTURES.provenance);

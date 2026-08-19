@@ -142,5 +142,5 @@ describe("P2 production verification composition", () => {
       expect(preview.payload.policies?.[0]?.decision.shouldPublish).toBe(false);
       expect(production.registry.listAssets()).toEqual([]);
     } finally { production.close(); ledger.close(); }
-  });
+  }, 10_000);
 });

@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { EvolutionJobRuntime, parseEvolutionJobInput, type EvolutionJobCapability, type EvolutionJobProjection,
-  type LegacyKnowledgeMigrationJobInput } from "@zhiloop/evolution-job-runtime";
+import { EvolutionJobRuntime, parseEvolutionJobInput, type CodeGraphInitializeJobInput, type EvolutionJobCapability,
+  type EvolutionJobProjection, type LegacyKnowledgeMigrationJobInput } from "@zhiloop/evolution-job-runtime";
+import type { CodeGraphProcessPort } from "@zhiloop/codegraph-adapter";
+import type { KnowledgeCandidate } from "@zhiloop/domain";
 import { GitKnowledgeChangeSource, KnowledgeChangeIntake, type KnowledgeChangeIntakeState } from "@zhiloop/knowledge-change-intake";
 import { createKnowledgeCompileHandler, createKnowledgeRepairDraftHandler, createKnowledgeRevalidateHandler,
   createLegacyKnowledgeMigrationHandler } from "@zhiloop/knowledge-evolution-jobs";
@@ -13,15 +15,50 @@ import { SqliteKnowledgeRepairDraftStore, type KnowledgeRepairDraft, type Repair
 import { LegacyKnowledgeMigrationRollbackService, LegacyKnowledgeMigrationService,
   SqliteLegacyKnowledgeMigrationStore, type LegacyMigrationPage, type LegacyMigrationPreview } from
   "@zhiloop/knowledge-legacy-migration";
-import { SqliteOperationalAlertStore, type OperationalAlertInput, type OperationalAlertPage } from "@zhiloop/operational-alerts";
+import { SqliteOperationalAlertStore, type AlertOperatorCommand, type OperationalAlertInput,
+  type OperationalAlertPage } from "@zhiloop/operational-alerts";
+import type { EvolutionOperationsSnapshot, JobSnapshot, KnowledgeEvolutionView, KnowledgeRepairDraftView,
+  KnowledgeRepairSubmissionResult, KnowledgeRevalidationCommandResult, OperationalAlertConsolePage } from "@zhiloop/control-api";
 
 import { P2DurableKnowledgeCompilationPort } from "./p2-evolution-jobs.js";
 import { ProductionFreshnessVerifier } from "./p2-freshness-runtime.js";
 import type { P2CandidatePreviewPort } from "./p2-preview-coordinator.js";
 import type { P2ProductionComposition } from "./p2-production.js";
 import type { P2SidecarRuntime } from "./p2-runtime.js";
+import { CodeGraphLifecycleService, codeGraphCommitFingerprint } from "./p2-codegraph-lifecycle.js";
+import { EvolutionCommandReceiptStore } from "./p2-evolution-command-store.js";
 
 const MAX_WORK_PER_CYCLE = 100;
+
+function consoleJob(job: EvolutionJobProjection): JobSnapshot {
+  const observedAt = job.updatedAt ?? job.createdAt ?? new Date().toISOString();
+  const terminal = job.status === "SUCCEEDED" || job.status === "FAILED" || job.status === "CANCELLED";
+  return Object.freeze({ schemaVersion: 1, jobId: job.jobId, jobType: job.jobType, revision: job.revision,
+    status: job.status, attempt: job.attempt, maxAttempts: job.maxAttempts, progress: job.progress,
+    ...(job.createdAt === undefined ? {} : { createdAt: job.createdAt }),
+    ...(job.updatedAt === undefined ? {} : { updatedAt: job.updatedAt }),
+    ...(terminal ? { completedAt: observedAt } : {}),
+    ...(job.nextAttemptAt === undefined ? {} : { nextAttemptAt: job.nextAttemptAt }),
+    ...(job.lastFailure === undefined ? {} : { lastFailure: job.lastFailure }),
+    reasonCode: job.status === "QUEUED" ? "JOB_QUEUED" : job.status === "RUNNING" ? "JOB_RUNNING"
+      : job.status === "RETRY_WAIT" ? "JOB_RETRY_WAIT" : job.status === "SUCCEEDED" ? "JOB_SUCCEEDED"
+        : job.status === "CANCELLED" ? "JOB_CANCELLED" : "JOB_FAILED",
+    observedAt, lastTransitionAt: observedAt, retryable: job.status === "RETRY_WAIT",
+    evidenceRefs: [`evolution:${job.jobType.toLowerCase()}`] });
+}
+
+function repairDraftView(draft: KnowledgeRepairDraft): KnowledgeRepairDraftView {
+  return Object.freeze({ draftId: draft.draftId, projectId: draft.projectId,
+    assetId: draft.sourceKnowledge.assetId, assetVersion: draft.sourceKnowledge.assetVersion,
+    conflictRunId: draft.conflict.runId, status: draft.status, revision: draft.revision,
+    changedAssertions: draft.changedAssertions.slice(0, 100).map((item) => Object.freeze({
+      assertionId: item.assertionId, assertionKind: item.assertionKind, reasonCodes: [...item.reasonCodes].slice(0, 16),
+    })), reasonCodes: [...draft.reasonCodes].slice(0, 100),
+    ...(draft.proposedCandidate === undefined ? {} : { proposedCandidate: {
+      candidateId: draft.proposedCandidate.candidateId, title: draft.proposedCandidate.title,
+      summary: draft.proposedCandidate.summary, body: draft.proposedCandidate.body.slice(0, 64_000),
+    } }), createdAt: draft.createdAt, updatedAt: draft.updatedAt });
+}
 
 export interface P2EvolutionRuntimeConfiguration {
   readonly enabled: boolean;
@@ -111,9 +148,14 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   readonly #migrationService: LegacyKnowledgeMigrationService;
   readonly #migrationRollback: LegacyKnowledgeMigrationRollbackService;
   readonly #alerts: SqliteOperationalAlertStore;
+  readonly #codeGraph: CodeGraphLifecycleService;
+  readonly #commands: EvolutionCommandReceiptStore;
+  readonly #production: Pick<P2ProductionComposition, "verificationStore" | "registry">;
+  readonly #freshness: SqliteKnowledgeFreshnessStore;
   readonly #alertConfiguration: P2EvolutionAlertConfiguration;
   readonly #roots = new Map<string, string>();
   readonly #stateDirectory: string;
+  readonly #commandFlights = new Map<string, { readonly fingerprint: string; readonly promise: Promise<unknown> }>();
   #configuration: P2EvolutionRuntimeConfiguration;
   #intake: KnowledgeChangeIntake;
   #pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -134,8 +176,13 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     readonly p2Runtime: P2SidecarRuntime;
     readonly configuration?: Partial<P2EvolutionRuntimeConfiguration>;
     readonly alertConfiguration?: Partial<P2EvolutionAlertConfiguration>;
+    /** Injectable only at the process boundary; production keeps the fixed, shell-free CodeGraph adapter. */
+    readonly codeGraphProcess?: CodeGraphProcessPort;
+    readonly codeGraphExecutable?: string;
     readonly onJob?: (job: EvolutionJobProjection) => void;
   }) {
+    this.#production = options.production;
+    this.#freshness = options.freshnessStore;
     this.#stateDirectory = options.stateDirectory;
     this.#configuration = normalizeP2EvolutionRuntimeConfiguration(options.configuration);
     this.#alertConfiguration = Object.freeze({ ...DISABLED_ALERTS, ...options.alertConfiguration });
@@ -150,6 +197,13 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     catch (error) { this.#repairDrafts.close(); this.#source.close(); throw error; }
     try { this.#migrations = new SqliteLegacyKnowledgeMigrationStore(join(options.stateDirectory, "legacy-knowledge-migrations.sqlite")); }
     catch (error) { this.#alerts.close(); this.#repairDrafts.close(); this.#source.close(); throw error; }
+    try { this.#codeGraph = new CodeGraphLifecycleService({ databasePath: join(options.stateDirectory, "codegraph-lifecycle.sqlite"),
+      projectRoot: (projectId) => this.#roots.get(projectId),
+      ...(options.codeGraphProcess === undefined ? {} : { process: options.codeGraphProcess }),
+      ...(options.codeGraphExecutable === undefined ? {} : { executable: options.codeGraphExecutable }) }); }
+    catch (error) { this.#migrations.close(); this.#alerts.close(); this.#repairDrafts.close(); this.#source.close(); throw error; }
+    try { this.#commands = new EvolutionCommandReceiptStore(join(options.stateDirectory, "evolution-command-receipts.sqlite")); }
+    catch (error) { this.#codeGraph.close(); this.#migrations.close(); this.#alerts.close(); this.#repairDrafts.close(); this.#source.close(); throw error; }
     this.#migrationService = new LegacyKnowledgeMigrationService({ registry: options.production.registry,
       recipes: options.production.verificationStore, freshness: options.freshnessStore, store: this.#migrations });
     this.#migrationRollback = new LegacyKnowledgeMigrationRollbackService({ store: this.#migrations,
@@ -190,6 +244,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
           KNOWLEDGE_COMPILE: createKnowledgeCompileHandler(new P2DurableKnowledgeCompilationPort(options.preview, options.p2Runtime)),
           KNOWLEDGE_REPAIR_DRAFT: createKnowledgeRepairDraftHandler({ freshness: options.freshnessStore,
             verification: options.production.verificationStore, drafts: this.#repairDrafts }),
+          CODEGRAPH_INITIALIZE: this.#codeGraph.handler(),
           LEGACY_KNOWLEDGE_MIGRATION: createLegacyKnowledgeMigrationHandler({ store: this.#migrations,
             service: this.#migrationService, registryRevision: () => options.production.registry.activeIndexVersion,
             recipes: options.production.verificationStore, freshness: options.freshnessStore,
@@ -200,6 +255,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
         },
       });
     } catch (error) {
+      this.#commands.close();
+      this.#codeGraph.close();
       this.#alerts.close();
       this.#migrations.close();
       this.#repairDrafts.close();
@@ -210,6 +267,8 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     try { this.#intake = this.#createIntake(this.#configuration); }
     catch (error) {
       this.#jobs.close();
+      this.#commands.close();
+      this.#codeGraph.close();
       this.#alerts.close();
       this.#migrations.close();
       this.#repairDrafts.close();
@@ -250,6 +309,12 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     this.#intake.observeProject(projectId, projectRoot);
   }
 
+  observedProjects(): readonly { readonly projectId: string; readonly repositoryRoot: string }[] {
+    this.#assertOpen();
+    return Object.freeze([...this.#roots].sort(([left], [right]) => left.localeCompare(right, "en"))
+      .map(([projectId, repositoryRoot]) => Object.freeze({ projectId, repositoryRoot })));
+  }
+
   read(projectId: string) { this.#assertOpen(); return this.#intake.read(projectId); }
 
   schedule(request: Parameters<FreshnessCompensationPort["schedule"]>[0]): string {
@@ -271,18 +336,15 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     this.#started = true;
     this.#generation += 1;
     for (const job of this.#jobs.list({ limit: 1_000 }).items) this.#onJob?.(job);
-    if (this.#configuration.enabled) {
-      await this.#intake.start();
-      await this.#runWorkerCycle();
-      this.#schedulePoll();
-    }
+    if (this.#configuration.enabled) await this.#intake.start();
+    await this.#runWorkerCycle();
+    this.#schedulePoll();
     return true;
   }
 
   async trigger(): Promise<void> {
     this.#assertOpen();
-    if (!this.#configuration.enabled) return;
-    await this.#intake.flush();
+    if (this.#configuration.enabled) await this.#intake.flush();
     await this.#runWorkerCycle();
   }
 
@@ -302,6 +364,231 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
   listRepairDrafts(request: RepairDraftListRequest): RepairDraftPage { this.#assertOpen(); return this.#repairDrafts.list(request); }
   listOperationalAlerts(request: Parameters<SqliteOperationalAlertStore["list"]>[0]): OperationalAlertPage {
     this.#assertOpen(); return this.#alerts.list(request);
+  }
+
+  knowledgeEvolution(knowledgeId: string): KnowledgeEvolutionView {
+    this.#assertOpen();
+    const projected = this.#production.registry.getAsset(knowledgeId, true);
+    if (projected === undefined) throw new Error("KNOWLEDGE_EVOLUTION_NOT_FOUND");
+    const asset = projected.asset; const projectId = "projectId" in asset.scope ? asset.scope.projectId : undefined;
+    const freshness = this.#freshness.getState(asset.id, asset.version);
+    const recipe = this.#production.verificationStore.getRecipe(asset.id, asset.version, "evidence-recipe-v1");
+    const runs = this.#production.verificationStore.listRuns(asset.id, asset.version, 20);
+    const drafts = this.#repairDrafts.list({ assetId: asset.id, assetVersion: asset.version, limit: 20 }).items;
+    const jobs = this.#jobs.list({ limit: 1_000 }).items.filter((job) =>
+      (job.jobType === "KNOWLEDGE_REPAIR_DRAFT" && job.entityRef === `${asset.id}@${asset.version}`)
+      || (job.jobType === "KNOWLEDGE_REVALIDATE" && projectId !== undefined && job.projectId === projectId)).slice(0, 20);
+    const enabled = this.#configuration.enabled && projectId !== undefined && this.#roots.has(projectId) && recipe !== undefined;
+    const revision = Math.max(projected.indexVersion, freshness?.revision ?? 0,
+      ...drafts.map((draft) => draft.revision), ...jobs.map((job) => job.revision), 0);
+    return Object.freeze({ schemaVersion: 1, revision, knowledgeId: asset.id, knowledgeVersion: asset.version,
+      ...(projectId === undefined ? {} : { projectId }), freshnessRevision: freshness?.revision ?? 0,
+      ...(recipe === undefined ? {} : { recipe: { recipeVersion: recipe.recipeVersion,
+        assertionsHash: recipe.assertionsHash, assertionCount: recipe.assertions.length, createdAt: recipe.createdAt } }),
+      verificationRuns: runs.map((run) => Object.freeze({ runId: run.runId, purpose: run.purpose,
+        projectId: run.projectId, codeRevision: run.codeRevision,
+        ...(run.graphRevision === undefined ? {} : { graphRevision: run.graphRevision }),
+        qualifyingProof: run.qualifyingProof, status: run.status,
+        results: run.results.slice(0, 100).map((result) => Object.freeze({ assertionId: result.assertionId,
+          assertionKind: result.assertionKind, status: result.status, reasonCodes: [...result.reasonCodes].slice(0, 16),
+          ...(result.evidenceId === undefined ? {} : { evidenceId: result.evidenceId }) })), completedAt: run.completedAt })),
+      repairDrafts: drafts.map(repairDraftView), jobs: jobs.map(consoleJob),
+      revalidationAction: { enabled, expectedKnowledgeVersion: asset.version,
+        expectedFreshnessRevision: freshness?.revision ?? 0,
+        reasonCode: enabled ? "ACTION_READY" : projectId === undefined ? "PROJECT_SCOPE_REQUIRED"
+          : recipe === undefined ? "VERIFICATION_RECIPE_MISSING" : "KNOWLEDGE_EVOLUTION_DISABLED" },
+      observedAt: new Date().toISOString() });
+  }
+
+  async revalidateKnowledge(command: { readonly knowledgeId: string; readonly expectedKnowledgeVersion: number;
+    readonly expectedFreshnessRevision: number; readonly idempotencyKey: string; readonly requestedAt: string }): Promise<KnowledgeRevalidationCommandResult> {
+    const fingerprint = createHash("sha256").update(JSON.stringify({ knowledgeId: command.knowledgeId,
+      expectedKnowledgeVersion: command.expectedKnowledgeVersion,
+      expectedFreshnessRevision: command.expectedFreshnessRevision })).digest("hex");
+    return await this.#idempotent(command.idempotencyKey, fingerprint, command.requestedAt, async () => {
+      const view = this.knowledgeEvolution(command.knowledgeId);
+      if (view.knowledgeVersion !== command.expectedKnowledgeVersion || view.freshnessRevision !== command.expectedFreshnessRevision) {
+        throw new Error("KNOWLEDGE_REVALIDATION_REVISION_CONFLICT");
+      }
+      if (!view.revalidationAction.enabled || view.projectId === undefined) throw new Error(view.revalidationAction.reasonCode);
+      const repositoryRoot = this.#roots.get(view.projectId); if (repositoryRoot === undefined) throw new Error("KNOWLEDGE_PROJECT_UNOBSERVED");
+      this.#intake.notify({ projectId: view.projectId, repositoryRoot, source: "PRE_INJECTION", observedAt: command.requestedAt });
+      const cycle = await this.#intake.flush();
+      const job = cycle.enqueuedJobs + cycle.reusedJobs === 0 ? undefined : this.#jobs.list({ limit: 1_000 }).items
+        .find((item) => item.jobType === "KNOWLEDGE_REVALIDATE" && item.projectId === view.projectId);
+      void this.#runWorkerCycle();
+      return Object.freeze({ knowledgeId: view.knowledgeId, knowledgeVersion: view.knowledgeVersion,
+        disposition: job === undefined ? "NO_CHANGES" as const : "QUEUED" as const,
+        reasonCode: job === undefined ? "CODE_REVISION_ALREADY_CURRENT" : "KNOWLEDGE_REVALIDATION_QUEUED",
+        ...(job === undefined ? {} : { job: consoleJob(job) }), observedAt: command.requestedAt });
+    });
+  }
+
+  async submitRepairCandidate(command: { readonly draftId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly title: string; readonly summary: string; readonly body: string;
+    readonly requestedAt: string }): Promise<KnowledgeRepairSubmissionResult> {
+    const fingerprint = createHash("sha256").update(JSON.stringify({ draftId: command.draftId,
+      expectedRevision: command.expectedRevision, title: command.title, summary: command.summary, body: command.body })).digest("hex");
+    return await this.#idempotent(command.idempotencyKey, fingerprint, command.requestedAt, async () => {
+      const draft = this.#repairDrafts.get(command.draftId); if (draft === undefined) throw new Error("REPAIR_DRAFT_NOT_FOUND");
+      if (draft.revision !== command.expectedRevision) throw new Error("REPAIR_DRAFT_REVISION_CONFLICT");
+      const candidateId = `repair-candidate-${createHash("sha256").update(JSON.stringify([
+        command.draftId, command.idempotencyKey, command.title, command.summary, command.body,
+      ])).digest("hex")}`;
+      const source = draft.sourceKnowledge.candidate;
+      const candidate = { ...source, candidateId, title: command.title, summary: command.summary, body: command.body,
+        status: "PROPOSED" as const, correlationId: `repair:${draft.draftId}:${draft.revision}`,
+        createdAt: draft.updatedAt, assertions: source.assertions.map((assertion) => ({ ...assertion, candidateId })) } as KnowledgeCandidate;
+      const result = this.#repairDrafts.attachCandidate({ draftId: draft.draftId, expectedRevision: command.expectedRevision,
+        effectKey: `console-repair:${command.idempotencyKey}`, candidate, updatedAt: draft.updatedAt });
+      return Object.freeze({ draft: repairDraftView(result.draft) });
+    });
+  }
+
+  async #idempotent<T>(idempotencyKey: string, fingerprint: string, createdAt: string, operation: () => Promise<T>): Promise<T> {
+    const stored = this.#commands.get<T>(idempotencyKey, fingerprint); if (stored !== undefined) return stored;
+    const current = this.#commandFlights.get(idempotencyKey);
+    if (current !== undefined) {
+      if (current.fingerprint !== fingerprint) throw new Error("EVOLUTION_COMMAND_IDEMPOTENCY_CONFLICT");
+      return await current.promise as T;
+    }
+    const promise = operation().then((result) => this.#commands.save(idempotencyKey, fingerprint, result, createdAt));
+    this.#commandFlights.set(idempotencyKey, { fingerprint, promise });
+    try { return await promise; } finally { if (this.#commandFlights.get(idempotencyKey)?.promise === promise) this.#commandFlights.delete(idempotencyKey); }
+  }
+
+  async listCodeGraphProjects(limit = 100) {
+    this.#assertOpen();
+    const projects = this.observedProjects().slice(0, limit);
+    const items = projects.map(({ projectId }) => {
+      const capability = this.#codeGraph.view(projectId);
+      const latest = this.#jobs.list({ limit: 1_000 }).items.find((job) => job.jobType === "CODEGRAPH_INITIALIZE" && job.projectId === projectId);
+      return Object.freeze({ ...capability, ...(latest === undefined ? {} : { latestJob: consoleJob(latest) }) });
+    });
+    const revision = items.reduce((maximum, item) => Math.max(maximum, item.revision, item.latestJob?.revision ?? 0), 0);
+    return Object.freeze({ revision, items: Object.freeze(items), bounded: this.#roots.size > limit, observedAt: new Date().toISOString() });
+  }
+
+  async previewCodeGraphInitialization(projectId: string, requestedAt: string) {
+    this.#assertOpen(); return await this.#codeGraph.preview(projectId, requestedAt);
+  }
+
+  commitCodeGraphInitialization(request: { readonly projectId: string; readonly previewId: string;
+    readonly repositoryIdentity: string; readonly expectedRevision: number; readonly idempotencyKey: string;
+    readonly requestedAt: string }) {
+    this.#assertOpen();
+    const fingerprint = codeGraphCommitFingerprint(request);
+    const receiptJobId = this.#codeGraph.receipt(request.idempotencyKey, fingerprint);
+    if (receiptJobId !== undefined) {
+      const job = this.#jobs.get(receiptJobId); if (job === undefined) throw new Error("CODEGRAPH_INITIALIZATION_RECEIPT_JOB_MISSING");
+      return Object.freeze({ preview: this.#codeGraph.getPreview(request.previewId), job });
+    }
+    const preview = this.#codeGraph.validateCommit(request);
+    const repository = this.#codeGraph.repository(request.projectId);
+    const input: CodeGraphInitializeJobInput = Object.freeze({ schemaVersion: 1, jobType: "CODEGRAPH_INITIALIZE",
+      projectId: request.projectId, repositoryRoot: repository.root, repositoryIdentity: repository.repositoryIdentity,
+      adapterVersion: preview.providerVersion ?? "unknown" });
+    const enqueued = this.enqueue(input, this.#configuration.maxAttempts);
+    const job = this.#jobs.get(enqueued.job.snapshot.jobId);
+    if (job === undefined) throw new Error("CODEGRAPH_INITIALIZATION_JOB_MISSING");
+    this.#codeGraph.saveReceipt(request.idempotencyKey, fingerprint, job.jobId, request.requestedAt);
+    void this.#runWorkerCycle();
+    return Object.freeze({ preview, job });
+  }
+
+  listOperationalAlertsForConsole(request: { readonly projectId?: string; readonly limit: number;
+    readonly cursor?: string }): OperationalAlertConsolePage {
+    this.#assertOpen();
+    let after: { readonly lastObservedAt: string; readonly alertId: string } | undefined;
+    if (request.cursor !== undefined) {
+      try {
+        const decoded = JSON.parse(Buffer.from(request.cursor, "base64url").toString("utf8")) as { value: string; digest: string };
+        if (createHash("sha256").update(`zhiloop-alert:${decoded.value}`).digest("hex") !== decoded.digest) throw new Error();
+        const parsed = JSON.parse(decoded.value) as { lastObservedAt: string; alertId: string };
+        after = parsed;
+      } catch { throw new Error("OPERATIONAL_ALERT_CURSOR_INVALID"); }
+    }
+    const page = this.#alerts.list({ limit: request.limit, ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+      ...(after === undefined ? {} : { after }) });
+    const observedAt = new Date().toISOString();
+    const items = page.items.map((alert) => {
+      const operatorState = this.#alerts.getOperatorState(alert.alertId);
+      return Object.freeze({ ...alert, alertRevision: alert.revision, revision: operatorState?.revision ?? 0,
+      reasonCodes: [...alert.reasonCodes], ...(operatorState === undefined ? {} : { operatorState }),
+      diagnostic: Object.freeze({ reasonCode: alert.reasonCodes[0] ?? alert.type,
+        message: "本地持久化告警，请检查关联实体与后台任务。", retryable: alert.severity !== "CRITICAL",
+        suggestedAction: alert.type === "CODEGRAPH_UNAVAILABLE" ? "检查 CodeGraph 能力或执行显式初始化"
+          : alert.type === "MIGRATION_FAILED" ? "打开迁移中心查看失败项目" : "打开关联实体查看完整证据" }),
+      });
+    });
+    const nextCursor = page.next === undefined ? undefined : (() => {
+      const value = JSON.stringify(page.next); const digest = createHash("sha256").update(`zhiloop-alert:${value}`).digest("hex");
+      return Buffer.from(JSON.stringify({ value, digest })).toString("base64url");
+    })();
+    const revision = items.reduce((maximum, alert) => Math.max(maximum, alert.revision, alert.operatorState?.revision ?? 0), 0);
+    return Object.freeze({ revision, items, ...(nextCursor === undefined ? {} : { nextCursor }),
+      bounded: page.next !== undefined, observedAt });
+  }
+
+  acknowledgeOperationalAlert(command: Omit<AlertOperatorCommand, "actor">) {
+    this.#assertOpen(); return this.#alerts.acknowledge({ ...command, actor: "local-console" });
+  }
+
+  suppressOperationalAlert(command: Omit<AlertOperatorCommand, "actor"> & { readonly suppressedUntil: string }) {
+    this.#assertOpen(); return this.#alerts.suppress({ ...command, actor: "local-console" });
+  }
+
+  operationsSnapshot(): EvolutionOperationsSnapshot {
+    this.#assertOpen();
+    const now = new Date().toISOString(); const jobs = this.#jobs.list({ limit: 1_000 }).items;
+    const section = (area: EvolutionOperationsSnapshot["sections"][number]["area"], types: readonly string[], revision: number,
+      emptyReason: string, facts = 0, factStatus?: "READY" | "RUNNING" | "DEGRADED" | "FAILED"):
+      EvolutionOperationsSnapshot["sections"][number] => {
+      const selected = jobs.filter((job) => types.includes(job.jobType));
+      const queued = selected.filter((job) => job.status === "QUEUED" || job.status === "RETRY_WAIT").length;
+      const running = selected.filter((job) => job.status === "RUNNING").length;
+      const failed = selected.filter((job) => job.status === "FAILED").length;
+      const status = failed > 0 ? "FAILED" : running + queued > 0 ? "RUNNING"
+        : factStatus ?? (selected.length + facts === 0 ? "EMPTY" : "READY");
+      return Object.freeze({ area, revision: Math.max(revision, ...selected.map((job) => job.revision), 0),
+        status, reasonCode: status === "FAILED" ? `${area}_FAILED` : status === "RUNNING" ? `${area}_IN_PROGRESS`
+          : status === "DEGRADED" ? `${area}_DEGRADED` : status === "EMPTY" ? emptyReason : `${area}_READY`,
+        queued, running, failed, updatedAt: selected.map((job) => job.updatedAt ?? job.createdAt ?? now).sort().at(-1) ?? now });
+    };
+    const repairDrafts = this.#repairDrafts.list({ limit: 100 }).items;
+    const codeGraphCapabilities = [...this.#roots.keys()].slice(0, 100).map((projectId) => this.#codeGraph.view(projectId));
+    const migrations = [...this.#roots.keys()].slice(0, 100)
+      .flatMap((projectId) => this.#migrations.list(projectId, 100));
+    const freshnessStates = this.#production.registry.listAssets({ limit: 1_000 })
+      .map(({ asset }) => this.#freshness.getState(asset.id, asset.version)).filter((value) => value !== undefined);
+    const maximumRevision = (values: readonly { readonly revision: number }[]): number =>
+      values.reduce((maximum, value) => Math.max(maximum, value.revision), 0);
+    const alertPage = this.#alerts.list({ limit: 1_000 });
+    const alertRevision = alertPage.items.reduce((m, item) => Math.max(m, item.revision), 0);
+    const sections = [
+      section("COMPILE", ["KNOWLEDGE_COMPILE"], 0, "COMPILE_EMPTY"),
+      section("REVALIDATE", ["KNOWLEDGE_REVALIDATE"], 0, "REVALIDATION_EMPTY"),
+      section("REPAIR", ["KNOWLEDGE_REPAIR_DRAFT"], maximumRevision(repairDrafts), "REPAIR_EMPTY", repairDrafts.length,
+        repairDrafts.some((draft) => draft.status === "FAILED") ? "FAILED" : undefined),
+      section("CODEGRAPH", ["CODEGRAPH_INITIALIZE"], maximumRevision(codeGraphCapabilities), "CODEGRAPH_NOT_INITIALIZED",
+        codeGraphCapabilities.length, codeGraphCapabilities.length > 0 && codeGraphCapabilities.every((item) => item.status === "READY")
+          ? "READY" : codeGraphCapabilities.length === 0 ? undefined : codeGraphCapabilities.some((item) => item.status === "FAILED") ? "FAILED" : "DEGRADED"),
+      section("FRESHNESS", ["KNOWLEDGE_REVALIDATE"], maximumRevision(freshnessStates), "FRESHNESS_EMPTY", freshnessStates.length,
+        freshnessStates.some((state) => state.status === "CONFLICT" || state.status === "UNKNOWN") ? "DEGRADED" : undefined),
+      section("MIGRATION", ["LEGACY_KNOWLEDGE_MIGRATION"], maximumRevision(migrations), "MIGRATION_EMPTY", migrations.length,
+        migrations.some((item) => item.status === "FAILED") ? "FAILED"
+          : migrations.some((item) => item.status === "COMMITTING" || item.status === "ROLLING_BACK") ? "RUNNING"
+            : migrations.some((item) => item.status === "ROLLBACK_CONFLICT") ? "DEGRADED" : undefined),
+      Object.freeze({ area: "ALERT" as const, revision: alertRevision,
+        status: alertPage.items.some((item) => item.severity === "CRITICAL") ? "FAILED" as const
+          : alertPage.items.length > 0 ? "DEGRADED" as const : "EMPTY" as const,
+        reasonCode: alertPage.items.length > 0 ? "ACTIVE_OPERATIONAL_ALERTS" : "ALERT_EMPTY",
+        queued: 0, running: 0, failed: alertPage.items.filter((item) => item.severity === "CRITICAL").length, updatedAt: now }),
+      section("INJECTION", [], 0, "INJECTION_READ_MODEL_SEPARATE"),
+    ];
+    // All backing APIs above are synchronous and Sidecar-owned, so the event loop cannot interleave a write while composing this snapshot.
+    // Revisions are deliberately independent counters and must not be compared for equality.
+    return Object.freeze({ schemaVersion: 1, consistency: "CONSISTENT", observedAt: now, sections });
   }
   previewLegacyMigration(projectId: string, createdAt = new Date().toISOString()): LegacyMigrationPreview {
     this.#assertOpen();
@@ -379,7 +666,7 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     let failure: unknown;
     try { await this.#intake.stop(); } catch (error) { failure = error; }
     await this.#workerTail?.catch(() => undefined);
-    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#alerts.close(), () => this.#migrations.close(),
+    for (const close of [() => this.#intake.close(), () => this.#jobs.close(), () => this.#commands.close(), () => this.#codeGraph.close(), () => this.#alerts.close(), () => this.#migrations.close(),
       () => this.#repairDrafts.close(), () => this.#source.close()]) {
       try { close(); } catch (error) { failure ??= error; }
     }
@@ -406,14 +693,12 @@ export class P2EvolutionRuntime implements LiveKnowledgeRevisionReadPort, Freshn
     previous.close();
     this.#configuration = next;
     this.#intake = candidate;
-    if (wasStarted && next.enabled) {
-      await this.#intake.start();
-      this.#schedulePoll();
-    }
+    if (wasStarted && next.enabled) await this.#intake.start();
+    if (wasStarted) this.#schedulePoll();
   }
 
   #schedulePoll(): void {
-    if (!this.#started || !this.#configuration.enabled || this.#closed) return;
+    if (!this.#started || this.#closed) return;
     if (this.#pollTimer !== undefined) clearTimeout(this.#pollTimer);
     const generation = this.#generation;
     this.#pollTimer = timer(this.#configuration.workerPollIntervalMs, () => {

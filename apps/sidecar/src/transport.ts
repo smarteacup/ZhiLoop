@@ -131,7 +131,9 @@ function parseRequest(value: unknown): SidecarRequest {
     return parsed.data;
   }
   if (typeof type === "string" && type.startsWith("p4.")) return parseP4ConsoleRequest(value);
-  if (typeof type === "string" && (type.startsWith("extraction.") || type.startsWith("knowledge.migrations."))) {
+  if (typeof type === "string" && (type.startsWith("extraction.") || type.startsWith("knowledge.migrations.")
+    || type.startsWith("knowledge.evolution.") || type.startsWith("knowledge.revalidation.") || type.startsWith("knowledge.repair.")
+    || type.startsWith("evolution.operations.") || type.startsWith("codegraph.") || type.startsWith("alerts."))) {
     const parsed = parseP2ContractText(serialized, p2ControlRequestSchema);
     if (!parsed.ok) {
       const error = new Error("invalid P2 control request") as Error & { code: string };

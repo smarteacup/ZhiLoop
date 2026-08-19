@@ -27,6 +27,10 @@ const versionLabelSchema = z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z
 const sourceSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const positiveRevisionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const nonnegativeRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const operatorCursorSchema = z.string().min(1).max(2_048);
+const boundedTextSchema = (maximum: number) => z.string().min(1).max(maximum).refine((value) => !value.includes("\0"), {
+  message: "text contains a NUL character",
+});
 
 export const SNAPSHOT_COMPLETENESS = ["PARTIAL_SNAPSHOT", "COMPLETE_SNAPSHOT"] as const;
 export const CANDIDATE_POLICY_DECISIONS = [
@@ -505,6 +509,94 @@ export const legacyMigrationRollbackRequestSchema = z.strictObject({
   type: z.literal("knowledge.migrations.rollback"),
 });
 
+export const evolutionOperationsGetRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("evolution.operations.get"),
+});
+
+export const codeGraphProjectsListRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("codegraph.projects.list"),
+  limit: z.number().int().positive().max(100),
+});
+
+export const codeGraphInitializationPreviewRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("codegraph.initialization.preview"),
+  projectId: safeArtifactIdSchema,
+  requestedAt: isoTimestampSchema,
+});
+
+export const codeGraphInitializationCommitRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("codegraph.initialization.commit"),
+  projectId: safeArtifactIdSchema,
+  previewId: safeArtifactIdSchema,
+  repositoryIdentity: sha256Schema,
+  expectedRevision: nonnegativeRevisionSchema,
+  idempotencyKey: idempotencyKeySchema,
+  requestedAt: isoTimestampSchema,
+});
+
+export const operationalAlertsListRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("alerts.list"),
+  projectId: safeArtifactIdSchema.optional(),
+  limit: z.number().int().positive().max(100),
+  cursor: operatorCursorSchema.optional(),
+});
+
+const alertOperatorCommandShape = {
+  ...p2RequestBase,
+  alertId: safeArtifactIdSchema,
+  expectedRevision: nonnegativeRevisionSchema,
+  idempotencyKey: idempotencyKeySchema,
+  requestedAt: isoTimestampSchema,
+};
+
+export const operationalAlertAcknowledgeRequestSchema = z.strictObject({
+  ...alertOperatorCommandShape,
+  type: z.literal("alerts.acknowledge"),
+});
+
+export const operationalAlertSuppressRequestSchema = z.strictObject({
+  ...alertOperatorCommandShape,
+  type: z.literal("alerts.suppress"),
+  suppressedUntil: isoTimestampSchema,
+}).superRefine((value, context) => {
+  if (Date.parse(value.suppressedUntil) <= Date.parse(value.requestedAt)) {
+    context.addIssue({ code: "custom", path: ["suppressedUntil"], message: "suppression expiry must follow request time" });
+  }
+});
+
+export const knowledgeEvolutionGetRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.evolution.get"),
+  knowledgeId: safeArtifactIdSchema,
+});
+
+export const knowledgeRevalidationCommitRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.revalidation.commit"),
+  knowledgeId: safeArtifactIdSchema,
+  expectedKnowledgeVersion: positiveRevisionSchema,
+  expectedFreshnessRevision: nonnegativeRevisionSchema,
+  idempotencyKey: idempotencyKeySchema,
+  requestedAt: isoTimestampSchema,
+});
+
+export const knowledgeRepairSubmitRequestSchema = z.strictObject({
+  ...p2RequestBase,
+  type: z.literal("knowledge.repair.submit"),
+  draftId: safeArtifactIdSchema,
+  expectedRevision: nonnegativeRevisionSchema,
+  idempotencyKey: idempotencyKeySchema,
+  title: boundedTextSchema(2_000),
+  summary: boundedTextSchema(20_000),
+  body: boundedTextSchema(64_000),
+  requestedAt: isoTimestampSchema,
+});
+
 export const p2ControlRequestSchema = z.discriminatedUnion("type", [
   extractionSnapshotCreateRequestSchema,
   candidatePreviewRequestSchema,
@@ -520,6 +612,16 @@ export const p2ControlRequestSchema = z.discriminatedUnion("type", [
   legacyMigrationItemsRequestSchema,
   legacyMigrationCommitRequestSchema,
   legacyMigrationRollbackRequestSchema,
+  evolutionOperationsGetRequestSchema,
+  codeGraphProjectsListRequestSchema,
+  codeGraphInitializationPreviewRequestSchema,
+  codeGraphInitializationCommitRequestSchema,
+  operationalAlertsListRequestSchema,
+  operationalAlertAcknowledgeRequestSchema,
+  operationalAlertSuppressRequestSchema,
+  knowledgeEvolutionGetRequestSchema,
+  knowledgeRevalidationCommitRequestSchema,
+  knowledgeRepairSubmitRequestSchema,
 ]);
 
 export type ExtractionSnapshot = z.infer<typeof extractionSnapshotSchema>;

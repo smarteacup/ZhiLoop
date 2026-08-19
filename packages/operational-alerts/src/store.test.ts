@@ -107,6 +107,50 @@ describe("SqliteOperationalAlertStore", () => {
     store.close();
   });
 
+  it("applies a project filter before pagination", async () => {
+    const store = new SqliteOperationalAlertStore(await filename());
+    await store.emit(input({ eventId: "event-project-a", dedupKey: "project-a", projectId: "project-a" }));
+    await store.emit(input({ eventId: "event-project-b", dedupKey: "project-b", projectId: "project-b",
+      observedAt: "2026-08-19T02:00:00.000Z" }));
+    expect(store.list({ projectId: "project-a", limit: 1 }).items.map((item) => item.projectId)).toEqual(["project-a"]);
+    store.close();
+  });
+
+  it("stores acknowledgement and suppression independently with revision and idempotency guards", async () => {
+    const file = await filename(); let store = new SqliteOperationalAlertStore(file);
+    const alert = await store.emit(input());
+    const acknowledged = store.acknowledge({ alertId: alert.alertId, expectedRevision: 0,
+      idempotencyKey: "ack:alert-1", requestedAt: "2026-08-19T01:02:00.000Z", actor: "local-console" });
+    expect(acknowledged.operatorState).toMatchObject({ revision: 1, acknowledgedBy: "local-console" });
+    expect(store.get(alert.alertId)).toEqual(alert);
+    expect(store.acknowledge({ alertId: alert.alertId, expectedRevision: 0,
+      idempotencyKey: "ack:alert-1", requestedAt: "2026-08-19T01:02:30.000Z", actor: "local-console" })).toEqual(acknowledged);
+    const suppressed = store.suppress({ alertId: alert.alertId, expectedRevision: acknowledged.operatorState.revision,
+      idempotencyKey: "suppress:alert-1", requestedAt: "2026-08-19T01:03:00.000Z",
+      suppressedUntil: "2026-08-19T02:03:00.000Z", actor: "local-console" });
+    expect(suppressed.operatorState).toMatchObject({ revision: 2, acknowledgedBy: "local-console",
+      suppressedUntil: "2026-08-19T02:03:00.000Z" });
+    store.close(); store = new SqliteOperationalAlertStore(file);
+    expect(store.getOperatorState(alert.alertId)).toEqual(suppressed.operatorState);
+    store.close();
+  });
+
+  it("rejects stale, conflicting, missing, and invalid suppression commands", async () => {
+    const store = new SqliteOperationalAlertStore(await filename()); const alert = await store.emit(input());
+    expect(() => store.acknowledge({ alertId: alert.alertId, expectedRevision: 99, idempotencyKey: "ack:stale",
+      requestedAt: "2026-08-19T01:02:00.000Z", actor: "local-console" })).toThrow("REVISION_CONFLICT");
+    store.acknowledge({ alertId: alert.alertId, expectedRevision: 0, idempotencyKey: "ack:conflict",
+      requestedAt: "2026-08-19T01:02:00.000Z", actor: "local-console" });
+    expect(() => store.acknowledge({ alertId: alert.alertId, expectedRevision: 0, idempotencyKey: "ack:stale-tab",
+      requestedAt: "2026-08-19T01:02:30.000Z", actor: "local-console" })).toThrow("REVISION_CONFLICT");
+    expect(() => store.acknowledge({ alertId: alert.alertId, expectedRevision: 1,
+      idempotencyKey: "ack:conflict", requestedAt: "2026-08-19T01:03:00.000Z", actor: "another-actor" })).toThrow("IDEMPOTENCY_CONFLICT");
+    expect(() => store.suppress({ alertId: alert.alertId, expectedRevision: 1, idempotencyKey: "suppress:bad",
+      requestedAt: "2026-08-19T01:03:00.000Z", suppressedUntil: "2026-08-19T01:02:00.000Z", actor: "local-console" }))
+      .toThrow("SUPPRESSION_EXPIRY_INVALID");
+    store.close();
+  });
+
   it("rejects invalid configuration and bounded alert fields", async () => {
     expect(() => new SqliteOperationalAlertStore(":memory:", { cooldownMs: -1 })).toThrow("COOLDOWN_INVALID");
     const store = new SqliteOperationalAlertStore(":memory:");

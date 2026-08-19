@@ -1005,6 +1005,215 @@ describe("Console Gateway security boundary", () => {
     })).status).toBe(403);
   });
 
+  it("serves evolution operations with bounded reads and CSRF-protected revision-bound commands", async () => {
+    const repositoryIdentity = "a".repeat(64); const summaryHash = "b".repeat(64);
+    const operations = { schemaVersion: 1 as const, consistency: "CONSISTENT" as const, observedAt: NOW,
+      sections: ["COMPILE", "REVALIDATE", "REPAIR", "CODEGRAPH", "FRESHNESS", "MIGRATION", "ALERT", "INJECTION"].map((area) => ({
+        area, revision: 0, status: "EMPTY", reasonCode: `${area}_EMPTY`, queued: 0, running: 0, failed: 0, updatedAt: NOW,
+      })) };
+    const codeGraphPreview = { schemaVersion: 1 as const, previewId: "codegraph-preview-1", projectId: "project-1",
+      repositoryIdentity, repositoryRootLabel: "project-1 · …/workspace/project-1", targetDirectoryLabel: "project-1/.codegraph",
+      expectedRevision: 0, currentStatus: "NOT_CONFIGURED" as const, riskCodes: ["WRITES_CODEGRAPH_INDEX"], createdAt: NOW, expiresAt: NOW };
+    const migration = { schemaVersion: 1 as const, migrationId: "migration-1", migrationVersion: "v1", projectId: "project-1",
+      sourceRegistryRevision: 1, status: "READY" as const, revision: 1, scannedCount: 1, migratableCount: 1,
+      alreadyCurrentCount: 0, skippedCount: 0, failedCount: 0, rollbackConflictCount: 0, summaryHash, createdAt: NOW, updatedAt: NOW };
+    const repairDraft = { draftId: "draft-1", projectId: "project-1", assetId: "knowledge-1", assetVersion: 1,
+      conflictRunId: "run-1", status: "READY" as const, revision: 1, changedAssertions: [],
+      reasonCodes: ["ASSERTION_UNSUPPORTED"], proposedCandidate: { candidateId: "candidate-1", title: "更新标题",
+        summary: "更新摘要", body: "更新正文" }, createdAt: NOW, updatedAt: NOW };
+    const operatorState = { revision: 1, acknowledgedAt: NOW, acknowledgedBy: "local-console", updatedAt: NOW };
+    Object.assign(queryPort, {
+      getEvolutionOperations: async () => { queryPort.calls.push("evolution:operations"); return operations; },
+      getKnowledgeEvolution: async (knowledgeId: string) => { queryPort.calls.push(`knowledge:evolution:${knowledgeId}`); return {
+        schemaVersion: 1, revision: 0, knowledgeId, knowledgeVersion: 1, projectId: "project-1", freshnessRevision: 0,
+        verificationRuns: [], repairDrafts: [], jobs: [], revalidationAction: { enabled: true,
+          expectedKnowledgeVersion: 1, expectedFreshnessRevision: 0, reasonCode: "ACTION_READY" }, observedAt: NOW,
+      }; },
+      listCodeGraphProjects: async (limit: number) => { queryPort.calls.push(`codegraph:${limit}`); return { revision: 0,
+        items: [{ schemaVersion: 1, projectId: "project-1", repositoryIdentity, repositoryRootLabel: "project-1",
+          status: "NOT_CONFIGURED", reasonCode: "CODEGRAPH_CAPABILITY_NOT_OBSERVED", revision: 0, evidenceRefs: [], observedAt: NOW }],
+        bounded: false, observedAt: NOW }; },
+      listOperationalAlerts: async (projectId: string | undefined, limit: number) => { queryPort.calls.push(`alerts:${projectId ?? "ALL"}:${limit}`);
+        return { revision: 0, items: [], bounded: false, observedAt: NOW }; },
+      listLegacyMigrations: async (projectId: string, limit: number) => { queryPort.calls.push(`migrations:${projectId}:${limit}`); return { items: [migration] }; },
+      getLegacyMigration: async () => migration,
+      listLegacyMigrationItems: async () => ({ items: [] }),
+    });
+    Object.assign(commandPort, {
+      previewCodeGraphInitialization: async (projectId: string) => { commandPort.calls.push(`codegraph:preview:${projectId}`); return codeGraphPreview; },
+      commitCodeGraphInitialization: async (command: { projectId: string; idempotencyKey: string }) => {
+        commandPort.calls.push(`codegraph:commit:${command.projectId}:${command.idempotencyKey}`);
+        return { preview: codeGraphPreview, job: { ...job, jobId: "codegraph-job-1", jobType: "CODEGRAPH_INITIALIZE", status: "QUEUED", progress: 0 } };
+      },
+      acknowledgeOperationalAlert: async (command: { alertId: string }) => { commandPort.calls.push(`alert:ack:${command.alertId}`);
+        return { alertId: command.alertId, alertRevision: 1, operatorState }; },
+      suppressOperationalAlert: async (command: { alertId: string }) => { commandPort.calls.push(`alert:suppress:${command.alertId}`);
+        return { alertId: command.alertId, alertRevision: 1,
+          operatorState: { ...operatorState, revision: 2, suppressedUntil: "2026-08-19T13:00:00.000Z" } }; },
+      previewLegacyMigration: async (projectId: string) => { commandPort.calls.push(`migration:preview:${projectId}`); return migration; },
+      commitLegacyMigration: async (command: { migrationId: string }) => {
+        commandPort.calls.push(`migration:commit:${command.migrationId}`);
+        return { preview: { ...migration, status: "COMMITTING", revision: 2 },
+          job: { ...job, jobId: "migration-job-1", jobType: "LEGACY_KNOWLEDGE_MIGRATION", status: "QUEUED", progress: 0 } };
+      },
+      rollbackLegacyMigration: async (command: { migrationId: string }) => { commandPort.calls.push(`migration:rollback:${command.migrationId}`);
+        return { ...migration, status: "ROLLED_BACK", revision: 2 }; },
+      revalidateKnowledge: async (command: { knowledgeId: string }) => { commandPort.calls.push(`knowledge:revalidate:${command.knowledgeId}`);
+        return { knowledgeId: command.knowledgeId, knowledgeVersion: 1, disposition: "NO_CHANGES", reasonCode: "CODE_REVISION_ALREADY_CURRENT", observedAt: NOW }; },
+      submitRepairCandidate: async (command: { draftId: string }) => { commandPort.calls.push(`repair:submit:${command.draftId}`);
+        return { draft: repairDraft }; },
+    });
+    await start(); const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    for (const target of ["/api/v1/evolution/operations", "/api/v1/codegraph/projects?limit=10",
+      "/api/v1/alerts?projectId=project-1&limit=10", "/api/v1/migrations?projectId=project-1&limit=10",
+      "/api/v1/knowledge/knowledge-1/evolution"]) {
+      expect((await fetch(`${address?.origin}${target}`, { headers: readHeaders })).status, target).toBe(200);
+    }
+    const commandHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const previewResponse = await fetch(`${address?.origin}/api/v1/codegraph/projects/project-1/preview`, {
+      method: "POST", headers: commandHeaders, body: "{}",
+    });
+    expect(previewResponse.status).toBe(200);
+    const commitBody = JSON.stringify({ previewId: codeGraphPreview.previewId, repositoryIdentity,
+      expectedRevision: 0, idempotencyKey: "codegraph:commit:one" });
+    const missingCsrf = await fetch(`${address?.origin}/api/v1/codegraph/projects/project-1/commit`, {
+      method: "POST", headers: { cookie: browser.cookie, origin: address?.origin ?? "", "content-type": "application/json" }, body: commitBody,
+    });
+    expect(missingCsrf.status).toBe(403);
+    const commit = await fetch(`${address?.origin}/api/v1/codegraph/projects/project-1/commit`, {
+      method: "POST", headers: commandHeaders, body: commitBody,
+    });
+    expect(commit.status).toBe(202);
+    const revalidate = await fetch(`${address?.origin}/api/v1/knowledge/knowledge-1/revalidate`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedKnowledgeVersion: 1, expectedFreshnessRevision: 0, idempotencyKey: "revalidate:one" }) });
+    expect(revalidate.status).toBe(202);
+    expect((await fetch(`${address?.origin}/api/v1/alerts/alert-1/acknowledge`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 1, idempotencyKey: "alert:ack:one" }) })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/alerts/alert-1/suppress`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 1, idempotencyKey: "alert:suppress:one",
+        suppressedUntil: "2026-08-19T13:00:00.000Z" }) })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/preview`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ projectId: "project-1" }) })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/migration-1`, { headers: readHeaders })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/migration-1/items?limit=10&afterOrdinal=0`,
+      { headers: readHeaders })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/migration-1/commit`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 1, idempotencyKey: "migration:commit:one" }) })).status).toBe(202);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/migration-1/rollback`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 2, idempotencyKey: "migration:rollback:one" }) })).status).toBe(200);
+    expect((await fetch(`${address?.origin}/api/v1/repair-drafts/draft-1/submit`, { method: "POST", headers: commandHeaders,
+      body: JSON.stringify({ expectedRevision: 0, idempotencyKey: "repair:submit:one", title: "更新标题",
+        summary: "更新摘要", body: "更新正文" }) })).status).toBe(200);
+    expect(commandPort.calls).toEqual(["codegraph:preview:project-1", "codegraph:commit:project-1:codegraph:commit:one",
+      "knowledge:revalidate:knowledge-1", "alert:ack:alert-1", "alert:suppress:alert-1",
+      "migration:preview:project-1", "migration:commit:migration-1", "migration:rollback:migration-1",
+      "repair:submit:draft-1"]);
+    expect((await fetch(`${address?.origin}/api/v1/alerts?limit=1&limit=2`, { headers: readHeaders })).status).toBe(400);
+    expect((await fetch(`${address?.origin}/api/v1/migrations/migration-1/items?unknown=1`, { headers: readHeaders })).status).toBe(400);
+  });
+
+  it("rejects malformed evolution-operation routes and repair payloads before reaching control ports", async () => {
+    const unreachable = async () => { throw new Error("control port must not be called for invalid input"); };
+    Object.assign(queryPort, { getEvolutionOperations: unreachable, getKnowledgeEvolution: unreachable,
+      listCodeGraphProjects: unreachable, listOperationalAlerts: unreachable, listLegacyMigrations: unreachable,
+      getLegacyMigration: unreachable, listLegacyMigrationItems: unreachable });
+    Object.assign(commandPort, { previewCodeGraphInitialization: unreachable, commitCodeGraphInitialization: unreachable,
+      acknowledgeOperationalAlert: unreachable, suppressOperationalAlert: unreachable, previewLegacyMigration: unreachable,
+      commitLegacyMigration: unreachable, rollbackLegacyMigration: unreachable, revalidateKnowledge: unreachable,
+      submitRepairCandidate: unreachable });
+    await start(); const browser = (await authenticate()).browser as AuthenticatedBrowser;
+    const readHeaders = authorizedHeaders(browser);
+    const jsonHeaders = { ...readHeaders, origin: address?.origin ?? "", "content-type": "application/json" };
+    const noJsonHeaders = { ...readHeaders, origin: address?.origin ?? "" };
+    const status = async (target: string, expected: number, init: RequestInit = { headers: readHeaders }) => {
+      expect((await fetch(`${address?.origin}${target}`, init)).status, target).toBe(expected);
+    };
+
+    await status("/api/v1/evolution/operations", 405, { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/evolution/operations?unexpected=1", 503);
+    for (const target of ["/api/v1/codegraph/projects?unexpected=1", "/api/v1/codegraph/projects?limit=1&limit=2",
+      "/api/v1/codegraph/projects?limit=0", "/api/v1/codegraph/projects?limit=1.5", "/api/v1/codegraph/projects?limit=101"]) {
+      await status(target, 400);
+    }
+    await status("/api/v1/codegraph/projects", 400, { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/codegraph/projects/project-1/preview", 400);
+    await status("/api/v1/codegraph/projects/project-1/preview?unexpected=1", 400,
+      { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/codegraph/projects/project-1/preview", 400, { method: "POST", headers: noJsonHeaders, body: "{}" });
+    await status("/api/v1/codegraph/projects/project-1/preview", 400, { method: "POST", headers: jsonHeaders, body: "{" });
+    await status("/api/v1/codegraph/projects/project-1/preview", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ unexpected: true }) });
+    await status("/api/v1/codegraph/projects/project-1/commit", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ previewId: "preview-1" }) });
+
+    for (const target of ["/api/v1/alerts?unexpected=1", "/api/v1/alerts?projectId=a&projectId=b",
+      "/api/v1/alerts?cursor=a&cursor=b", "/api/v1/alerts?limit=0", "/api/v1/alerts?limit=1.5",
+      "/api/v1/alerts?limit=101", "/api/v1/alerts?projectId=%20bad"]) await status(target, 400);
+    await status("/api/v1/alerts", 400, { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/alerts/alert-1/acknowledge", 400);
+    await status("/api/v1/alerts/alert-1/acknowledge?unexpected=1", 400,
+      { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/alerts/alert-1/acknowledge", 400, { method: "POST", headers: noJsonHeaders, body: "{}" });
+    await status("/api/v1/alerts/alert-1/acknowledge", 400, { method: "POST", headers: jsonHeaders, body: "{" });
+    await status("/api/v1/alerts/alert-1/acknowledge", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ expectedRevision: 1, idempotencyKey: "one", extra: true }) });
+    await status("/api/v1/alerts/alert-1/suppress", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ expectedRevision: 1, idempotencyKey: "one" }) });
+
+    for (const target of ["/api/v1/migrations", "/api/v1/migrations?unexpected=1",
+      "/api/v1/migrations?projectId=a&projectId=b", "/api/v1/migrations?projectId=project-1&limit=0",
+      "/api/v1/migrations?projectId=project-1&limit=1.5", "/api/v1/migrations?projectId=project-1&limit=101",
+      "/api/v1/migrations?projectId=%20bad"]) await status(target, 400);
+    await status("/api/v1/migrations/preview", 405);
+    await status("/api/v1/migrations/preview?unexpected=1", 405, { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/migrations/preview", 405, { method: "POST", headers: noJsonHeaders, body: "{}" });
+    await status("/api/v1/migrations/preview", 400, { method: "POST", headers: jsonHeaders, body: "{" });
+    await status("/api/v1/migrations/preview", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId: " bad" }) });
+    await status("/api/v1/migrations/%20bad", 400);
+    await status("/api/v1/migrations/migration-1?unexpected=1", 405);
+    for (const target of ["/api/v1/migrations/migration-1/items?unexpected=1",
+      "/api/v1/migrations/migration-1/items?limit=1&limit=2", "/api/v1/migrations/migration-1/items?afterOrdinal=1&afterOrdinal=2",
+      "/api/v1/migrations/migration-1/items?limit=0", "/api/v1/migrations/migration-1/items?limit=1.5",
+      "/api/v1/migrations/migration-1/items?limit=101", "/api/v1/migrations/migration-1/items?afterOrdinal=-1",
+      "/api/v1/migrations/migration-1/items?afterOrdinal=1.5"]) await status(target, 400);
+    await status("/api/v1/migrations/migration-1/commit", 405);
+    await status("/api/v1/migrations/migration-1/commit", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ expectedRevision: 1 }) });
+
+    await status("/api/v1/knowledge/%20bad/evolution", 400);
+    await status("/api/v1/knowledge/knowledge-1/evolution?unexpected=1", 400);
+    await status("/api/v1/knowledge/knowledge-1/evolution", 405, { method: "POST", headers: jsonHeaders, body: "{}" });
+    await status("/api/v1/knowledge/knowledge-1/revalidate", 405);
+    await status("/api/v1/knowledge/knowledge-1/revalidate", 405, { method: "POST", headers: noJsonHeaders, body: "{}" });
+    await status("/api/v1/knowledge/knowledge-1/revalidate", 400, { method: "POST", headers: jsonHeaders, body: "{" });
+    await status("/api/v1/knowledge/knowledge-1/revalidate", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ expectedKnowledgeVersion: 1 }) });
+
+    const validRepair = { expectedRevision: 0, idempotencyKey: "repair-one", title: "标题", summary: "摘要", body: "正文" };
+    await status("/api/v1/repair-drafts/%20bad/submit", 405, { method: "POST", headers: jsonHeaders, body: JSON.stringify(validRepair) });
+    await status("/api/v1/repair-drafts/draft-1/submit?unexpected=1", 405,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(validRepair) });
+    await status("/api/v1/repair-drafts/draft-1/submit", 405);
+    await status("/api/v1/repair-drafts/draft-1/submit", 405,
+      { method: "POST", headers: noJsonHeaders, body: JSON.stringify(validRepair) });
+    await status("/api/v1/repair-drafts/draft-1/submit", 400, { method: "POST", headers: jsonHeaders, body: "{" });
+    await status("/api/v1/repair-drafts/draft-1/submit", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ ...validRepair, extra: true }) });
+    const invalidRepairs: readonly Record<string, unknown>[] = [
+      { ...validRepair, expectedRevision: -1 }, { ...validRepair, expectedRevision: 1.5 },
+      { ...validRepair, idempotencyKey: 1 }, { ...validRepair, idempotencyKey: "" },
+      { ...validRepair, idempotencyKey: "x".repeat(501) }, { ...validRepair, title: 1 }, { ...validRepair, title: " " },
+      { ...validRepair, title: "x".repeat(2_001) }, { ...validRepair, summary: 1 }, { ...validRepair, summary: " " },
+      { ...validRepair, summary: "x".repeat(20_001) }, { ...validRepair, body: 1 }, { ...validRepair, body: " " },
+      { ...validRepair, body: "x".repeat(64_001) }, { ...validRepair, body: "bad\0body" },
+    ];
+    for (const body of invalidRepairs) await status("/api/v1/repair-drafts/draft-1/submit", 400,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) });
+    expect(commandPort.calls).toEqual([]);
+  });
+
   it("rejects malformed P2 filters and percent-encoded targets at the HTTP boundary", async () => {
     await start();
     const browser = (await authenticate()).browser as AuthenticatedBrowser;

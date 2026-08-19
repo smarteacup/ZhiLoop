@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteKnowledgeFreshnessStore } from "@zhiloop/knowledge-freshness";
 import type { EvolutionJobProjection } from "@zhiloop/evolution-job-runtime";
+import { SqliteKnowledgeRepairDraftStore, type CreateKnowledgeRepairDraftInput } from "@zhiloop/knowledge-repair-drafts";
+import type { KnowledgeCandidate } from "@zhiloop/domain";
+import type { CodeGraphProcessPort } from "@zhiloop/codegraph-adapter";
 
 import { P2EvolutionRuntime, normalizeP2EvolutionRuntimeConfiguration } from "./p2-evolution-runtime.js";
 import type { P2CandidatePreviewPort } from "./p2-preview-coordinator.js";
@@ -32,7 +35,9 @@ function repository(): { readonly root: string; readonly state: string } {
 
 function runtime(state: string, options: { readonly configuration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["configuration"];
   readonly alertConfiguration?: ConstructorParameters<typeof P2EvolutionRuntime>[0]["alertConfiguration"];
-  readonly onJob?: (job: EvolutionJobProjection) => void } = {}): { runtime: P2EvolutionRuntime;
+  readonly onJob?: (job: EvolutionJobProjection) => void; readonly asset?: Readonly<Record<string, unknown>>;
+  readonly recipe?: Readonly<Record<string, unknown>>; readonly runs?: readonly Readonly<Record<string, unknown>>[];
+  readonly codeGraphProcess?: CodeGraphProcessPort } = {}): { runtime: P2EvolutionRuntime;
     freshness: SqliteKnowledgeFreshnessStore; setRegistryRevision: (revision: number) => void } {
   const freshness = new SqliteKnowledgeFreshnessStore(join(state, "freshness.sqlite"));
   const preview: P2CandidatePreviewPort = {
@@ -47,14 +52,38 @@ function runtime(state: string, options: { readonly configuration?: ConstructorP
   } as unknown as P2SidecarRuntime;
   let registryRevision = 0;
   const production = { verification: { verifyBatch: async () => { throw new Error("unexpected verification"); } },
-    verificationStore: { getRun: () => undefined },
-    registry: { get activeIndexVersion() { return registryRevision; }, listAssets: () => [], getAsset: () => undefined } } as unknown as
+    verificationStore: { getRun: () => undefined, getRecipe: () => options.recipe, listRuns: () => options.runs ?? [] },
+    registry: { get activeIndexVersion() { return registryRevision; }, listAssets: () => [],
+      getAsset: (id: string) => options.asset?.["id"] === id ? { asset: options.asset, indexVersion: 4 } : undefined } } as unknown as
     Pick<P2ProductionComposition, "verification" | "verificationStore" | "registry">;
   return { freshness, setRegistryRevision: (revision) => { registryRevision = revision; },
     runtime: new P2EvolutionRuntime({ stateDirectory: state, freshnessStore: freshness,
     production, preview, p2Runtime: p2, configuration: { workerPollIntervalMs: 60_000, ...options.configuration },
+    ...(options.codeGraphProcess === undefined ? {} : { codeGraphProcess: options.codeGraphProcess }),
     ...(options.alertConfiguration === undefined ? {} : { alertConfiguration: options.alertConfiguration }),
     ...(options.onJob === undefined ? {} : { onJob: options.onJob }) }) };
+}
+
+const NOW = "2026-08-19T07:00:00.000Z";
+
+function repairCandidate(candidateId = "candidate-source"): KnowledgeCandidate {
+  return { schemaVersion: 1, candidateId, compilerVersion: "compiler-v1", status: "PROPOSED",
+    subjectKey: "project.module.behavior", kind: "IMPLEMENTATION",
+    scopeHint: { level: "PROJECT", projectId: "project-1", reasonCodes: ["PROJECT_MATCH"] },
+    title: "旧实现", summary: "旧实现摘要", body: "旧实现正文", sourceEpisodes: ["episode-1"], confidence: 0.9,
+    createdAt: NOW, correlationId: "correlation-1", assertions: [{ assertionId: "assertion-source", candidateId,
+      kind: "SYMBOL_EXISTS", parameters: { projectId: "project-1", symbol: "OldSymbol", path: "source.ts" }, createdAt: NOW }],
+    evidenceHints: [] };
+}
+
+function repairInput(): CreateKnowledgeRepairDraftInput {
+  const candidate = repairCandidate();
+  return { projectId: "project-1", sourceKnowledge: { assetId: "asset-1", assetVersion: 3,
+    contentHash: "a".repeat(64), lifecycleStatus: "VERIFIED", candidate },
+  conflict: { runId: "verification-conflict-1", codeRevision: "git:changed", completedAt: NOW },
+  changedAssertions: [{ assertionId: candidate.assertions[0]!.assertionId, assertionKind: "SYMBOL_EXISTS",
+    verificationStatus: "UNSUPPORTED", reasonCodes: ["SYMBOL_NOT_FOUND"] }],
+  reasonCodes: ["ASSERTION_UNSUPPORTED"], createdAt: NOW };
 }
 
 afterEach(async () => {
@@ -135,6 +164,160 @@ describe("P2EvolutionRuntime", () => {
     fixture.freshness.close();
   });
 
+  it("composes side-effect-free operations and paged alert projections with independent operator state", async () => {
+    const { state } = repository(); const fixture = runtime(state, { configuration: { enabled: true, maxAttempts: 1 }, alertConfiguration: {
+      enabled: true, onPermanentJobFailure: true, onCodeGraphUnavailable: false, onStaleKnowledgeDetected: false,
+    } });
+    for (const assetId of ["missing-a", "missing-b"]) fixture.runtime.enqueue({ schemaVersion: 1,
+      jobType: "KNOWLEDGE_REPAIR_DRAFT", projectId: "project-1", assetId, assetVersion: 1,
+      conflictRunId: `run-${assetId}` }, 1);
+    await fixture.runtime.start();
+    const beforeJobs = fixture.runtime.listJobs().map((job) => `${job.jobId}:${job.revision}:${job.status}`);
+    const snapshot = fixture.runtime.operationsSnapshot();
+    expect(snapshot.sections).toHaveLength(8); expect(snapshot.sections.find((item) => item.area === "REPAIR"))
+      .toMatchObject({ status: "FAILED", failed: 2 });
+    expect(fixture.runtime.listJobs().map((job) => `${job.jobId}:${job.revision}:${job.status}`)).toEqual(beforeJobs);
+    const first = fixture.runtime.listOperationalAlertsForConsole({ limit: 1 });
+    expect(first).toMatchObject({ bounded: true, items: [{ severity: "CRITICAL", diagnostic: { retryable: false } }] });
+    const second = fixture.runtime.listOperationalAlertsForConsole({ limit: 1, cursor: first.nextCursor! });
+    expect(second.items).toHaveLength(1); expect(second.items[0]?.alertId).not.toBe(first.items[0]?.alertId);
+    expect(() => fixture.runtime.listOperationalAlertsForConsole({ limit: 1, cursor: "tampered" })).toThrow("CURSOR_INVALID");
+    const alert = first.items[0]!;
+    expect(alert).toMatchObject({ revision: 0, alertRevision: 1 });
+    const acknowledged = fixture.runtime.acknowledgeOperationalAlert({ alertId: alert.alertId, expectedRevision: 0,
+      idempotencyKey: "console-alert-ack-0001", requestedAt: "2026-08-19T07:01:00.000Z" });
+    expect(fixture.runtime.acknowledgeOperationalAlert({ alertId: alert.alertId, expectedRevision: 0,
+      idempotencyKey: "console-alert-ack-0001", requestedAt: "2026-08-19T07:01:30.000Z" })).toEqual(acknowledged);
+    expect(fixture.runtime.suppressOperationalAlert({ alertId: alert.alertId, expectedRevision: acknowledged.operatorState.revision,
+      idempotencyKey: "console-alert-suppress-0001", requestedAt: "2026-08-19T07:02:00.000Z",
+      suppressedUntil: "2026-08-19T08:02:00.000Z" }).operatorState).toMatchObject({ revision: 2 });
+    expect(fixture.runtime.listOperationalAlertsForConsole({ projectId: "other-project", limit: 10 }).items).toEqual([]);
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("projects knowledge evolution and submits a revision-bound proposed repair candidate idempotently", async () => {
+    const { root, state } = repository();
+    const asset = { schemaVersion: 1, id: "asset-1", version: 3, scope: { level: "PROJECT", projectId: "project-1" } };
+    const recipe = { recipeVersion: "evidence-recipe-v1", assertionsHash: "b".repeat(64), assertions: [{ assertionId: "assertion-source" }], createdAt: NOW };
+    const fixture = runtime(state, { configuration: { enabled: false }, asset, recipe, runs: [{ runId: "run-current",
+      purpose: "FRESHNESS", projectId: "project-1", codeRevision: "git:current", graphRevision: "graph:current",
+      qualifyingProof: true, status: "COMPLETED", results: [{ assertionId: "assertion-source",
+        assertionKind: "SYMBOL_EXISTS", status: "SUPPORTED", reasonCodes: [], evidenceId: "evidence-1" }], completedAt: NOW }] });
+    fixture.runtime.observeProject("project-1", root);
+    const external = new SqliteKnowledgeRepairDraftStore(join(state, "knowledge-repair-drafts.sqlite"));
+    const draft = external.create(repairInput()).draft; external.close();
+    expect(fixture.runtime.knowledgeEvolution("asset-1")).toMatchObject({ knowledgeVersion: 3, projectId: "project-1",
+      repairDrafts: [{ draftId: draft.draftId, status: "PENDING" }],
+      verificationRuns: [{ graphRevision: "graph:current", results: [{ evidenceId: "evidence-1" }] }],
+      revalidationAction: { enabled: false, reasonCode: "KNOWLEDGE_EVOLUTION_DISABLED" } });
+    expect(() => fixture.runtime.knowledgeEvolution("missing")).toThrow("NOT_FOUND");
+    await expect(fixture.runtime.revalidateKnowledge({ knowledgeId: "asset-1", expectedKnowledgeVersion: 2,
+      expectedFreshnessRevision: 0, idempotencyKey: "revalidate-stale-0001", requestedAt: NOW })).rejects.toThrow("REVISION_CONFLICT");
+    const command = { draftId: draft.draftId, expectedRevision: 0, idempotencyKey: "repair-submit-0001",
+      title: "新实现", summary: "新实现摘要", body: "新实现正文", requestedAt: "2026-08-19T07:03:00.000Z" };
+    const submitted = await fixture.runtime.submitRepairCandidate(command);
+    expect(submitted.draft).toMatchObject({ status: "READY", revision: 1,
+      proposedCandidate: { title: "新实现" } });
+    expect(submitted.draft.proposedCandidate?.candidateId).toMatch(/^repair-candidate-/u);
+    expect(await fixture.runtime.submitRepairCandidate({ ...command, requestedAt: "2026-08-19T07:04:00.000Z" })).toEqual(submitted);
+    await expect(fixture.runtime.submitRepairCandidate({ ...command, title: "冲突内容" })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
+    await expect(fixture.runtime.submitRepairCandidate({ ...command, idempotencyKey: "repair-submit-stale-0002" }))
+      .rejects.toThrow("REVISION_CONFLICT");
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("revalidates an eligible knowledge item, distinguishes no-change from queued work, and replays receipts", async () => {
+    const { root, state } = repository();
+    const asset = { schemaVersion: 1, id: "asset-1", version: 3, scope: { level: "PROJECT", projectId: "project-1" } };
+    const recipe = { recipeVersion: "evidence-recipe-v1", assertionsHash: "b".repeat(64),
+      assertions: [{ assertionId: "assertion-source" }], createdAt: NOW };
+    const fixture = runtime(state, { asset, recipe });
+    fixture.runtime.observeProject("project-1", root);
+    await fixture.runtime.start();
+    const unchangedCommand = { knowledgeId: "asset-1", expectedKnowledgeVersion: 3, expectedFreshnessRevision: 0,
+      idempotencyKey: "revalidate-current-0001", requestedAt: "2026-08-19T07:10:00.000Z" };
+    const unchanged = await fixture.runtime.revalidateKnowledge(unchangedCommand);
+    expect(unchanged).toMatchObject({ disposition: "NO_CHANGES", reasonCode: "CODE_REVISION_ALREADY_CURRENT" });
+    expect(await fixture.runtime.revalidateKnowledge({ ...unchangedCommand, requestedAt: "2026-08-19T07:11:00.000Z" }))
+      .toEqual(unchanged);
+
+    writeFileSync(join(root, "source.ts"), "export const value = 2;\n");
+    const queued = await fixture.runtime.revalidateKnowledge({ ...unchangedCommand,
+      idempotencyKey: "revalidate-changed-0002", requestedAt: "2026-08-19T07:12:00.000Z" });
+    expect(queued).toMatchObject({ disposition: "QUEUED", reasonCode: "KNOWLEDGE_REVALIDATION_QUEUED",
+      job: { jobType: "KNOWLEDGE_REVALIDATE" } });
+    await fixture.runtime.trigger();
+    expect(fixture.runtime.knowledgeEvolution("asset-1").jobs).toContainEqual(expect.objectContaining({
+      jobId: queued.job?.jobId, status: "SUCCEEDED",
+    }));
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("explains why global, unobserved, recipe-less, and disabled knowledge cannot be revalidated", async () => {
+    const { state } = repository();
+    const globalFixture = runtime(state, { asset: { schemaVersion: 1, id: "global-asset", version: 1,
+      scope: { level: "GLOBAL" } }, configuration: { enabled: true } });
+    expect(globalFixture.runtime.knowledgeEvolution("global-asset").revalidationAction)
+      .toMatchObject({ enabled: false, reasonCode: "PROJECT_SCOPE_REQUIRED" });
+    await expect(globalFixture.runtime.revalidateKnowledge({ knowledgeId: "global-asset", expectedKnowledgeVersion: 1,
+      expectedFreshnessRevision: 0, idempotencyKey: "revalidate-global-0001", requestedAt: NOW }))
+      .rejects.toThrow("PROJECT_SCOPE_REQUIRED");
+    await globalFixture.runtime.close(); globalFixture.freshness.close();
+
+    const other = repository();
+    const recipeLess = runtime(other.state, { asset: { schemaVersion: 1, id: "recipe-less", version: 1,
+      scope: { level: "PROJECT", projectId: "project-1" } }, configuration: { enabled: true } });
+    recipeLess.runtime.observeProject("project-1", other.root);
+    expect(recipeLess.runtime.knowledgeEvolution("recipe-less").revalidationAction.reasonCode)
+      .toBe("VERIFICATION_RECIPE_MISSING");
+    await expect(recipeLess.runtime.revalidateKnowledge({ knowledgeId: "recipe-less", expectedKnowledgeVersion: 1,
+      expectedFreshnessRevision: 0, idempotencyKey: "revalidate-recipe-less-0001", requestedAt: NOW }))
+      .rejects.toThrow("VERIFICATION_RECIPE_MISSING");
+    await recipeLess.runtime.close(); recipeLess.freshness.close();
+  });
+
+  it("initializes CodeGraph through a durable job and replays a successful commit after preview expiry", async () => {
+    const { root, state } = repository(); let initialized = false; const calls: string[][] = [];
+    const processPort: CodeGraphProcessPort = { run: async (request) => {
+      calls.push([...request.args]);
+      if (request.args[0] === "--version") return { exitCode: 0, stdout: "0.9.3\n", stderr: "", timedOut: false, outputExceeded: false };
+      if (request.args[0] === "init") { initialized = true; return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, outputExceeded: false }; }
+      if (request.args[0] === "status") return { exitCode: 0, stdout: JSON.stringify(initialized
+        ? { initialized: true, fileCount: 2, nodeCount: 4, edgeCount: 3, dbSizeBytes: 100, backend: "sqlite",
+          nodesByKind: { function: 4 }, languages: ["ts"], pendingChanges: { added: 0, modified: 0, removed: 0 } }
+        : { initialized: false }), stderr: "", timedOut: false, outputExceeded: false };
+      if (request.args[0] === "query") return { exitCode: 0, stdout: "[]", stderr: "", timedOut: false, outputExceeded: false };
+      return { exitCode: 1, stdout: "", stderr: "redacted", timedOut: false, outputExceeded: false };
+    } };
+    const fixture = runtime(state, { configuration: { enabled: false }, codeGraphProcess: processPort });
+    fixture.runtime.observeProject("project-1", root);
+    const preview = await fixture.runtime.previewCodeGraphInitialization("project-1", "2026-08-19T08:00:00.000Z");
+    const command = { projectId: "project-1", previewId: preview.previewId,
+      repositoryIdentity: preview.repositoryIdentity, expectedRevision: preview.expectedRevision,
+      idempotencyKey: "codegraph-commit-runtime-0001", requestedAt: "2026-08-19T08:01:00.000Z" };
+    const committed = fixture.runtime.commitCodeGraphInitialization(command);
+    expect(committed.job).toMatchObject({ jobType: "CODEGRAPH_INITIALIZE", status: "QUEUED" });
+    await fixture.runtime.trigger();
+    const codeGraphPage = await fixture.runtime.listCodeGraphProjects();
+    expect(codeGraphPage.items[0]?.latestJob?.lastFailure).toBeUndefined();
+    expect(codeGraphPage.items[0]).toMatchObject({ status: "READY", revision: 1,
+      latestJob: { jobId: committed.job.jobId, status: "SUCCEEDED" } });
+    const replayed = fixture.runtime.commitCodeGraphInitialization({ ...command, requestedAt: "2026-08-19T09:00:00.000Z" });
+    expect(replayed.job.jobId).toBe(committed.job.jobId);
+    expect(calls.map((call) => call[0])).toEqual(expect.arrayContaining(["--version", "status", "init", "query"]));
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
+  it("keeps CodeGraph list projection bounded, server-owned, and free of initialization writes", async () => {
+    const first = repository(); const second = repository(); const fixture = runtime(first.state, { configuration: { enabled: false } });
+    fixture.runtime.observeProject("project-b", second.root); fixture.runtime.observeProject("project-a", first.root);
+    const page = await fixture.runtime.listCodeGraphProjects(1);
+    expect(page).toMatchObject({ bounded: true, revision: 0, items: [{ projectId: "project-a", status: "NOT_CONFIGURED" }] });
+    expect(fixture.runtime.observedProjects().map((item) => item.projectId)).toEqual(["project-a", "project-b"]);
+    expect(() => fixture.runtime.getRepairDraft("missing-draft")).not.toThrow();
+    await fixture.runtime.close(); fixture.freshness.close();
+  });
+
   it("runs an empty legacy migration through preview, durable commit and rollback", async () => {
     const { root, state } = repository(); const fixture = runtime(state, { configuration: { enabled: true } });
     fixture.runtime.observeProject("project-1", root);
@@ -210,11 +393,15 @@ describe("P2EvolutionRuntime", () => {
       sourceRange: { from: 1, to: 2 }, pipelineHash: "a".repeat(64) }, 3);
     const jobId = created.job.snapshot.jobId;
     expect(fixture.runtime.getJob(jobId)).toMatchObject({ jobId, status: "QUEUED" });
+    expect(fixture.runtime.operationsSnapshot().sections.find((item) => item.area === "COMPILE"))
+      .toMatchObject({ status: "RUNNING", queued: 1, reasonCode: "COMPILE_IN_PROGRESS" });
     expect(fixture.runtime.listJobs(1)).toHaveLength(1);
     expect(fixture.runtime.jobs().attempts(jobId)).toEqual([]);
     const current = fixture.runtime.getJob(jobId)!;
     expect(fixture.runtime.cancel({ jobId, expectedRevision: current.revision, idempotencyKey: "cancel-evolution-job-0001" }))
       .toMatchObject({ disposition: "APPLIED", job: { status: "CANCELLED" } });
+    expect(fixture.runtime.operationsSnapshot().sections.find((item) => item.area === "COMPILE"))
+      .toMatchObject({ status: "READY", queued: 0, reasonCode: "COMPILE_READY" });
     const cancelled = fixture.runtime.getJob(jobId)!;
     expect(() => fixture.runtime.retry({ jobId, expectedRevision: cancelled.revision, idempotencyKey: "retry-evolution-job-0001" }))
       .toThrow("only retry-wait or retryable failed jobs");

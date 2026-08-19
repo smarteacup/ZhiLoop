@@ -39,7 +39,7 @@
 5. Codex 新版本必须先增加官方协议 Fixture 和 Hook/App Server 对等测试，再提高“已测试下限/上限”。
 6. 兼容检查失败不得阻塞 Codex 原任务，也不得静默扩大 Scope、注入旧知识或把失败状态视为成功。
 
-## 3. 0.4.0 持久化演进能力矩阵
+## 3. 0.4.1 持久化演进能力矩阵
 
 | 能力 | 生产状态 | 兼容/安全边界 |
 |---|---|---|
@@ -48,8 +48,10 @@
 | `KNOWLEDGE_REPAIR_DRAFT` | READY | `CONFLICT` 自动创建可追溯 `PENDING` 草稿；不改旧知识、不生成无依据正文、不继承发布授权 |
 | 语义演进裁决 | READY（默认关闭） | 只在确定性规则未决时调用一次 Codex；最多 5 个摘要目标，越界/错误/不可用保持 `PENDING` |
 | 本地运维告警 | READY | 三类生产事件写入 SQLite；按 dedupKey 冷却聚合，无 provider 时明确标记 `LOCAL_ONLY` |
-| `CODEGRAPH_INITIALIZE` | NOT_CONFIGURED | Hook/门禁绝不隐式初始化 CodeGraph |
+| `CODEGRAPH_INITIALIZE` | READY（项目索引可为 NOT_CONFIGURED） | 读取绝不初始化；仅对 Sidecar 已观察且规范化的项目开放 expiring preview → explicit commit；固定非 shell argv、总输出 5 MiB、超时与 smoke test 门禁 |
 | `LEGACY_KNOWLEDGE_MIGRATION` | READY | 操作员显式 dry-run 后，以 revision/idempotency 门禁提交；支持断点恢复、冲突回滚与 `MIGRATION_FAILED` 告警 |
+| 演进运维控制台 | READY | 聚合 Compile/Revalidate/Repair/CodeGraph/Freshness/Migration/Alert/Injection 有界摘要；详情按需加载，读取不产生 Job 或状态写入 |
+| 告警操作投影 | READY | acknowledgement/suppression 使用独立 operator revision、CAS 与幂等回执；不修改原始告警，CRITICAL 静默后仍可见 |
 | 精确 Freshness 门禁 | READY | 代码/图 revision 不一致即排除；非代码知识继续；总预算不超过 200ms |
 | 自动知识发布 | NOT_CONFIGURED | Candidate Preview 后仍需显式策略提交 |
 

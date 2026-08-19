@@ -28,6 +28,30 @@ import {
   type JobCommandResult,
   type SessionDetail,
   type SessionSummary,
+  evolutionOperationsSnapshotSchema,
+  codeGraphProjectPageSchema,
+  codeGraphInitializationPreviewSchema,
+  codeGraphInitializationCommitSchema,
+  operationalAlertConsolePageSchema,
+  alertOperatorCommandResultSchema,
+  legacyMigrationPreviewSchema,
+  legacyMigrationsListSchema,
+  legacyMigrationPageSchema,
+  legacyMigrationCommitResultSchema,
+  type EvolutionOperationsSnapshot,
+  type CodeGraphProjectPage,
+  type CodeGraphInitializationPreview,
+  type CodeGraphInitializationCommit,
+  type OperationalAlertConsolePage,
+  type AlertOperatorCommandResult,
+  type LegacyMigrationPreviewView,
+  type LegacyMigrationPageView,
+  knowledgeEvolutionViewSchema,
+  knowledgeRevalidationCommandResultSchema,
+  knowledgeRepairSubmissionResultSchema,
+  type KnowledgeEvolutionView,
+  type KnowledgeRevalidationCommandResult,
+  type KnowledgeRepairSubmissionResult,
 } from "@zhiloop/control-api";
 import { z } from "zod";
 import {
@@ -105,6 +129,29 @@ export interface ConsoleApi {
   cancelJob?(command: JobOperatorCommand, signal?: AbortSignal): Promise<JobCommandResult>;
   retryJob?(command: JobOperatorCommand, signal?: AbortSignal): Promise<JobCommandResult>;
   diagnostics(signal?: AbortSignal): Promise<Diagnostics>;
+  evolutionOperations?(signal?: AbortSignal): Promise<EvolutionOperationsSnapshot>;
+  knowledgeEvolution?(knowledgeId: string, signal?: AbortSignal): Promise<KnowledgeEvolutionView>;
+  revalidateKnowledge?(command: { readonly knowledgeId: string; readonly expectedKnowledgeVersion: number;
+    readonly expectedFreshnessRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal): Promise<KnowledgeRevalidationCommandResult>;
+  submitRepairCandidate?(command: { readonly draftId: string; readonly expectedRevision: number; readonly idempotencyKey: string;
+    readonly title: string; readonly summary: string; readonly body: string }, signal?: AbortSignal): Promise<KnowledgeRepairSubmissionResult>;
+  codeGraphProjects?(signal?: AbortSignal): Promise<CodeGraphProjectPage>;
+  previewCodeGraphInitialization?(projectId: string, signal?: AbortSignal): Promise<CodeGraphInitializationPreview>;
+  commitCodeGraphInitialization?(command: { readonly projectId: string; readonly previewId: string; readonly repositoryIdentity: string;
+    readonly expectedRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal): Promise<CodeGraphInitializationCommit>;
+  operationalAlerts?(projectId?: string, cursor?: string, signal?: AbortSignal): Promise<OperationalAlertConsolePage>;
+  acknowledgeOperationalAlert?(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal): Promise<AlertOperatorCommandResult>;
+  suppressOperationalAlert?(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly suppressedUntil: string }, signal?: AbortSignal): Promise<AlertOperatorCommandResult>;
+  legacyMigrations?(projectId: string, signal?: AbortSignal): Promise<{ readonly items: readonly LegacyMigrationPreviewView[] }>;
+  legacyMigration?(migrationId: string, signal?: AbortSignal): Promise<LegacyMigrationPreviewView>;
+  legacyMigrationItems?(migrationId: string, afterOrdinal?: number, signal?: AbortSignal): Promise<LegacyMigrationPageView>;
+  previewLegacyMigration?(projectId: string, signal?: AbortSignal): Promise<LegacyMigrationPreviewView>;
+  commitLegacyMigration?(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal): Promise<z.infer<typeof legacyMigrationCommitResultSchema>>;
+  rollbackLegacyMigration?(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal): Promise<LegacyMigrationPreviewView>;
   previewCapture(sessionId: string, signal?: AbortSignal): Promise<CapturePreview>;
   commitCapture(command: CaptureCommitCommand, signal?: AbortSignal): Promise<CaptureCommitResult>;
   configuration?(projectId?: string, signal?: AbortSignal): Promise<ConfigurationState>;
@@ -310,6 +357,68 @@ export const browserConsoleApi: ConsoleApi = Object.freeze({
     { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
   ),
   diagnostics: async (signal?: AbortSignal) => await request("/diagnostics", diagnosticsSchema, { signal }),
+  evolutionOperations: async (signal?: AbortSignal) => await request("/evolution/operations", evolutionOperationsSnapshotSchema, { signal }),
+  knowledgeEvolution: async (knowledgeId: string, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(knowledgeId)}/evolution`, knowledgeEvolutionViewSchema, { signal }),
+  revalidateKnowledge: async (command: { readonly knowledgeId: string; readonly expectedKnowledgeVersion: number;
+    readonly expectedFreshnessRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/knowledge/${encodeURIComponent(command.knowledgeId)}/revalidate`, knowledgeRevalidationCommandResultSchema,
+    { signal, body: { expectedKnowledgeVersion: command.expectedKnowledgeVersion,
+      expectedFreshnessRevision: command.expectedFreshnessRevision, idempotencyKey: command.idempotencyKey } }),
+  submitRepairCandidate: async (command: { readonly draftId: string; readonly expectedRevision: number; readonly idempotencyKey: string;
+    readonly title: string; readonly summary: string; readonly body: string }, signal?: AbortSignal) => await request(
+    `/repair-drafts/${encodeURIComponent(command.draftId)}/submit`, knowledgeRepairSubmissionResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey,
+      title: command.title, summary: command.summary, body: command.body } }),
+  codeGraphProjects: async (signal?: AbortSignal) => await request("/codegraph/projects?limit=100", codeGraphProjectPageSchema, { signal }),
+  previewCodeGraphInitialization: async (projectId: string, signal?: AbortSignal) => await request(
+    `/codegraph/projects/${encodeURIComponent(projectId)}/preview`, codeGraphInitializationPreviewSchema, { signal, body: {} },
+  ),
+  commitCodeGraphInitialization: async (command: { readonly projectId: string; readonly previewId: string; readonly repositoryIdentity: string;
+    readonly expectedRevision: number; readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/codegraph/projects/${encodeURIComponent(command.projectId)}/commit`, codeGraphInitializationCommitSchema,
+    { signal, body: { previewId: command.previewId, repositoryIdentity: command.repositoryIdentity,
+      expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  operationalAlerts: async (projectId?: string, cursor?: string, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: "50" });
+    if (projectId !== undefined) query.set("projectId", projectId);
+    if (cursor !== undefined) query.set("cursor", cursor);
+    return await request(`/alerts?${query.toString()}`, operationalAlertConsolePageSchema, { signal });
+  },
+  acknowledgeOperationalAlert: async (command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/alerts/${encodeURIComponent(command.alertId)}/acknowledge`, alertOperatorCommandResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  suppressOperationalAlert: async (command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly suppressedUntil: string }, signal?: AbortSignal) => await request(
+    `/alerts/${encodeURIComponent(command.alertId)}/suppress`, alertOperatorCommandResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey, suppressedUntil: command.suppressedUntil } },
+  ),
+  legacyMigrations: async (projectId: string, signal?: AbortSignal) => await request(
+    `/migrations?projectId=${encodeURIComponent(projectId)}&limit=50`, legacyMigrationsListSchema, { signal },
+  ),
+  legacyMigration: async (migrationId: string, signal?: AbortSignal) => await request(
+    `/migrations/${encodeURIComponent(migrationId)}`, legacyMigrationPreviewSchema, { signal },
+  ),
+  legacyMigrationItems: async (migrationId: string, afterOrdinal?: number, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: "50" }); if (afterOrdinal !== undefined) query.set("afterOrdinal", String(afterOrdinal));
+    return await request(`/migrations/${encodeURIComponent(migrationId)}/items?${query.toString()}`, legacyMigrationPageSchema, { signal });
+  },
+  previewLegacyMigration: async (projectId: string, signal?: AbortSignal) => await request(
+    "/migrations/preview", legacyMigrationPreviewSchema, { signal, body: { projectId } },
+  ),
+  commitLegacyMigration: async (command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/migrations/${encodeURIComponent(command.migrationId)}/commit`, legacyMigrationCommitResultSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
+  rollbackLegacyMigration: async (command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, signal?: AbortSignal) => await request(
+    `/migrations/${encodeURIComponent(command.migrationId)}/rollback`, legacyMigrationPreviewSchema,
+    { signal, body: { expectedRevision: command.expectedRevision, idempotencyKey: command.idempotencyKey } },
+  ),
   previewCapture: async (sessionId: string, signal?: AbortSignal) => {
     const result = await request(
       "/capture-jobs",

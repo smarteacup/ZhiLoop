@@ -162,6 +162,8 @@ export class SqliteKnowledgeVerificationStore implements KnowledgeVerificationSt
         ) STRICT;
         CREATE INDEX IF NOT EXISTS verification_subject_idx
           ON code_verification_runs(subject_key,qualifying_proof,completed_at DESC,run_id);
+        CREATE INDEX IF NOT EXISTS verification_asset_idx
+          ON code_verification_runs(asset_id,asset_version,completed_at DESC,run_id);
       `);
       const version = this.#database.prepare("SELECT version FROM verification_schema").get() as { version: number } | undefined;
       if (version === undefined) this.#database.prepare("INSERT INTO verification_schema(version) VALUES(?)").run(SCHEMA_VERSION);
@@ -297,6 +299,18 @@ export class SqliteKnowledgeVerificationStore implements KnowledgeVerificationSt
       code_revision,graph_revision,status,qualifying_proof,result_summary_json,result_hash,started_at,completed_at
       FROM code_verification_runs WHERE run_id=?`).get(runId) as RunRow | undefined;
     return row === undefined ? undefined : this.#decodeRun(row);
+  }
+
+  listRuns(assetId: string, assetVersion: number, limit: number): readonly KnowledgeVerificationRunSummary[] {
+    identity(assetId, "assetId");
+    if (!Number.isSafeInteger(assetVersion) || assetVersion < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("verification run list request is invalid");
+    }
+    const rows = this.#database.prepare(`SELECT run_id,request_id,purpose,project_id,subject_key,candidate_id,asset_id,asset_version,
+      code_revision,graph_revision,status,qualifying_proof,result_summary_json,result_hash,started_at,completed_at
+      FROM code_verification_runs WHERE asset_id=? AND asset_version=?
+      ORDER BY completed_at DESC,run_id ASC LIMIT ?`).all(assetId, assetVersion, limit) as unknown as RunRow[];
+    return Object.freeze(rows.map((row) => this.#decodeRun(row)));
   }
 
   #getRunByRequestId(requestId: string): KnowledgeVerificationRunSummary | undefined {

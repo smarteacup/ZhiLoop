@@ -440,6 +440,40 @@ export class SidecarApplication {
                 return await p2Evolution.rollbackLegacyMigration({ migrationId: request.migrationId,
                   expectedRevision: request.expectedRevision, idempotencyKey: request.idempotencyKey,
                   updatedAt: request.requestedAt });
+              case "evolution.operations.get":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.operationsSnapshot();
+              case "codegraph.projects.list":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return await p2Evolution.listCodeGraphProjects(request.limit);
+              case "codegraph.initialization.preview":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return await p2Evolution.previewCodeGraphInitialization(request.projectId, request.requestedAt);
+              case "codegraph.initialization.commit": {
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                const committed = p2Evolution.commitCodeGraphInitialization(request);
+                return { preview: committed.preview, job: evolutionJobSnapshot(committed.job) };
+              }
+              case "alerts.list":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.listOperationalAlertsForConsole({ limit: request.limit,
+                  ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+                  ...(request.cursor === undefined ? {} : { cursor: request.cursor }) });
+              case "alerts.acknowledge":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.acknowledgeOperationalAlert(request);
+              case "alerts.suppress":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.suppressOperationalAlert(request);
+              case "knowledge.evolution.get":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return p2Evolution.knowledgeEvolution(request.knowledgeId);
+              case "knowledge.revalidation.commit":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return await p2Evolution.revalidateKnowledge(request);
+              case "knowledge.repair.submit":
+                if (p2Evolution === undefined) throw new Error("P2 evolution runtime is not composed");
+                return await p2Evolution.submitRepairCandidate(request);
               default:
                 if (p2Runtime === undefined) throw new Error("P2 runtime is not composed");
                 return await p2Runtime.handle(request);

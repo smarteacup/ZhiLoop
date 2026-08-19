@@ -11,6 +11,9 @@ import {
   type OperationalAlertRecord,
   type OperationalAlertSink,
   type OperationalAlertStoreOptions,
+  type AlertOperatorCommand,
+  type AlertOperatorCommandResult,
+  type AlertOperatorState,
 } from "./types.js";
 
 const DEFAULT_COOLDOWN_MS = 15 * 60_000;
@@ -20,6 +23,8 @@ const SAFE_REASON = /^[A-Z][A-Z0-9_]{0,119}$/u;
 const severityRank = { INFO: 0, WARNING: 1, CRITICAL: 2 } as const;
 
 interface AlertRow { readonly alert_id: string; readonly payload_json: string; readonly payload_hash: string; }
+interface OperatorStateRow { readonly payload_json: string; readonly payload_hash: string; }
+interface OperatorReceiptRow { readonly fingerprint: string; readonly result_json: string; readonly result_hash: string; }
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -92,6 +97,15 @@ export class SqliteOperationalAlertStore implements OperationalAlertSink {
         CREATE TABLE IF NOT EXISTS operational_alert_emissions(
           event_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, alert_id TEXT NOT NULL,
           observed_at TEXT NOT NULL, FOREIGN KEY(alert_id) REFERENCES operational_alerts(alert_id) ON DELETE RESTRICT
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS operational_alert_operator_states(
+          alert_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0),
+          payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL,
+          FOREIGN KEY(alert_id) REFERENCES operational_alerts(alert_id) ON DELETE RESTRICT
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS operational_alert_operator_receipts(
+          idempotency_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+          result_json TEXT NOT NULL, result_hash TEXT NOT NULL, created_at TEXT NOT NULL
         ) STRICT;
       `);
     } catch (error) { this.#database.close(); this.#closed = true; throw error; }
@@ -183,17 +197,97 @@ export class SqliteOperationalAlertStore implements OperationalAlertSink {
 
   get(id: string): OperationalAlertRecord | undefined { this.#open(); safeText("OPERATIONAL_ALERT_ID", id, 500); return this.#getById(id); }
 
-  list(request: { readonly limit: number; readonly after?: { readonly lastObservedAt: string; readonly alertId: string } }): OperationalAlertPage {
+  getOperatorState(alertIdValue: string): AlertOperatorState | undefined {
+    this.#open(); safeText("OPERATIONAL_ALERT_ID", alertIdValue, 500);
+    const row = this.#database.prepare(`SELECT payload_json,payload_hash FROM operational_alert_operator_states WHERE alert_id=?`)
+      .get(alertIdValue) as OperatorStateRow | undefined;
+    if (row === undefined) return undefined;
+    if (hash(row.payload_json) !== row.payload_hash) throw new Error("OPERATIONAL_ALERT_OPERATOR_STATE_INTEGRITY_FAILED");
+    const value = JSON.parse(row.payload_json) as AlertOperatorState;
+    if (!Number.isSafeInteger(value.revision) || value.revision < 1) throw new Error("OPERATIONAL_ALERT_OPERATOR_STATE_CORRUPT");
+    return Object.freeze({ ...value });
+  }
+
+  acknowledge(command: AlertOperatorCommand): AlertOperatorCommandResult {
+    return this.#operatorCommand(command, "ACKNOWLEDGE");
+  }
+
+  suppress(command: AlertOperatorCommand & { readonly suppressedUntil: string }): AlertOperatorCommandResult {
+    return this.#operatorCommand(command, "SUPPRESS");
+  }
+
+  #operatorCommand(command: AlertOperatorCommand, kind: "ACKNOWLEDGE" | "SUPPRESS"): AlertOperatorCommandResult {
+    this.#open();
+    safeText("OPERATIONAL_ALERT_ID", command.alertId, 500);
+    safeText("OPERATIONAL_ALERT_IDEMPOTENCY_KEY", command.idempotencyKey, 500);
+    safeText("OPERATIONAL_ALERT_ACTOR", command.actor, 200);
+    timestamp(command.requestedAt);
+    if (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 0) {
+      throw new Error("OPERATIONAL_ALERT_EXPECTED_REVISION_INVALID");
+    }
+    if (kind === "SUPPRESS") {
+      if (command.suppressedUntil === undefined) throw new Error("OPERATIONAL_ALERT_SUPPRESSION_EXPIRY_REQUIRED");
+      timestamp(command.suppressedUntil);
+      if (Date.parse(command.suppressedUntil) <= Date.parse(command.requestedAt)
+        || Date.parse(command.suppressedUntil) - Date.parse(command.requestedAt) > 30 * 24 * 60 * 60_000) {
+        throw new Error("OPERATIONAL_ALERT_SUPPRESSION_EXPIRY_INVALID");
+      }
+    }
+    const fingerprint = hash(canonical({ kind, alertId: command.alertId,
+      expectedRevision: command.expectedRevision, actor: command.actor,
+      ...(command.suppressedUntil === undefined ? {} : { suppressedUntil: command.suppressedUntil }) }));
+    const receipt = this.#database.prepare(`SELECT fingerprint,result_json,result_hash FROM operational_alert_operator_receipts WHERE idempotency_key=?`)
+      .get(command.idempotencyKey) as OperatorReceiptRow | undefined;
+    if (receipt !== undefined) {
+      if (receipt.fingerprint !== fingerprint) throw new Error("OPERATIONAL_ALERT_IDEMPOTENCY_CONFLICT");
+      if (hash(receipt.result_json) !== receipt.result_hash) throw new Error("OPERATIONAL_ALERT_OPERATOR_RECEIPT_INTEGRITY_FAILED");
+      return Object.freeze(JSON.parse(receipt.result_json) as AlertOperatorCommandResult);
+    }
+    const alert = this.#getById(command.alertId);
+    if (alert === undefined) throw new Error("OPERATIONAL_ALERT_NOT_FOUND");
+    const previous = this.getOperatorState(command.alertId);
+    if ((previous?.revision ?? 0) !== command.expectedRevision) throw new Error("OPERATIONAL_ALERT_REVISION_CONFLICT");
+    const state: AlertOperatorState = Object.freeze({
+      revision: (previous?.revision ?? 0) + 1,
+      ...(kind === "ACKNOWLEDGE" ? { acknowledgedAt: command.requestedAt, acknowledgedBy: command.actor }
+        : previous?.acknowledgedAt === undefined ? {} : { acknowledgedAt: previous.acknowledgedAt, acknowledgedBy: previous.acknowledgedBy }),
+      ...(kind === "SUPPRESS" ? { suppressedUntil: command.suppressedUntil }
+        : previous?.suppressedUntil === undefined ? {} : { suppressedUntil: previous.suppressedUntil }),
+      updatedAt: command.requestedAt,
+    });
+    const result: AlertOperatorCommandResult = Object.freeze({ alertId: alert.alertId, alertRevision: alert.revision, operatorState: state });
+    const stateJson = canonical(state); const resultJson = canonical(result);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const write = previous === undefined
+        ? this.#database.prepare(`INSERT INTO operational_alert_operator_states(alert_id,revision,payload_json,payload_hash) VALUES(?,?,?,?)`)
+          .run(alert.alertId, state.revision, stateJson, hash(stateJson))
+        : this.#database.prepare(`UPDATE operational_alert_operator_states SET revision=?,payload_json=?,payload_hash=? WHERE alert_id=? AND revision=?`)
+          .run(state.revision, stateJson, hash(stateJson), alert.alertId, previous.revision);
+      if (write.changes !== 1) throw new Error("OPERATIONAL_ALERT_OPERATOR_STATE_REVISION_CONFLICT");
+      this.#database.prepare(`INSERT INTO operational_alert_operator_receipts(idempotency_key,fingerprint,result_json,result_hash,created_at) VALUES(?,?,?,?,?)`)
+        .run(command.idempotencyKey, fingerprint, resultJson, hash(resultJson), command.requestedAt);
+      this.#database.exec("COMMIT");
+    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+    return result;
+  }
+
+  list(request: { readonly limit: number; readonly projectId?: string;
+    readonly after?: { readonly lastObservedAt: string; readonly alertId: string } }): OperationalAlertPage {
     this.#open();
     if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 1_000) throw new Error("OPERATIONAL_ALERT_LIST_LIMIT_INVALID");
+    safeText("OPERATIONAL_ALERT_PROJECT_ID", request.projectId, 500);
     if (request.after !== undefined) { timestamp(request.after.lastObservedAt); safeText("OPERATIONAL_ALERT_CURSOR_ID", request.after.alertId, 500); }
+    const projectClause = request.projectId === undefined ? "" : "json_extract(payload_json,'$.projectId')=? AND ";
     const rows = (request.after === undefined
       ? this.#database.prepare(`SELECT alert_id,payload_json,payload_hash FROM operational_alerts
-          ORDER BY last_observed_at DESC,alert_id ASC LIMIT ?`).all(request.limit + 1)
+          WHERE ${projectClause}1=1 ORDER BY last_observed_at DESC,alert_id ASC LIMIT ?`)
+        .all(...(request.projectId === undefined ? [] : [request.projectId]), request.limit + 1)
       : this.#database.prepare(`SELECT alert_id,payload_json,payload_hash FROM operational_alerts
-          WHERE last_observed_at < ? OR (last_observed_at=? AND alert_id>?)
+          WHERE ${projectClause}(last_observed_at < ? OR (last_observed_at=? AND alert_id>?))
           ORDER BY last_observed_at DESC,alert_id ASC LIMIT ?`).all(
-            request.after.lastObservedAt, request.after.lastObservedAt, request.after.alertId, request.limit + 1,
+            ...(request.projectId === undefined ? [] : [request.projectId]), request.after.lastObservedAt,
+            request.after.lastObservedAt, request.after.alertId, request.limit + 1,
           )) as unknown as AlertRow[];
     const page = rows.slice(0, request.limit).map(parse);
     const last = page.at(-1);

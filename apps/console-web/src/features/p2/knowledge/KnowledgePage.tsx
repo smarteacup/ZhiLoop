@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../../components/AsyncS
 import { StatusBadge } from "../../../components/StatusBadge.js";
 import { capabilityDecision } from "../capability.js";
 import { p2EnumLabel } from "../labels.js";
+import { KnowledgeEvolutionPanel } from "../../evolution/KnowledgeEvolutionPanel.js";
 
 export function KnowledgePage({ api, knowledgeId }: { readonly api: ConsoleApi; readonly knowledgeId?: string }): React.JSX.Element {
   return knowledgeId === undefined ? <KnowledgeListPage api={api} /> : <KnowledgeDetailPage api={api} knowledgeId={knowledgeId} />;
@@ -75,6 +76,7 @@ function KnowledgeDetailPage({ api, knowledgeId }: { readonly api: ConsoleApi; r
     {!value.eligible ? <div className="inline-alert warning"><strong>当前版本不进入默认召回</strong><p>{value.eligibilityReasonCodes.join(", ")}</p></div> : undefined}
     <section className="panel detail-split"><div><h2>Markdown</h2><pre className="markdown-preview">{value.markdown}</pre></div><div><h2>Scope 与断言</h2><dl className="detail-grid"><div><dt>Scope</dt><dd>{value.scope}{value.projectId === undefined ? "" : ` / ${value.projectId}`}</dd></div><div><dt>类型</dt><dd>{value.kind}</dd></div><div><dt>置信度</dt><dd>{value.confidence.toFixed(2)}</dd></div><div><dt>Scope 决策</dt><dd>{value.scopeReasonCodes.join(", ")}</dd></div></dl><ul>{value.assertions.map((item) => <li key={item.assertionId}><StatusBadge status={item.status} /> {item.text}</li>)}</ul></div></section>
     <FreshnessPanel value={value.freshness} />
+    <KnowledgeEvolutionPanel api={api} knowledgeId={value.knowledgeId} title={value.title} summary={value.summary} body={value.markdown} />
     <VersionHistory versions={value.versions} currentVersion={value.version} />
     <section className="panel p2-grid"><div><h2>Evidence</h2>{value.evidence.map((item) => <article className="fact-row" key={item.evidenceId}><div><strong>{item.source}</strong><StatusBadge status={item.verdict} /></div><small>{item.evidenceId} · {item.reasonCode}</small></article>)}</div><div><h2>关系</h2>{value.relations.map((item) => <a className="fact-row" key={`${item.relation}:${item.knowledgeId}`} href={`#/knowledge/${encodeURIComponent(item.knowledgeId)}`}><strong>{item.relation} → {item.title}</strong><small>{item.knowledgeId}@{item.version}</small></a>)}</div></section>
     <section className="panel p2-grid"><div><h2>来源链</h2><Provenance value={value.provenance} /></div><div><h2>Lifecycle</h2>{value.lifecycle.map((item) => <article className="fact-row" key={`${item.status}:${item.occurredAt}`}><div><strong>{item.reasonCode}</strong><StatusBadge status={item.status} /></div><small>{new Date(item.occurredAt).toLocaleString()}</small></article>)}</div><div><h2>使用记录</h2>{value.usage.map((item) => <a className="fact-row" key={`${item.sessionId}:${item.turnId}`} href={`#/sessions/${encodeURIComponent(item.sessionId)}`}><strong>{item.mode} · {item.turnId}</strong><small>{new Date(item.occurredAt).toLocaleString()}</small></a>)}</div></section>

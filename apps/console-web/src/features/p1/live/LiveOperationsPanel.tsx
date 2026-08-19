@@ -20,7 +20,7 @@ export interface LiveInvalidationViewModel {
   readonly lastEventId?: string | undefined;
   readonly lastEventAt?: string | undefined;
   readonly pollingIntervalMs?: number | undefined;
-  readonly invalidatedResources: readonly ("JOBS" | "SESSIONS" | "CONFIGURATION" | "ALERTS")[];
+  readonly invalidatedResources: readonly ("JOBS" | "SESSIONS" | "CONFIGURATION" | "ALERTS" | "OPERATIONS" | "CODEGRAPH" | "MIGRATIONS" | "KNOWLEDGE")[];
   readonly refresh: RevisionActionGate;
 }
 

@@ -80,6 +80,8 @@ export interface RepairDraftPage {
 export interface RepairDraftListRequest {
   readonly limit: number;
   readonly projectId?: string;
+  readonly assetId?: string;
+  readonly assetVersion?: number;
   readonly statuses?: readonly KnowledgeRepairDraftStatus[];
   readonly after?: { readonly createdAt: string; readonly draftId: string };
 }

@@ -122,6 +122,44 @@ describe("UnixSocketControlClient", () => {
     await expect(client.listP4Capabilities({ signal: new AbortController().signal })).resolves.toHaveLength(6);
   });
 
+  it("maps every evolution query and command to a strict P2 request", async () => {
+    const requests: ControlRequest[] = [];
+    const socketPath = await serve((request) => { requests.push(request); return {
+      schemaVersion: 1, requestId: request.requestId, observedAt: NOW, ok: true, result: {},
+    }; });
+    const client = new UnixSocketControlClient({ socketPath }); const options = { signal: new AbortController().signal };
+    const calls: Promise<unknown>[] = [
+      client.getEvolutionOperations(options), client.getKnowledgeEvolution("knowledge-1", options),
+      client.listCodeGraphProjects(10, options), client.previewCodeGraphInitialization("project-1", options),
+      client.commitCodeGraphInitialization({ projectId: "project-1", previewId: "preview-1",
+        repositoryIdentity: "a".repeat(64), expectedRevision: 0, idempotencyKey: "codegraph-commit-0001" }, options),
+      client.listOperationalAlerts("project-1", 10, "cursor-1", options), client.listOperationalAlerts(undefined, 10, undefined, options),
+      client.acknowledgeOperationalAlert({ alertId: "alert-1", expectedRevision: 1, idempotencyKey: "alert-ack-0001" }, options),
+      client.suppressOperationalAlert({ alertId: "alert-1", expectedRevision: 1, idempotencyKey: "alert-suppress-0001",
+        suppressedUntil: "2026-08-19T13:00:00.000Z" }, options),
+      client.previewLegacyMigration("project-1", options), client.listLegacyMigrations("project-1", 10, options),
+      client.getLegacyMigration("migration-1", options), client.listLegacyMigrationItems("migration-1", 10, 2, options),
+      client.listLegacyMigrationItems("migration-1", 10, undefined, options),
+      client.commitLegacyMigration({ migrationId: "migration-1", expectedRevision: 0, idempotencyKey: "migration-commit-0001" }, options),
+      client.rollbackLegacyMigration({ migrationId: "migration-1", expectedRevision: 1, idempotencyKey: "migration-rollback-0001" }, options),
+      client.revalidateKnowledge({ knowledgeId: "knowledge-1", expectedKnowledgeVersion: 2,
+        expectedFreshnessRevision: 3, idempotencyKey: "knowledge-revalidate-0001" }, options),
+      client.submitRepairCandidate({ draftId: "draft-1", expectedRevision: 0, idempotencyKey: "repair-submit-0001",
+        title: "标题", summary: "摘要", body: "正文" }, options),
+    ];
+    for (const call of calls) await expect(call).rejects.toMatchObject({ code: "PROTOCOL" });
+    expect(requests.map((request) => request.type)).toEqual(expect.arrayContaining([
+      "evolution.operations.get", "knowledge.evolution.get", "codegraph.projects.list", "codegraph.initialization.preview",
+      "codegraph.initialization.commit", "alerts.list", "alerts.acknowledge", "alerts.suppress", "knowledge.migrations.preview",
+      "knowledge.migrations.list", "knowledge.migrations.get", "knowledge.migrations.items", "knowledge.migrations.commit",
+      "knowledge.migrations.rollback", "knowledge.revalidation.commit", "knowledge.repair.submit",
+    ]));
+    expect((requests as readonly (ControlRequest | { readonly type: string; readonly projectId?: string; readonly cursor?: string })[])
+      .find((request) => request.type === "alerts.list" && "projectId" in request)).toMatchObject({
+      projectId: "project-1", cursor: "cursor-1",
+    });
+  });
+
   it("maps every P4 query and command to a strict Sidecar envelope", async () => {
     const fingerprint = `sha256:${"a".repeat(64)}`;
     const effective = { policyRevision: 1, mode: "SHADOW", configFingerprint: fingerprint, versionFingerprint: fingerprint };

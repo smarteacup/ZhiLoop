@@ -65,6 +65,8 @@ describe("SqliteKnowledgeRepairDraftStore", () => {
     expect(reopened.get(first.draftId)).toEqual(first);
     const page = reopened.list({ projectId: "project-1", statuses: ["PENDING"], limit: 1 });
     expect(page.items).toHaveLength(1); expect(page.next).toBeDefined();
+    expect(reopened.list({ assetId: first.sourceKnowledge.assetId, assetVersion: first.sourceKnowledge.assetVersion,
+      limit: 10 }).items).toEqual([first]);
     expect(reopened.list({ projectId: "project-1", statuses: ["PENDING"], limit: 1, after: page.next! }).items).toHaveLength(1);
     reopened.close();
   });

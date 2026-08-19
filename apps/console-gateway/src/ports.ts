@@ -19,6 +19,17 @@ import type {
   P2SessionExtractionView,
   P2IndexRecoveryResult,
   RetrievalTraceContract,
+  EvolutionOperationsSnapshot,
+  CodeGraphProjectPage,
+  CodeGraphInitializationPreview,
+  CodeGraphInitializationCommit,
+  OperationalAlertConsolePage,
+  AlertOperatorCommandResult,
+  LegacyMigrationPreviewView,
+  LegacyMigrationPageView,
+  KnowledgeEvolutionView,
+  KnowledgeRevalidationCommandResult,
+  KnowledgeRepairSubmissionResult,
 } from "@zhiloop/control-api";
 import type {
   P3AskResponse,
@@ -86,6 +97,13 @@ export interface ControlQueryPort {
   getP4Rollout?(options: QueryOptions): Promise<P4RolloutResponse>;
   listP4FeedbackTargets?(sessionId: string, options: QueryOptions): Promise<P4FeedbackTargets>;
   getP4HighRiskGovernance?(options: QueryOptions): Promise<P4HighRiskGovernance>;
+  getEvolutionOperations?(options: QueryOptions): Promise<EvolutionOperationsSnapshot>;
+  getKnowledgeEvolution?(knowledgeId: string, options: QueryOptions): Promise<KnowledgeEvolutionView>;
+  listCodeGraphProjects?(limit: number, options: QueryOptions): Promise<CodeGraphProjectPage>;
+  listOperationalAlerts?(projectId: string | undefined, limit: number, cursor: string | undefined, options: QueryOptions): Promise<OperationalAlertConsolePage>;
+  listLegacyMigrations?(projectId: string, limit: number, options: QueryOptions): Promise<{ readonly items: readonly LegacyMigrationPreviewView[] }>;
+  getLegacyMigration?(migrationId: string, options: QueryOptions): Promise<LegacyMigrationPreviewView>;
+  listLegacyMigrationItems?(migrationId: string, limit: number, afterOrdinal: number | undefined, options: QueryOptions): Promise<LegacyMigrationPageView>;
 }
 
 export interface CaptureCommitCommand {
@@ -169,4 +187,20 @@ export interface ControlCommandPort {
   previewP4HighRisk?(command: P4HighRiskPreviewCommand, options: QueryOptions): Promise<P4HighRiskPreviewResponse>;
   commitP4HighRisk?(command: P4HighRiskCommitCommand, options: QueryOptions): Promise<P4HighRiskCommitResponse>;
   refreshP4Context?(sessionId: string, idempotencyKey: string, options: QueryOptions): Promise<P4ContextRefreshResponse>;
+  previewCodeGraphInitialization?(projectId: string, options: QueryOptions): Promise<CodeGraphInitializationPreview>;
+  commitCodeGraphInitialization?(command: { readonly projectId: string; readonly previewId: string; readonly repositoryIdentity: string;
+    readonly expectedRevision: number; readonly idempotencyKey: string }, options: QueryOptions): Promise<CodeGraphInitializationCommit>;
+  acknowledgeOperationalAlert?(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions): Promise<AlertOperatorCommandResult>;
+  suppressOperationalAlert?(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly suppressedUntil: string }, options: QueryOptions): Promise<AlertOperatorCommandResult>;
+  previewLegacyMigration?(projectId: string, options: QueryOptions): Promise<LegacyMigrationPreviewView>;
+  commitLegacyMigration?(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions): Promise<{ readonly preview: LegacyMigrationPreviewView; readonly job: JobSnapshot }>;
+  rollbackLegacyMigration?(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions): Promise<LegacyMigrationPreviewView>;
+  revalidateKnowledge?(command: { readonly knowledgeId: string; readonly expectedKnowledgeVersion: number;
+    readonly expectedFreshnessRevision: number; readonly idempotencyKey: string }, options: QueryOptions): Promise<KnowledgeRevalidationCommandResult>;
+  submitRepairCandidate?(command: { readonly draftId: string; readonly expectedRevision: number; readonly idempotencyKey: string;
+    readonly title: string; readonly summary: string; readonly body: string }, options: QueryOptions): Promise<KnowledgeRepairSubmissionResult>;
 }

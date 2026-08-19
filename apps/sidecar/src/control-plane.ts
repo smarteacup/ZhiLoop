@@ -993,6 +993,16 @@ export class SidecarControlPlane {
         case "knowledge.migrations.items":
         case "knowledge.migrations.commit":
         case "knowledge.migrations.rollback":
+        case "evolution.operations.get":
+        case "codegraph.projects.list":
+        case "codegraph.initialization.preview":
+        case "codegraph.initialization.commit":
+        case "alerts.list":
+        case "alerts.acknowledge":
+        case "alerts.suppress":
+        case "knowledge.evolution.get":
+        case "knowledge.revalidation.commit":
+        case "knowledge.repair.submit":
           if (this.#extraction === undefined) throw new ControlPlaneError("CAPABILITY_UNAVAILABLE");
           result = await this.#extraction.handle(request);
           break;
@@ -1027,6 +1037,16 @@ export class SidecarControlPlane {
                 ? "STALE_REVISION"
           : error instanceof Error && ["LEGACY_MIGRATION_NOT_FOUND"].includes(error.message)
             ? "NOT_FOUND"
+            : error instanceof Error && ["CODEGRAPH_PREVIEW_NOT_FOUND", "CODEGRAPH_PROJECT_UNOBSERVED", "OPERATIONAL_ALERT_NOT_FOUND"].includes(error.message)
+              ? "NOT_FOUND"
+              : error instanceof Error && ["CODEGRAPH_PREVIEW_STALE", "CODEGRAPH_REPOSITORY_IDENTITY_CHANGED",
+                "OPERATIONAL_ALERT_REVISION_CONFLICT", "OPERATIONAL_ALERT_OPERATOR_STATE_REVISION_CONFLICT"].includes(error.message)
+                ? "STALE_REVISION"
+                : error instanceof Error && ["CODEGRAPH_INITIALIZATION_IDEMPOTENCY_CONFLICT", "CODEGRAPH_INITIALIZATION_RECEIPT_CONFLICT",
+                  "OPERATIONAL_ALERT_IDEMPOTENCY_CONFLICT"].includes(error.message)
+                  ? "CONFLICT"
+                  : error instanceof Error && ["OPERATIONAL_ALERT_CURSOR_INVALID"].includes(error.message)
+                    ? "INVALID_CURSOR"
             : error instanceof Error && [
               "LEGACY_MIGRATION_REVISION_CONFLICT", "LEGACY_MIGRATION_REGISTRY_REVISION_CONFLICT",
               "LEGACY_MIGRATION_SOURCE_CHANGED", "LEGACY_MIGRATION_TARGET_DRIFT",
@@ -1039,7 +1059,15 @@ export class SidecarControlPlane {
                 ? "CONFLICT"
                 : error instanceof Error && error.message.startsWith("LEGACY_MIGRATION_")
                   ? "INVALID_REQUEST"
-          : "INTERNAL_ERROR";
+            : error instanceof Error && ["KNOWLEDGE_EVOLUTION_NOT_FOUND", "REPAIR_DRAFT_NOT_FOUND"].includes(error.message)
+              ? "NOT_FOUND"
+              : error instanceof Error && ["KNOWLEDGE_REVALIDATION_REVISION_CONFLICT", "REPAIR_DRAFT_REVISION_CONFLICT"].includes(error.message)
+                ? "STALE_REVISION"
+                : error instanceof Error && error.message === "EVOLUTION_COMMAND_IDEMPOTENCY_CONFLICT"
+                  ? "CONFLICT"
+            : error instanceof Error && (error.message.startsWith("CODEGRAPH_") || error.message.startsWith("OPERATIONAL_ALERT_")
+              || error.message.startsWith("KNOWLEDGE_") || error.message.startsWith("REPAIR_DRAFT_"))
+            ? "INVALID_REQUEST" : "INTERNAL_ERROR";
       return errorResponse(request.requestId, code, timestamp(this.#clock));
     }
   }

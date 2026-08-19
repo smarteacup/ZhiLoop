@@ -112,6 +112,7 @@ export interface KnowledgeVerificationStore {
   getRecipe(assetId: string, assetVersion: number, recipeVersion: string): StoredVerificationRecipe | undefined;
   appendRun(summary: KnowledgeVerificationRunSummary): KnowledgeVerificationRunSummary;
   getRun(runId: string): KnowledgeVerificationRunSummary | undefined;
+  listRuns(assetId: string, assetVersion: number, limit: number): readonly KnowledgeVerificationRunSummary[];
   listSupportingProofs(subjectKey: string, limit: number): readonly SupportingProofRef[];
 }
 

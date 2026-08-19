@@ -12,6 +12,6 @@ describe("P2 Chinese enum labels", () => {
     expect(p2EnumLabel("SNAPSHOT_TEST_OBSERVATION_NOT_FOUND")).toBe("当前快照没有对应测试记录");
     expect(p2ReasonDetail("JOB_LEASE_EXPIRED")).toContain("服务重启");
     expect(p2ReasonDetail("GRAPH_REVISION_CHANGED")).toContain("整体丢弃");
-    expect(p2EnumLabel("FUTURE_P2_ENUM")).toBe("FUTURE_P2_ENUM");
+    expect(p2EnumLabel("FUTURE_P2_ENUM")).toBe("未知状态（FUTURE_P2_ENUM）");
   });
 });

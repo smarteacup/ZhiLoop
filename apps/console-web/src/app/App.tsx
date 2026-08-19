@@ -11,6 +11,9 @@ import { RetrievalPage } from "../features/p3/RetrievalPage.js";
 import { P4ConsolePage } from "../features/p4/P4ConsolePage.js";
 import { SessionDetailPage } from "../features/sessions/SessionDetailPage.js";
 import { SessionsPage } from "../features/sessions/SessionsPage.js";
+import { CodeGraphPage } from "../features/evolution/CodeGraphPage.js";
+import { MigrationPage } from "../features/evolution/MigrationPage.js";
+import { AlertsPage } from "../features/evolution/AlertsPage.js";
 import { useRoute, type RouteName } from "./routes.js";
 
 const navigation: readonly { readonly name: RouteName; readonly label: string }[] = [
@@ -19,6 +22,9 @@ const navigation: readonly { readonly name: RouteName; readonly label: string }[
   { name: "knowledge", label: "知识库" },
   { name: "retrieval", label: "召回与注入" },
   { name: "closure", label: "闭环验证" },
+  { name: "codegraph", label: "CodeGraph" },
+  { name: "migrations", label: "迁移中心" },
+  { name: "alerts", label: "告警中心" },
   { name: "jobs", label: "后台任务" },
   { name: "diagnostics", label: "诊断与告警" },
   { name: "configuration", label: "配置中心" },
@@ -32,6 +38,9 @@ function CurrentPage({ api }: { readonly api: ConsoleApi }): React.JSX.Element {
   if (route.name === "operations") return <P1OperationsPage api={api} />;
   if (route.name === "jobs") return <P1OperationsPage api={api} mode="jobs" />;
   if (route.name === "diagnostics") return <P1OperationsPage api={api} mode="diagnostics" />;
+  if (route.name === "codegraph") return <CodeGraphPage api={api} />;
+  if (route.name === "migrations") return <MigrationPage api={api} />;
+  if (route.name === "alerts") return <AlertsPage api={api} />;
   if (route.name === "configuration") return <ConfigurationPage api={api} />;
   if (route.name === "deployment") return <DeploymentPage api={api} />;
   if (route.name === "knowledge") return route.knowledgeId === undefined ? <KnowledgePage api={api} /> : <KnowledgePage api={api} knowledgeId={route.knowledgeId} />;

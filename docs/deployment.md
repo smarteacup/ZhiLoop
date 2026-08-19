@@ -41,7 +41,7 @@ LaunchAgent `dev.zhiloop.sidecar` 只使用绝对路径，不依赖交互式 she
 
 ```bash
 npm run build
-npm run release:local -- --output /absolute/path/to/zhiloop-0.4.0
+npm run release:local -- --output /absolute/path/to/zhiloop-0.4.1
 ```
 
 发行构建器复制 sidecar、部署 CLI、运行时 workspace、必要的生产依赖与插件资产，生成逐文件 SHA-256、权限、源码 commit、Node 绝对路径和 Node 版本。安装前会重新验证完整文件清单、哈希、Node 可执行文件与支持版本（`>=24.18.0 <27`）。同一版本出现不同内容时拒绝覆盖。
@@ -52,14 +52,14 @@ npm run release:local -- --output /absolute/path/to/zhiloop-0.4.0
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.4.0 --json
+  install --artifact /absolute/path/to/zhiloop-0.4.1 --json
 ```
 
 确认自动化测试已经通过后应用：
 
 ```bash
 /absolute/artifact/apps/sidecar/dist/deploy-main.js \
-  install --artifact /absolute/path/to/zhiloop-0.4.0 \
+  install --artifact /absolute/path/to/zhiloop-0.4.1 \
   --codex-executable /absolute/path/to/codex --apply --json
 ```
 
@@ -101,7 +101,9 @@ printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"smoke","turn_
 
 任务状态的实时失效事件会合并为最多每 5 秒一次后台刷新；刷新期间保留上一次成功结果，避免持续事件导致页面闪烁或请求风暴。
 
-控制台支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、配置与部署状态，以及会话级采集和提取的 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识页支持来源、版本、Evidence、编辑影响、suppress/restore；召回页支持确定性搜索、策略比较和本地 Codex 只读问答；会话页展示真实注入/MCP 审计；闭环页展示 Gate、纠偏、续跑和高风险治理。
+控制台支持总览、真实能力矩阵、Codex 风格只读会话目录、脱敏事件元数据、任务/诊断、配置与部署状态，以及会话级采集和提取的 preview → commit。采集提交必须绑定 session、预览 revision、transcript identity hash 和幂等键；`STALE_REVISION` 必须重新预览。知识页支持来源、版本、Evidence、编辑影响、suppress/restore、当前 Recipe/Verification Run、Freshness revision、复验与 Repair Draft 提交；召回页支持确定性搜索、策略比较和本地 Codex 只读问答；会话页展示提取/Candidate/演进/注入时间线；闭环页展示 Gate、纠偏、续跑和高风险治理。
+
+运维区域还提供 CodeGraph、历史知识迁移和持久化告警三个页面。CodeGraph 初始化只接受 Sidecar 已观察项目，必须先生成五分钟有效的影响预览再明确提交；迁移必须先 dry-run，可分页查看脱敏明细，并通过 revision/idempotency 门禁提交或安全回滚；告警确认与限时静默只更新独立操作投影，不删除底层告警。所有长任务使用 SSE 失效通知与单飞可取消刷新，断线后最多重试五次并指数退避。
 
 普通检索保持 15 秒 Gateway 上限；本地 Codex 问答允许最多 120 秒，同时仍受配置项 `future.codexQueryTimeoutMs` 的更短门禁约束。下列启动期消费者配置在激活后标记 `requiresRestart`：`future.injectionMaxTokens`、`future.compilerBatchSize`、`future.codexQueryTimeoutMs`、`future.codexQueryConcurrency`。
 

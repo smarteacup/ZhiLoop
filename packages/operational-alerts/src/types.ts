@@ -55,6 +55,29 @@ export interface OperationalAlertPage {
   readonly next?: { readonly lastObservedAt: string; readonly alertId: string };
 }
 
+export interface AlertOperatorState {
+  readonly revision: number;
+  readonly acknowledgedAt?: string;
+  readonly acknowledgedBy?: string;
+  readonly suppressedUntil?: string;
+  readonly updatedAt: string;
+}
+
+export interface AlertOperatorCommandResult {
+  readonly alertId: string;
+  readonly alertRevision: number;
+  readonly operatorState: AlertOperatorState;
+}
+
+export interface AlertOperatorCommand {
+  readonly alertId: string;
+  readonly expectedRevision: number;
+  readonly idempotencyKey: string;
+  readonly requestedAt: string;
+  readonly actor: string;
+  readonly suppressedUntil?: string;
+}
+
 export interface OperationalAlertStoreOptions {
   readonly cooldownMs?: number;
   readonly provider?: OperationalAlertDeliveryProvider;

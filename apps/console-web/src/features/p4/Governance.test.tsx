@@ -90,6 +90,8 @@ describe("P4 feedback and high-risk governance", () => {
     const expired: HighRiskPreviewView = { previewId: "expired", policyRevision: 2, kind: "GLOBAL_PROMOTION", expiresAt: "2000-01-01T00:00:00.000Z", confirmationPhrase: "CONFIRM", blastRadius: { affectedAssets: 1, affectedProjects: 0, affectedRules: 0, affectedBindings: 0, affectedTraces: 0, affectedInjections: 0, irreversible: true, reasonCodes: ["IRREVERSIBLE"] } };
     render(<HighRiskGovernancePanel api={p4Api({ highRiskGovernance: async () => enabled, previewHighRisk: async () => expired, commitHighRisk: async () => { throw new Error("commit failed"); } })} />);
     await user.type(await screen.findByLabelText(/Asset IDs/u), "knowledge-1"); await user.type(screen.getByLabelText(/原因/u), "reviewed"); await user.type(screen.getByLabelText(/Payload fingerprint/u), `sha256:${"a".repeat(64)}`); await user.click(screen.getByRole("button", { name: "服务端预览影响范围" }));
-    expect(await screen.findAllByText("IRREVERSIBLE")).toHaveLength(2); expect(screen.getByRole("button", { name: "确认执行高风险操作" })).toHaveProperty("disabled", true);
+    expect(await screen.findByText("不可逆")).toHaveProperty("title", "IRREVERSIBLE");
+    expect(screen.getByText("IRREVERSIBLE")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认执行高风险操作" })).toHaveProperty("disabled", true);
   });
 });

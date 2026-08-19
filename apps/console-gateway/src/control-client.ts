@@ -25,6 +25,19 @@ import {
   sessionPageSchema,
   type ControlRequest,
   type ControlResponse,
+  evolutionOperationsSnapshotSchema,
+  codeGraphProjectPageSchema,
+  codeGraphInitializationPreviewSchema,
+  codeGraphInitializationCommitSchema,
+  operationalAlertConsolePageSchema,
+  alertOperatorCommandResultSchema,
+  legacyMigrationPreviewSchema,
+  legacyMigrationsListSchema,
+  legacyMigrationPageSchema,
+  legacyMigrationCommitResultSchema,
+  knowledgeEvolutionViewSchema,
+  knowledgeRevalidationCommandResultSchema,
+  knowledgeRepairSubmissionResultSchema,
 } from "@zhiloop/control-api";
 import {
   p3ConsoleAskResponseSchema,
@@ -140,6 +153,88 @@ export class UnixSocketControlClient implements ControlQueryPort, ControlCommand
 
   public getDiagnostics(options: QueryOptions) {
     return this.execute(this.request("diagnostics.get"), diagnosticsSchema, options);
+  }
+
+  public getEvolutionOperations(options: QueryOptions) {
+    return this.execute(this.p2Request("evolution.operations.get", {}), evolutionOperationsSnapshotSchema, options);
+  }
+
+  public getKnowledgeEvolution(knowledgeId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.evolution.get", { knowledgeId }), knowledgeEvolutionViewSchema, options);
+  }
+
+  public listCodeGraphProjects(limit: number, options: QueryOptions) {
+    return this.execute(this.p2Request("codegraph.projects.list", { limit }), codeGraphProjectPageSchema, options);
+  }
+
+  public previewCodeGraphInitialization(projectId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("codegraph.initialization.preview", { projectId, requestedAt: new Date().toISOString() }),
+      codeGraphInitializationPreviewSchema, options);
+  }
+
+  public commitCodeGraphInitialization(command: { readonly projectId: string; readonly previewId: string;
+    readonly repositoryIdentity: string; readonly expectedRevision: number; readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("codegraph.initialization.commit", { ...command, requestedAt: new Date().toISOString() }),
+      codeGraphInitializationCommitSchema, options);
+  }
+
+  public listOperationalAlerts(projectId: string | undefined, limit: number, cursor: string | undefined, options: QueryOptions) {
+    return this.execute(this.p2Request("alerts.list", { limit, ...(projectId === undefined ? {} : { projectId }),
+      ...(cursor === undefined ? {} : { cursor }) }), operationalAlertConsolePageSchema, options);
+  }
+
+  public acknowledgeOperationalAlert(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("alerts.acknowledge", { ...command, requestedAt: new Date().toISOString() }),
+      alertOperatorCommandResultSchema, options);
+  }
+
+  public suppressOperationalAlert(command: { readonly alertId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string; readonly suppressedUntil: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("alerts.suppress", { ...command, requestedAt: new Date().toISOString() }),
+      alertOperatorCommandResultSchema, options);
+  }
+
+  public previewLegacyMigration(projectId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.preview", { projectId, requestedAt: new Date().toISOString() }),
+      legacyMigrationPreviewSchema, options);
+  }
+
+  public listLegacyMigrations(projectId: string, limit: number, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.list", { projectId, limit }), legacyMigrationsListSchema, options);
+  }
+
+  public getLegacyMigration(migrationId: string, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.get", { migrationId }), legacyMigrationPreviewSchema, options);
+  }
+
+  public listLegacyMigrationItems(migrationId: string, limit: number, afterOrdinal: number | undefined, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.items", { migrationId, limit,
+      ...(afterOrdinal === undefined ? {} : { afterOrdinal }) }), legacyMigrationPageSchema, options);
+  }
+
+  public commitLegacyMigration(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.commit", { ...command, requestedAt: new Date().toISOString() }),
+      legacyMigrationCommitResultSchema, options);
+  }
+
+  public rollbackLegacyMigration(command: { readonly migrationId: string; readonly expectedRevision: number;
+    readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.migrations.rollback", { ...command, requestedAt: new Date().toISOString() }),
+      legacyMigrationPreviewSchema, options);
+  }
+
+  public revalidateKnowledge(command: { readonly knowledgeId: string; readonly expectedKnowledgeVersion: number;
+    readonly expectedFreshnessRevision: number; readonly idempotencyKey: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.revalidation.commit", { ...command, requestedAt: new Date().toISOString() }),
+      knowledgeRevalidationCommandResultSchema, options);
+  }
+
+  public submitRepairCandidate(command: { readonly draftId: string; readonly expectedRevision: number; readonly idempotencyKey: string;
+    readonly title: string; readonly summary: string; readonly body: string }, options: QueryOptions) {
+    return this.execute(this.p2Request("knowledge.repair.submit", { ...command, requestedAt: new Date().toISOString() }),
+      knowledgeRepairSubmissionResultSchema, options);
   }
 
   public getConfiguration(projectId: string | undefined, options: QueryOptions) {

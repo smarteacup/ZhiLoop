@@ -220,6 +220,11 @@ export class SqliteKnowledgeRepairDraftStore {
     this.#open();
     if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 1_000) throw new Error("REPAIR_DRAFT_LIST_LIMIT_INVALID");
     if (request.projectId !== undefined) id(request.projectId, "PROJECT_ID");
+    if (request.assetId !== undefined) id(request.assetId, "ASSET_ID");
+    if ((request.assetVersion === undefined) !== (request.assetId === undefined)
+      || (request.assetVersion !== undefined && (!Number.isSafeInteger(request.assetVersion) || request.assetVersion < 1))) {
+      throw new Error("REPAIR_DRAFT_LIST_ASSET_INVALID");
+    }
     if (request.statuses !== undefined && (request.statuses.length < 1 || request.statuses.length > STATUSES.size
       || new Set(request.statuses).size !== request.statuses.length || request.statuses.some((item) => !STATUSES.has(item)))) {
       throw new Error("REPAIR_DRAFT_LIST_STATUS_INVALID");
@@ -227,6 +232,7 @@ export class SqliteKnowledgeRepairDraftStore {
     if (request.after !== undefined) { timestamp(request.after.createdAt, "CURSOR_TIME"); id(request.after.draftId, "CURSOR_ID"); }
     const conditions: string[] = []; const values: Array<string | number> = [];
     if (request.projectId !== undefined) { conditions.push("project_id=?"); values.push(request.projectId); }
+    if (request.assetId !== undefined) { conditions.push("asset_id=? AND asset_version=?"); values.push(request.assetId, request.assetVersion!); }
     if (request.statuses !== undefined) {
       conditions.push(`status IN (${request.statuses.map(() => "?").join(",")})`); values.push(...request.statuses);
     }

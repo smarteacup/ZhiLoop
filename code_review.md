@@ -1,17 +1,68 @@
 # ZhiLoop 累计代码审查报告
 
-## 审查统计
+## 📊 统计概览
 
-| 指标 | 本轮（Legacy Code Knowledge Migration） | 累计 |
-|---|---:|---:|
-| Review 次数 | 1 | 16 |
-| 风险发现 | 12 | 119 |
-| 高风险 | 6 | 53 |
-| 中风险 | 6 | 58 |
-| 低风险 | 0 | 8 |
-| 已修复 | 12 | 114 |
-| 未解决 | 0 | 5 |
-| 本轮耗时 | 约 50 分钟 | 已知耗时约 7 小时 4 分钟（首轮历史报告未记录耗时） |
+### 当前 CR 情况
+
+| 指标 | 数值 |
+|---|---:|
+| CR 对象 | `main@0a7bf97` 工作区：Evolution Operations Console |
+| CR 耗时 | 约 20 分钟 |
+| 🔴 高风险 | 2 个 |
+| 🟡 中风险 | 8 个 |
+| 🟢 低风险 | 2 个 |
+| 修复程度 | 已修复 12/12（100%） |
+
+### 累计情况
+
+| 指标 | 累计值 |
+|---|---:|
+| 总 CR 次数 | 17 次 |
+| 总耗时 | 已知约 7 小时 24 分钟（首轮历史报告未记录耗时） |
+| 🔴 高风险累计 | 55 个 |
+| 🟡 中风险累计 | 66 个 |
+| 🟢 低风险累计 | 10 个 |
+| 平均修复程度 | 已修复 126/131（96.2%） |
+
+## 改动说明
+
+本次变更把持续知识演进的权威状态与恢复命令接入本地控制台，新增 CodeGraph 显式初始化、知识复验/修复、历史迁移、持久化告警和八区域运维摘要。所有浏览器读取仍经过 loopback Gateway 与严格 DTO，业务事实继续由 Sidecar 的 Durable Job、Verification、Freshness、Migration、Alert 和 capability Store 持有。
+
+对外增加版本化查询及 CSRF 保护的 revision/idempotency 命令；旧协议与默认 `SHADOW + PREVIEW_ONLY` 行为不变，自动知识发布仍关闭。长任务采用 SSE 失效通知、单飞可取消重读和有界退避，不让控制台轮询进入 Codex Hook 主链路。
+
+同时补充中文诊断、分页、持久化重放、进程边界与 HTTP malformed-input 测试，并完成全量 coverage Gate。
+
+## Evolution Operations Console 风险矩阵
+
+| 等级 | 代码定位 | 问题描述 | 影响范围 | 修复与证据 |
+|---|---|---|---|---|
+| 高 | `apps/sidecar/src/p2-codegraph-lifecycle.ts` checkpoint | 初始化进度按 `60/100` 写入，但统一 Job Store 只接受 `0..1` | 所有真实 CodeGraph 初始化任务在首次 checkpoint 后进入 `JOB_HANDLER_FAILED` | 改为 `0.6/1.0`；真实 runtime 测试覆盖 preview→commit→worker→READY→回执重放 |
+| 高 | `packages/operational-alerts/src/store.ts` operator command | 命令只绑定原始 Alert revision；两标签页可依次用同一旧 revision 改写操作态 | acknowledgement/suppression 并发更新丢失，违反人工操作门禁 | Console DTO 分离 `alertRevision` 与 operator `revision`；CAS 绑定 operator revision；stale-tab 测试通过 |
+| 中 | `packages/codegraph-adapter/src/process.ts` 输出截断 | stdout 与 stderr 分别使用完整上限 | 恶意/异常进程可返回声明值两倍数据，扩大内存和诊断泄漏面 | 两个流共享累计字节预算；混合输出测试证明总和不超过 5 MiB 配置 |
+| 中 | `apps/sidecar/src/p2-evolution-runtime.ts` operations snapshot | 用不同 Store 的独立 revision 是否相等推测一致性，并主要读取 Job | 正常状态被误报 `MIXED_REVISION`，Repair/Freshness/Migration/CodeGraph 事实可能显示 EMPTY | 同步组合各权威 Store 的有界 revision/status；独立 revision 不再做等值比较；读取快照无任务副作用测试 |
+| 中 | 同上，命令回执 | revalidate/repair/alert/CodeGraph 指纹曾包含 `requestedAt` | 网络重试仅时间变化也被当成幂等冲突 | 指纹只包含语义字段；不同时间稳定重放、语义变化冲突测试通过 |
+| 中 | 同上，CodeGraph commit | receipt 查询发生在预览重新校验之后 | 已成功提交的请求在预览过期后重试会丢失原 Job 回执 | durable receipt 优先；过期后同命令返回同一 jobId |
+| 中 | `packages/operational-alerts/src/store.ts` 查询 | 项目筛选曾在分页之后进行 | 指定项目页可能为空或漏项，next cursor 语义错误 | SQL 在 keyset pagination 前按 project 过滤；跨项目分页测试通过 |
+| 中 | `apps/console-web/src/app/useBoundedOperation.ts` | loader 变化未进入 effect 依赖 | 切换项目/资源后可能继续轮询旧闭包 | `load` 纳入依赖并在 cleanup abort；路由切换与卸载测试通过 |
+| 中 | `useInvalidationFeed.ts` | polling failure 无终止上限 | Sidecar 长期不可用时页面永久请求 | 指数退避并在连续五次失败后停止；fake timer 测试通过 |
+| 中 | `apps/sidecar/src/p2-codegraph-lifecycle.ts` repository boundary | 已观察 root 未验证 POSIX 文件 owner | 当前用户可能对其他用户拥有的目录执行索引写入 | 在 realpath/目录校验后要求 `stats.uid === process.getuid()`；非 POSIX 保持兼容 |
+| 低 | Alert/Migration 页面 | 首版只显示 next cursor/ordinal，无继续操作入口 | 操作者无法查看安全上限后的记录 | 增加“下一页”操作并只使用服务端游标；UI 测试验证参数透传 |
+| 低 | `StatusBadge` / P2 labels | 未知未来枚举直接显示纯英文 | 不符合中文安全回退要求，且易被误认为正常原始状态 | 显示“未知状态（RAW）”，同时 `title`/诊断代码保留原值；组件测试更新 |
+
+## Evolution Operations Console 配置检查
+
+本轮未新增 `.properties`/`.yml` 运行配置，也未改变 `config.json` schema；CodeGraph 初始化继续使用既有 `codeIntelligence.initializeAutomatically=false` 安全默认值。新控制台能力按端口存在性降级，旧安装不会因缺少新页面配置而启动失败。
+
+## Evolution Operations Console Gate 证据
+
+| Gate | 结果 |
+|---|---|
+| Workspace dependency/import/direct-test | 通过，75 workspaces |
+| ESLint、TypeScript build/test typecheck | 通过 |
+| Architecture/P0～P7/隔离部署 | 60/60 通过 |
+| Vitest | 201 files，1,692/1,692 通过 |
+| Coverage | statements 90.01%，branches 85.00%，functions 92.20%，lines 93.87% |
+| 当前未解决风险 | 0 |
 
 ## Legacy Code Knowledge Migration 审查结论
 

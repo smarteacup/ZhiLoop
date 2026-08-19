@@ -1,5 +1,6 @@
-const good = new Set(["READY", "SUCCEEDED", "CAPTURED_CURRENT", "INJECTED", "FRESH"]);
-const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "REVALIDATE", "CONFLICT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE"]);
+const good = new Set(["READY", "SUCCEEDED", "COMPLETED", "ROLLED_BACK", "CAPTURED_CURRENT", "INJECTED", "FRESH", "SUPPORTED", "USER_ACCEPTED"]);
+const warning = new Set(["DEGRADED", "NOT_VERIFIED", "CAPTURED_PARTIAL", "PARTIAL_SNAPSHOT", "SHADOWED", "RETRY_WAIT", "REVALIDATE", "CONFLICT", "PROPOSED", "PARTIAL", "UNSUPPORTED", "SUPPRESSED", "INELIGIBLE", "COMMITTING", "ROLLING_BACK", "ROLLBACK_CONFLICT", "CORRECTION"]);
+const bad = new Set(["FAILED", "ERROR", "REFUTED", "CRITICAL", "USER_REJECTED"]);
 
 const labels: Readonly<Record<string, string>> = Object.freeze({
   ACCEPTED: "已接受",
@@ -11,6 +12,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   CAPTURED_CURRENT: "已采集至最新",
   CAPTURED_PARTIAL: "部分采集",
   COMPLETE: "完整",
+  COMPLETED: "已完成",
   COMPLETE_SNAPSHOT: "完整快照",
   CRITICAL: "严重",
   DEGRADED: "降级",
@@ -27,6 +29,7 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   INELIGIBLE: "不符合条件",
   INJECTED: "已注入",
   INVALID_INPUT: "输入无效",
+  IRREVERSIBLE: "不可逆",
   NO_CONTEXT: "无可用上下文",
   NOT_APPLICABLE: "不适用",
   NOT_CONFIGURED: "未配置",
@@ -50,10 +53,15 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   RESYNC_REQUIRED: "需要重新同步",
   RETRY_WAIT: "等待重试",
   REVALIDATE: "等待重新验证",
+  REFUTED: "验证不支持",
+  REVERSIBLE: "可回滚",
   CONFLICT: "与当前代码冲突",
   RETRY_WITH_CONTEXT: "补充上下文后重试",
   RETRY_WITH_CORRECTION: "修正后重试",
   ROLLED_BACK: "已回滚",
+  ROLLING_BACK: "正在回滚",
+  ROLLBACK_CONFLICT: "回滚存在冲突",
+  COMMITTING: "正在提交",
   RUNNING: "运行中",
   SATISFIED: "已满足",
   SHADOW: "影子模式",
@@ -63,21 +71,25 @@ const labels: Readonly<Record<string, string>> = Object.freeze({
   STALE: "已过期",
   STARTING: "启动中",
   SUCCEEDED: "成功",
+  SUPPORTED: "验证支持",
   SUPERSEDED: "已替代",
   SUPPRESSED: "已抑制",
   TIMEOUT: "超时",
   UNKNOWN: "未知",
   UNSATISFIED: "未满足",
   UNSUPPORTED: "不支持",
+  USER_ACCEPTED: "用户已接受",
+  USER_REJECTED: "用户已拒绝",
+  CORRECTION: "用户已纠正",
   VERIFIED: "已验证",
   WARNING: "警告",
 });
 
 export function statusLabel(status: string): string {
-  return labels[status] ?? status;
+  return labels[status] ?? `未知状态（${status}）`;
 }
 
 export function StatusBadge({ status }: { readonly status: string }): React.JSX.Element {
-  const tone = good.has(status) ? "good" : warning.has(status) ? "warning" : status === "FAILED" || status === "ERROR" ? "bad" : "neutral";
+  const tone = good.has(status) ? "good" : warning.has(status) ? "warning" : bad.has(status) ? "bad" : "neutral";
   return <span className={`status-tag ${tone}`} title={status}>{statusLabel(status)}</span>;
 }

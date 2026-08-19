@@ -61,5 +61,7 @@
 | Coverage | statements 90.02%，branches 85.01%，functions 92.20%，lines 93.87% |
 | CodeGraph 真实 Job 回归 | preview、commit、初始化、status/version/query smoke、READY 发布与过期后幂等重放通过 |
 | HTTP 安全边界 | Session、Origin、CSRF、严格字段、大小/分页边界和 malformed request 测试通过 |
+| 本机部署 | 0.4.3 不可变发行升级成功；journal `COMMITTED`；doctor 全项 PASS；运行模式 READY/SHADOW |
+| 浏览器冒烟 | 总览/会话中文状态无未知回退；CodeGraph、迁移、告警、后台任务均加载成功；控制台 error 为 0 |
 
-最终本机部署仍需从已通过 Gate 的源码重新构建不可变发行包，并运行 `doctor`、health 与浏览器 smoke；部署步骤见 [本地部署与回滚](../deployment.md)。
+最终发行由提交 `dc0b5b9` 构建并部署。控制台保留在当前会话详情；部署与回滚步骤见 [本地部署与回滚](../deployment.md)。

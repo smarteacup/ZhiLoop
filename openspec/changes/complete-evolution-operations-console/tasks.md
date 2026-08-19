@@ -33,4 +33,4 @@
 - [x] 5.2 Add browser and security acceptance for CodeGraph initialization → revalidation → Evidence → conflict → Repair Draft → migration preview, CSRF, project isolation, duplicate clicks, and oversized responses
 - [x] 5.3 Prove all read-only Console navigation leaves Ledger, Candidate, Knowledge, Job, and operator-state revisions unchanged
 - [x] 5.4 Run package tests, workspace/import checks, lint, TypeScript build, full regression, coverage, and strict OpenSpec validation
-- [ ] 5.5 Perform code review, fix all material findings, update implementation report and capability/version matrix, deploy locally, and complete browser smoke verification
+- [x] 5.5 Perform code review, fix all material findings, update implementation report and capability/version matrix, deploy locally, and complete browser smoke verification

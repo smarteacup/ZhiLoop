@@ -105,6 +105,39 @@ describe("SQLite Event Ledger", () => {
     ledger.close();
   });
 
+  it("reads bounded projection metadata without materializing event payloads", () => {
+    const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
+    ledger.append(event(1, { body: "x".repeat(100_000) }));
+    ledger.append({
+      schemaVersion: 1,
+      eventId: "event-2",
+      source: "codex-app-server",
+      eventType: "tool.completed",
+      sessionId: "session-ledger-1",
+      occurredAt: "2026-08-01T10:00:02.000Z",
+      contentHash: "original-content-hash-2",
+      correlationId: "correlation-0",
+      payload: { message: "event-2" },
+    });
+    expect(ledger.readProjectionAfter(0, 1)).toEqual([{
+      sequence: 1,
+      source: "codex-hook",
+      sessionId: "session-ledger-1",
+      turnId: "turn-0",
+      occurredAt: "2026-08-01T10:00:01.000Z",
+      redactionCount: 0,
+    }]);
+    expect(ledger.readProjectionAfter(1, 10)).toEqual([{
+      sequence: 2,
+      source: "codex-app-server",
+      sessionId: "session-ledger-1",
+      occurredAt: "2026-08-01T10:00:02.000Z",
+      redactionCount: 0,
+    }]);
+    expect(() => ledger.readProjectionAfter(0, 0)).toThrow("limit");
+    ledger.close();
+  });
+
   it("rolls back the whole batch when any event is invalid", () => {
     const ledger = new SqliteEventLedger(":memory:", { clock: CLOCK });
     const invalid = { ...event(2), schemaVersion: 2 } as unknown as EventEnvelope;

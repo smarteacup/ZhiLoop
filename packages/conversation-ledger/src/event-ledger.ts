@@ -12,6 +12,7 @@ import type {
   EventLedgerOptions,
   IngestionCursorRecord,
   LedgerEventRecord,
+  LedgerProjectionRecord,
   RetentionResult,
   SessionLedgerStats,
 } from "./types.js";
@@ -49,6 +50,15 @@ interface EventRow {
   readonly redaction_count: number;
   readonly payload_purged: number;
   readonly inserted_at: string;
+}
+
+interface ProjectionRow {
+  readonly sequence: number;
+  readonly source: string;
+  readonly session_id: string;
+  readonly turn_id: string | null;
+  readonly occurred_at: string;
+  readonly redaction_count: number;
 }
 
 function sha256(value: string): string {
@@ -323,6 +333,24 @@ export class SqliteEventLedger {
       FROM events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?
     `).all(sequence, limit) as unknown as EventRow[];
     return rows.map(rowToRecord);
+  }
+
+  readProjectionAfter(sequence: number, limit = 100): readonly LedgerProjectionRecord[] {
+    this.#assertOpen();
+    assertSequence(sequence);
+    assertLimit(limit);
+    const rows = this.#database.prepare(`
+      SELECT sequence, source, session_id, turn_id, occurred_at, redaction_count
+      FROM events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?
+    `).all(sequence, limit) as unknown as ProjectionRow[];
+    return rows.map((row) => Object.freeze({
+      sequence: row.sequence,
+      source: row.source as EventEnvelope["source"],
+      sessionId: row.session_id,
+      ...(row.turn_id === null ? {} : { turnId: row.turn_id }),
+      occurredAt: row.occurred_at,
+      redactionCount: row.redaction_count,
+    }));
   }
 
   count(): number {

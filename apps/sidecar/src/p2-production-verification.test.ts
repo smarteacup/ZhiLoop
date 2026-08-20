@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,9 +12,10 @@ import { SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import type { EventEnvelope } from "@zhiloop/domain";
 import { snapshotCommandHash, snapshotTestId } from "@zhiloop/evidence-probes";
 import type { KnowledgeExtractionPort } from "@zhiloop/knowledge-compiler";
+import type { KnowledgeVerificationRequest } from "@zhiloop/knowledge-verification";
 import { resolveProjectIdentity } from "@zhiloop/project-identity";
 
-import { deriveP2ProjectContext, P2ProductionComposition } from "./p2-production.js";
+import { deriveP2ProjectContext, P2ProductionComposition, refineP2VerificationRequest } from "./p2-production.js";
 
 const cleanup: string[] = [];
 const at = "2026-08-19T00:00:00.000Z";
@@ -36,6 +37,56 @@ function extractionSnapshot(): ExtractionSnapshot {
 }
 
 describe("P2 production verification composition", () => {
+  it("narrows aggregate workspaces to the uniquely matching candidate repository", () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "zhiloop-p2-aggregate-"));
+    const repository = path.join(workspace, "command-service");
+    cleanup.push(workspace);
+    mkdirSync(path.join(repository, ".git"), { recursive: true });
+    mkdirSync(path.join(repository, "src"));
+    writeFileSync(path.join(repository, "src", "fact.txt"), "fact\n");
+    const request = {
+      project: { projectId: "aggregate-project", repositoryRoot: workspace, portable: false },
+      requestedAt: at,
+      purpose: "CANDIDATE",
+      candidate: {
+        schemaVersion: 2, candidateId: sha("candidate"), compilerVersion: "mvp-compiler-v5", status: "PROPOSED",
+        subjectKey: "service.fact", kind: "FACT", scopeHint: { level: "PROJECT", reasonCodes: ["PROJECT_BOUND"] },
+        title: "Fact", summary: "Fact summary", body: "Fact body", sourceEpisodes: ["episode-1"], confidence: 0.9,
+        createdAt: at, correlationId: "correlation-1", claimMode: "CURRENT_STATE",
+        locator: { schemaVersion: 1, projectId: "aggregate-project", observedRevision: { dirty: false },
+          branchApplicability: { mode: "ALL_BRANCHES", reason: "NO_AUTHORITATIVE_BRANCH" }, scenarioId: "scenario-1",
+          scenarioKey: "service.fact", scenarioTitle: "Service fact", scenarioSummary: "Service fact summary",
+          modulePaths: ["command-service"], symbols: [], entryPoints: [], taskIntents: ["verify fact"],
+          applicability: ["service fact lookup"], nonApplicability: ["other services"] },
+        assertions: [{ assertionId: sha("assertion"), candidateId: sha("candidate"), kind: "FILE_CONTAINS",
+          parameters: { path: "command-service/src/fact.txt", expected: "fact", matchMode: "EXACT" }, createdAt: at }],
+        evidenceHints: [],
+      },
+    } as KnowledgeVerificationRequest;
+    const refined = refineP2VerificationRequest(request);
+    expect(refined.project.repositoryRoot).toBe(realpathSync(repository));
+    expect(refined.candidate.assertions[0]?.parameters).toMatchObject({ path: "src/fact.txt" });
+  });
+
+  it("skips repository revision IO for candidates without code-backed assertions", () => {
+    const request = {
+      project: { projectId: "aggregate-project", repositoryRoot: "/workspace/aggregate", portable: false },
+      candidate: { assertions: [{ kind: "USER_ACCEPTED" }] },
+    } as unknown as KnowledgeVerificationRequest;
+    expect(refineP2VerificationRequest(request).project).toEqual({ projectId: "aggregate-project", portable: false });
+  });
+
+  it.each(["COMMAND_SUCCEEDED", "TEST_PASSED"] as const)(
+    "retains repository revision checks for %s snapshot evidence",
+    (kind) => {
+      const request = {
+        project: { projectId: "aggregate-project", repositoryRoot: "/workspace/aggregate", portable: false },
+        candidate: { assertions: [{ kind }] },
+      } as unknown as KnowledgeVerificationRequest;
+      expect(refineP2VerificationRequest(request)).toBe(request);
+    },
+  );
+
   it("uses real Snapshot/local probes, stays Preview-only by default, and projects a recipe only after explicit commit", async () => {
     const state = mkdtempSync(path.join(tmpdir(), "zhiloop-p2-verification-state-"));
     const repository = mkdtempSync(path.join(tmpdir(), "zhiloop-p2-verification-repo-"));

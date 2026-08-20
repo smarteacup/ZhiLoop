@@ -22,7 +22,7 @@ import {
 } from "@zhiloop/control-api";
 import type { SqliteConfigurationService } from "@zhiloop/configuration-service";
 import { createCursorCodec, type CursorCodec } from "@zhiloop/control-api/server";
-import type { LedgerEventRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
+import type { LedgerEventRecord, LedgerProjectionRecord, SqliteEventLedger } from "@zhiloop/conversation-ledger";
 import {
   InvalidOperationalCursorError,
   SqliteOperationalReadModel,
@@ -404,13 +404,14 @@ export class SidecarControlPlane {
     return state;
   }
 
-  #recordLedgerState(record: LedgerEventRecord): void {
-    const state = this.#stateFor(record.event.sessionId);
+  #recordLedgerState(record: LedgerEventRecord | LedgerProjectionRecord): void {
+    const event = "event" in record ? record.event : record;
+    const state = this.#stateFor(event.sessionId);
     state.eventCount += 1;
-    if (record.event.turnId !== undefined) state.turnIds.add(record.event.turnId);
+    if (event.turnId !== undefined) state.turnIds.add(event.turnId);
     state.redactionCount += record.redactionCount;
-    if (record.event.source === "codex-hook" && (this.#lastHookEventAt === undefined || record.event.occurredAt > this.#lastHookEventAt)) {
-      this.#lastHookEventAt = record.event.occurredAt;
+    if (event.source === "codex-hook" && (this.#lastHookEventAt === undefined || event.occurredAt > this.#lastHookEventAt)) {
+      this.#lastHookEventAt = event.occurredAt;
     }
   }
 
@@ -418,7 +419,7 @@ export class SidecarControlPlane {
     const persistedSequence = this.#readModel.latestEventSequence();
     let sequence = 0;
     while (sequence < persistedSequence) {
-      const records = this.#ledger.readAfter(sequence, PROJECTION_BATCH_SIZE)
+      const records = this.#ledger.readProjectionAfter(sequence, PROJECTION_BATCH_SIZE)
         .filter((record) => record.sequence <= persistedSequence);
       if (records.length === 0) break;
       for (const record of records) this.#recordLedgerState(record);

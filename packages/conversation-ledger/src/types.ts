@@ -9,6 +9,16 @@ export interface LedgerEventRecord<TPayload = unknown> {
   readonly insertedAt: string;
 }
 
+/** Payload-free event metadata used to rebuild operational counters without loading conversation bodies. */
+export interface LedgerProjectionRecord {
+  readonly sequence: number;
+  readonly source: EventEnvelope["source"];
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly occurredAt: string;
+  readonly redactionCount: number;
+}
+
 /** Bounded metadata for background consumers that must not materialize payloads. */
 export interface SessionLedgerStats {
   readonly sessionId: string;

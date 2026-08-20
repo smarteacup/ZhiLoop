@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { DEFAULT_CONFIGURATION } from "@zhiloop/config";
 import { CodeGraphCliAdapter } from "@zhiloop/codegraph-adapter";
@@ -58,6 +58,10 @@ const MAX_SNAPSHOT_RECORDS = 5_000;
 const MAX_SNAPSHOT_SEQUENCE_SPAN = 50_000;
 const MAX_PROVENANCE_VISITS = 1_000;
 const MAX_EPISODE_PROJECTS_PER_SNAPSHOT = 16;
+const REPOSITORY_SENSITIVE_ASSERTION_KINDS = new Set([
+  "SYMBOL_EXISTS", "CALL_PATH_EXISTS", "IMPACT_CONTAINS", "FILE_CONTAINS", "DEPENDENCY_PRESENT", "CONFIG_EQUALS",
+  "COMMAND_SUCCEEDED", "TEST_PASSED",
+]);
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -93,6 +97,105 @@ function nearestGitRoot(value: string, boundary: string): string | undefined {
     cursor = parent;
   }
   return undefined;
+}
+
+function candidatePathHints(request: KnowledgeVerificationRequest): readonly string[] {
+  if (request.candidate.schemaVersion !== 2) return [];
+  const hints = new Set(request.candidate.locator.modulePaths);
+  for (const assertion of request.candidate.assertions) {
+    const parameters = assertion.parameters as Readonly<Record<string, unknown>>;
+    for (const key of ["path", "manifestPath"] as const) {
+      const value = parameters[key];
+      if (typeof value === "string" && value.length > 0 && value.length <= 16_384 && !isAbsolute(value)) hints.add(value);
+    }
+  }
+  return [...hints];
+}
+
+function immediateGitRepositories(boundary: string): readonly string[] {
+  try {
+    return readdirSync(boundary, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 512)
+      .map((entry) => join(boundary, entry.name))
+      .filter((path) => existsSync(join(path, ".git")));
+  } catch {
+    return [];
+  }
+}
+
+function candidateRepositoryRoot(request: KnowledgeVerificationRequest): string | undefined {
+  const configuredRoot = request.project.repositoryRoot;
+  if (configuredRoot === undefined) return undefined;
+  let boundary: string;
+  try {
+    boundary = realpathSync(configuredRoot);
+  } catch {
+    return undefined;
+  }
+  if (existsSync(join(boundary, ".git"))) return undefined;
+  const children = immediateGitRepositories(boundary);
+  const counts = new Map<string, number>();
+  for (const hint of candidatePathHints(request)) {
+    const direct = resolve(boundary, hint);
+    if (containedBy(boundary, direct) && existsSync(direct)) {
+      const root = nearestGitRoot(direct, boundary);
+      if (root !== undefined) counts.set(root, (counts.get(root) ?? 0) + 1);
+    }
+    for (const child of children) {
+      const nested = resolve(child, hint);
+      if (containedBy(child, nested) && existsSync(nested)) counts.set(child, (counts.get(child) ?? 0) + 1);
+    }
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const winner = ranked[0];
+  if (winner === undefined || (ranked[1]?.[1] ?? -1) === winner[1]) return undefined;
+  return winner[0];
+}
+
+function rebaseCandidatePath(value: unknown, boundary: string, repositoryRoot: string): unknown {
+  if (typeof value !== "string" || isAbsolute(value)) return value;
+  const direct = resolve(boundary, value);
+  if (containedBy(repositoryRoot, direct) && existsSync(direct)) {
+    const rebased = relative(repositoryRoot, direct).split(sep).join("/");
+    return rebased.length === 0 ? "." : rebased;
+  }
+  return value;
+}
+
+export function refineP2VerificationRequest(request: KnowledgeVerificationRequest): KnowledgeVerificationRequest {
+  if (!request.candidate.assertions.some((assertion) => REPOSITORY_SENSITIVE_ASSERTION_KINDS.has(assertion.kind))) {
+    const project: ProjectContext = {
+      projectId: request.project.projectId,
+      ...(request.project.repositoryRemote === undefined ? {} : { repositoryRemote: request.project.repositoryRemote }),
+      ...(request.project.branch === undefined ? {} : { branch: request.project.branch }),
+      ...(request.project.revision === undefined ? {} : { revision: request.project.revision }),
+      portable: request.project.portable,
+    };
+    return { ...request, project };
+  }
+  const repositoryRoot = candidateRepositoryRoot(request);
+  const boundaryValue = request.project.repositoryRoot;
+  if (repositoryRoot === undefined || boundaryValue === undefined) return request;
+  let boundary: string;
+  try {
+    boundary = realpathSync(boundaryValue);
+  } catch {
+    return request;
+  }
+  const assertions = request.candidate.assertions.map((assertion) => {
+    const parameters = { ...assertion.parameters } as Record<string, unknown>;
+    for (const key of ["path", "manifestPath"] as const) {
+      if (key in parameters) parameters[key] = rebaseCandidatePath(parameters[key], boundary, repositoryRoot);
+    }
+    return { ...assertion, parameters } as typeof assertion;
+  });
+  return {
+    ...request,
+    project: { ...request.project, repositoryRoot },
+    candidate: { ...request.candidate, assertions } as typeof request.candidate,
+  };
 }
 
 /**
@@ -307,10 +410,10 @@ export class P2ProductionVerificationRuntime implements EvidenceVerificationPort
 
   constructor(service: KnowledgeVerificationService) { this.#service = service; }
 
-  verify(request: KnowledgeVerificationRequest) { return this.#service.verify(request); }
+  verify(request: KnowledgeVerificationRequest) { return this.#service.verify(refineP2VerificationRequest(request)); }
 
   verifyBatch(request: KnowledgeVerificationRequest, controls?: VerificationExecutionControls): Promise<KnowledgeVerificationBatch> {
-    return this.#service.verifyBatch(request, controls);
+    return this.#service.verifyBatch(refineP2VerificationRequest(request), controls);
   }
 
   replace(service: KnowledgeVerificationService): () => void {

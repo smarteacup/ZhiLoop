@@ -30,8 +30,16 @@ describe("capture content projection", () => {
 
   it("bounds Unicode content without retaining an oversized raw payload", () => {
     const value = boundedContentPreview({ prompt: "知".repeat(2_001) });
-    expect(Array.from(value.contentPreview)).toHaveLength(2_000);
+    expect(value.contentPreview).toHaveLength(2_000);
     expect(value.contentPreview.endsWith("…")).toBe(true);
+    expect(value.contentTruncated).toBe(true);
+  });
+
+  it("bounds astral Unicode by the UTF-16 length enforced by the control schema", () => {
+    const value = boundedContentPreview({ prompt: "😀".repeat(1_001) });
+    expect(value.contentPreview.length).toBeLessThanOrEqual(2_000);
+    expect(value.contentPreview.endsWith("…")).toBe(true);
+    expect(value.contentPreview).not.toContain("\uFFFD");
     expect(value.contentTruncated).toBe(true);
   });
 

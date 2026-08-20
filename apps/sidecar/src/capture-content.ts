@@ -19,10 +19,12 @@ export function boundedContentPreview(payload: unknown): { readonly contentPrevi
   }
   text ??= JSON.stringify(payload, null, 2);
   if (text === undefined || text.trim().length === 0) text = "（没有可展示的文本内容）";
-  const characters = Array.from(text);
-  if (characters.length <= MAX_CONTENT_PREVIEW_CHARACTERS) return { contentPreview: text, contentTruncated: false };
+  if (text.length <= MAX_CONTENT_PREVIEW_CHARACTERS) return { contentPreview: text, contentTruncated: false };
+  let prefix = text.slice(0, MAX_CONTENT_PREVIEW_CHARACTERS - 1);
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) prefix = prefix.slice(0, -1);
   return {
-    contentPreview: `${characters.slice(0, MAX_CONTENT_PREVIEW_CHARACTERS - 1).join("")}…`,
+    contentPreview: `${prefix}…`,
     contentTruncated: true,
   };
 }
